@@ -86,6 +86,13 @@ label input[type=checkbox]{width:22px;height:22px;accent-color:var(--gn)}
 .sig-bar{display:flex;justify-content:space-between;align-items:center;margin:4px 0 12px}
 .sig-bar .hint{font-size:12px;color:var(--dim)}
 .sig-bar button{background:var(--sf2);color:var(--tx);border:none;border-radius:10px;padding:6px 13px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
+
+/* Dark mode */
+body.dark{--bg:#000000;--sf:#1c1c1e;--sf2:#2c2c2e;--bd:#3a3a3c;--tx:#f2f2f7;--dim:#98989e;--ac:#30d158;--gn:#30d158;--rd:#ff453a;--shadow:0 1px 3px rgba(0,0,0,.4)}
+body.dark input:focus,body.dark textarea:focus,body.dark select:focus{background:var(--sf2)}
+body.dark .stop-card.current{background:#10271a}
+body.dark .login-btn{background:#fff;color:#1c1c1e}
+body.dark .status.info{background:#5a5a5e}
 </style>
 </head>
 <body>
@@ -115,6 +122,7 @@ var currentUser = null;
 var submitting = false;
 // Role & Admin state
 var userRole = null; // 'admin' or 'tech'
+var myRate = null; // flat per-PM rate for this tech (overrides asset fees)
 var techProfiles = [];
 var adminTab = 'techs'; // 'techs', 'routes', 'import', 'reports' or 'pay'
 // Assignment & pay state
@@ -206,6 +214,7 @@ async function checkUserRole() {
   var { data } = await sb.from('tech_profiles').select('*').eq('email', email).single();
   if (data) {
     userRole = data.role;
+    myRate = data.pm_rate != null && Number(data.pm_rate) > 0 ? Number(data.pm_rate) : null;
   } else {
     // Auto-create tech profile for new users
     await sb.from('tech_profiles').insert({ email: email, name: currentUser.user_metadata?.full_name || email.split('@')[0], role: 'tech' });
@@ -501,7 +510,8 @@ function renderHome() {
   var hasProgress = localStorage.getItem('fp_progress');
   var userBar = '<div class="user-bar">' +
     '<span class="email">' + esc(currentUser.email || '') + (userRole === 'admin' ? ' <span class="badge" style="background:var(--rd)">Admin</span>' : '') + '</span>' +
-    '<button onclick="signOut()">Sign Out</button>' +
+    '<span><button onclick="toggleTheme()" style="margin-right:6px">' + (localStorage.getItem('fp_theme') === 'dark' ? '\u2600\ufe0f' : '\ud83c\udf19') + '</button>' +
+    '<button onclick="signOut()">Sign Out</button></span>' +
   '</div>';
 
   var h = userBar +
@@ -722,7 +732,7 @@ function myWeekItems(range) {
       city: a ? a.city : '',
       serial: pm.serial,
       model: a ? a.model : '',
-      fee: a ? Number(a.pm_fee || 0) : 0
+      fee: myRate != null ? myRate : (a ? Number(a.pm_fee || 0) : 0)
     };
   });
 }
@@ -764,6 +774,9 @@ function renderPay() {
   '</div>';
   h += '<div style="font-size:32px;font-weight:700;margin-top:10px">' + fee$(total) + '</div>';
   h += '<div style="color:var(--dim);font-size:13px">' + items.length + ' asset' + (items.length === 1 ? '' : 's') + ' at ' + groups.length + ' store' + (groups.length === 1 ? '' : 's') + '</div>';
+  if (myRate != null) {
+    h += '<div style="color:var(--gn);font-size:12px;margin-top:4px">Your rate: ' + fee$(myRate) + ' per PM</div>';
+  }
   h += '</div>';
 
   groups.forEach(function(g) {
@@ -996,6 +1009,17 @@ function renderAdminPay() {
     h += '</div></div>';
   });
 
+  // Per-tech rates
+  h += '<h3 style="margin:16px 0 10px">Tech Rates (per PM)</h3>';
+  h += '<p style="font-size:12px;color:var(--dim);margin-bottom:8px">A tech with a rate gets that flat amount for every PM they complete. Leave at 0 to pay the per-asset fees below instead.</p>';
+  techProfiles.forEach(function(t, ti) {
+    h += '<div class="hist-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
+    h += '<span style="flex:1"><strong>' + esc(t.name || t.email) + '</strong><br><span style="color:var(--dim);font-size:11px">' + esc(t.email) + '</span></span>';
+    h += '<input type="number" id="rate_' + ti + '" value="' + (t.pm_rate != null ? Number(t.pm_rate).toFixed(2) : '0.00') + '" step="0.01" min="0" style="width:80px;margin-bottom:0;text-align:right">';
+    h += '<button class="btn btn-o" style="width:auto;padding:8px 12px;font-size:12px" onclick="saveTechRate(' + ti + ',\'' + esc(t.email).replace(/'/g, "\\'") + '\')">Save</button>';
+    h += '</div>';
+  });
+
   // Per-asset PM fees
   h += '<h3 style="margin:16px 0 10px">PM Fees (per asset)</h3>';
   h += '<div class="card">';
@@ -1043,6 +1067,19 @@ function renderAdminPay() {
     h += '<p style="text-align:center;color:var(--dim);font-size:12px;padding:10px 0">Showing ' + shown.length + ' of ' + order.length + ' stores \u2014 search to find others</p>';
   }
   return h;
+}
+
+async function saveTechRate(ti, email) {
+  var el = document.getElementById('rate_' + ti);
+  var f = parseFloat(el && el.value);
+  if (isNaN(f) || f < 0) { showStatus('Enter a valid rate', 'err'); return; }
+  var rate = f > 0 ? f : null;
+  var { error } = await sb.from('tech_profiles').update({ pm_rate: rate }).eq('email', email);
+  if (error) { showStatus('Error: ' + error.message, 'err'); return; }
+  var t = techProfiles.find(function(x) { return x.email === email; });
+  if (t) t.pm_rate = rate;
+  if (currentUser && currentUser.email === email) { myRate = rate; }
+  showStatus(rate ? ('Rate set to ' + fee$(rate) + ' per PM') : 'Rate cleared — per-asset fees apply', 'ok');
 }
 
 async function markPayoutPaid(id) {
@@ -2241,6 +2278,17 @@ render = function() {
   el.innerHTML = html;
   bindEvents();
 };
+
+// ===== Theme (light/dark) =====
+function applyTheme() {
+  document.body.classList.toggle('dark', localStorage.getItem('fp_theme') === 'dark');
+}
+function toggleTheme() {
+  localStorage.setItem('fp_theme', localStorage.getItem('fp_theme') === 'dark' ? 'light' : 'dark');
+  applyTheme();
+  render();
+}
+applyTheme();
 
 // ===== Init =====
 initAuth();
