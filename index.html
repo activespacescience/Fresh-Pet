@@ -60,8 +60,8 @@ label input[type=checkbox]{width:18px;height:18px;accent-color:var(--ac)}
 .progress-bar{height:3px;background:var(--bd);border-radius:2px;margin:8px 0;overflow:hidden}
 .progress-bar .fill{height:100%;background:var(--ac);transition:width .3s}
 /* Admin & Route styles */
-.tab-bar{display:flex;gap:4px;margin-bottom:16px}
-.tab-bar button{flex:1;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:var(--sf2);color:var(--dim);border:1px solid var(--bd)}
+.tab-bar{display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap}
+.tab-bar button{flex:1 1 30%;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:var(--sf2);color:var(--dim);border:1px solid var(--bd)}
 .tab-bar button.active{background:var(--ac);color:#fff;border-color:var(--ac)}
 .stop-card{background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:10px;border-left:4px solid var(--dim)}
 .stop-card.current{border-left-color:var(--ac);background:var(--sf2)}
@@ -115,7 +115,13 @@ var submitting = false;
 // Role & Admin state
 var userRole = null; // 'admin' or 'tech'
 var techProfiles = [];
-var adminTab = 'techs'; // 'techs', 'routes', 'import' or 'reports'
+var adminTab = 'techs'; // 'techs', 'routes', 'import', 'reports' or 'pay'
+// Assignment & pay state
+var allAssignments = []; // every tech's active assignments (for exclusivity)
+var payouts = [];
+var payWeekOffset = 0; // 0 = this week, -1 = last week...
+var submittingPayout = false;
+var feeSearch = '';
 // Reports state (bulk PDF send)
 var reportSel = {};
 var reportFrom = new Date(Date.now() - 29 * 864e5).toISOString().split('T')[0];
@@ -227,6 +233,16 @@ async function loadTechRoute(email) {
   var { data } = await sb.from('route_assignments').select('*').eq('tech_email', email).eq('active', true).order('stop_order');
   if (!data || data.length === 0) { adminTechAssets = []; return; }
   adminTechAssets = data.map(function(r) { return r.asset_id; });
+}
+
+async function loadAllAssignments() {
+  var { data } = await sb.from('route_assignments').select('tech_email,asset_id').eq('active', true);
+  allAssignments = data || [];
+}
+
+async function loadPayouts() {
+  var { data } = await sb.from('payouts').select('*').order('week_start', { ascending: false });
+  payouts = data || [];
 }
 
 async function loadMyRoute() {
@@ -455,6 +471,7 @@ function render() {
   else if (screen === 'select') { html += renderSelect(); }
   else if (screen === 'checklist') { html += renderChecklist(); }
   else if (screen === 'history') { html += renderHistory(); }
+  else if (screen === 'pay') { html += renderPay(); }
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
@@ -502,6 +519,7 @@ function renderHome() {
   h += '<button class="btn btn-p" style="margin-bottom:10px" onclick="goRoute()">🗺️ My Route</button>';
   h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goSelect()">🔧 Browse All Assets</button>';
   h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goHistory()">📊 PM History</button>';
+  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goPay()">💰 Weekly Pay</button>';
 
   // Admin button
   if (userRole === 'admin') {
@@ -677,6 +695,119 @@ function renderHistory() {
   return h;
 }
 
+// ===== Weekly Pay (tech) =====
+function fmtD(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function payWeekRange() {
+  var ws = new Date();
+  ws.setHours(0, 0, 0, 0);
+  ws.setDate(ws.getDate() - ((ws.getDay() + 6) % 7) + payWeekOffset * 7); // Monday
+  var we = new Date(ws);
+  we.setDate(we.getDate() + 6); // Sunday
+  return { start: fmtD(ws), end: fmtD(we) };
+}
+function fee$(n) { return '$' + Number(n || 0).toFixed(2); }
+
+// Stores this tech completed in the given week, with per-store fees
+function myWeekStores(range) {
+  var mine = completedPMs.filter(function(pm) {
+    return pm.tech_user_id === currentUser.id && pm.pm_date >= range.start && pm.pm_date <= range.end;
+  });
+  var stores = {}, order = [];
+  mine.forEach(function(pm) {
+    var a = ASSETS.find(function(x) { return x.id === pm.asset_id; });
+    var key = pm.store + '|' + (a ? a.address : '');
+    if (!stores[key]) {
+      stores[key] = { store: pm.store, address: a ? a.address : '', city: a ? a.city : '', fee: 0, pms: 0 };
+      order.push(key);
+    }
+    stores[key].pms++;
+    if (a && Number(a.pm_fee || 0) > stores[key].fee) { stores[key].fee = Number(a.pm_fee); }
+  });
+  return order.map(function(k) { return stores[k]; });
+}
+
+async function goPay() {
+  await loadPayouts();
+  payWeekOffset = 0;
+  screen = 'pay';
+  render();
+}
+
+function renderPay() {
+  var range = payWeekRange();
+  var list = myWeekStores(range);
+  var total = list.reduce(function(s, x) { return s + x.fee; }, 0);
+  var existing = payouts.find(function(p) { return p.tech_email === currentUser.email && p.week_start === range.start; });
+
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<h2 style="margin:0;flex:1">💰 Weekly Pay</h2>' +
+  '</div>';
+
+  h += '<div class="card" style="text-align:center">';
+  h += '<div style="display:flex;justify-content:space-between;align-items:center">' +
+    '<button class="btn btn-o" style="width:auto;padding:8px 14px" onclick="payWeekOffset--;render()">←</button>' +
+    '<div><div style="font-size:13px;color:var(--dim)">Week of</div><strong>' + range.start + ' – ' + range.end + '</strong></div>' +
+    '<button class="btn btn-o" style="width:auto;padding:8px 14px;opacity:' + (payWeekOffset >= 0 ? '.3' : '1') + '" onclick="if(payWeekOffset<0){payWeekOffset++;render()}">→</button>' +
+  '</div>';
+  h += '<div style="font-size:32px;font-weight:700;margin-top:10px">' + fee$(total) + '</div>';
+  h += '<div style="color:var(--dim);font-size:13px">' + list.length + ' store' + (list.length === 1 ? '' : 's') + ' completed</div>';
+  h += '</div>';
+
+  list.forEach(function(s) {
+    h += '<div class="hist-item" style="display:flex;justify-content:space-between;align-items:center">' +
+      '<span><strong>' + esc(s.store) + '</strong><br><span style="color:var(--dim);font-size:11px">' + esc(s.city) + ' &bull; ' + s.pms + ' PM' + (s.pms === 1 ? '' : 's') + '</span></span>' +
+      '<span style="font-weight:700;color:var(--gn)">' + fee$(s.fee) + '</span>' +
+    '</div>';
+  });
+  if (!list.length) {
+    h += '<p style="text-align:center;color:var(--dim);padding:20px 0">No completed stores this week</p>';
+  }
+
+  if (existing) {
+    h += '<div class="card" style="text-align:center;border-color:var(--gn)">' +
+      (existing.status === 'paid' ? '✅ Payout PAID — ' : '📨 Payout submitted — ') +
+      fee$(existing.amount) + ' for ' + existing.store_count + ' store' + (existing.store_count === 1 ? '' : 's') +
+    '</div>';
+  } else if (list.length > 0) {
+    h += submittingPayout
+      ? '<div class="card" style="text-align:center"><span class="spinner"></span> Submitting...</div>'
+      : '<button class="btn btn-s" style="margin-top:10px" onclick="submitPayout()">📨 Submit Weekly Payout (' + fee$(total) + ')</button>';
+  }
+  return h;
+}
+
+async function submitPayout() {
+  if (submittingPayout) return;
+  var range = payWeekRange();
+  var list = myWeekStores(range);
+  if (!list.length) return;
+  var total = list.reduce(function(s, x) { return s + x.fee; }, 0);
+  if (!confirm('Submit payout of ' + fee$(total) + ' for ' + list.length + ' store(s), week ' + range.start + ' – ' + range.end + '?')) return;
+
+  submittingPayout = true;
+  render();
+  var { error } = await sb.from('payouts').insert({
+    tech_email: currentUser.email,
+    week_start: range.start,
+    week_end: range.end,
+    store_count: list.length,
+    amount: total,
+    details: list
+  });
+  submittingPayout = false;
+  if (error) {
+    if (error.code === '23505') { showStatus('Payout already submitted for this week', 'err'); }
+    else { showStatus('Error: ' + error.message, 'err'); }
+  } else {
+    showStatus('Payout submitted!', 'ok');
+  }
+  await loadPayouts();
+  render();
+}
+
 // ===== Share PDF (email/text to Freshpet) =====
 async function sharePDF(path) {
   var url = SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + path;
@@ -708,6 +839,7 @@ function renderAdmin() {
     '<button class="' + (adminTab === 'routes' ? 'active' : '') + '" onclick="adminTab=\'routes\';render()">Routes</button>' +
     '<button class="' + (adminTab === 'import' ? 'active' : '') + '" onclick="adminTab=\'import\';render()">Accounts</button>' +
     '<button class="' + (adminTab === 'reports' ? 'active' : '') + '" onclick="adminTab=\'reports\';render()">Reports</button>' +
+    '<button class="' + (adminTab === 'pay' ? 'active' : '') + '" onclick="adminTab=\'pay\';render()">Pay</button>' +
   '</div>';
 
   if (adminTab === 'techs') {
@@ -716,10 +848,105 @@ function renderAdmin() {
     h += renderAdminRoutes();
   } else if (adminTab === 'import') {
     h += renderAdminImport();
-  } else {
+  } else if (adminTab === 'reports') {
     h += renderAdminReports();
+  } else {
+    h += renderAdminPay();
   }
   return h;
+}
+
+// ===== ADMIN PAY (fees & payout requests) =====
+function renderAdminPay() {
+  var h = '';
+  // Payout requests
+  h += '<h3 style="margin-bottom:10px">Payout Requests</h3>';
+  if (!payouts.length) {
+    h += '<p style="color:var(--dim);font-size:13px;margin-bottom:14px">No payouts submitted yet.</p>';
+  }
+  payouts.forEach(function(p) {
+    var tech = techProfiles.find(function(t) { return t.email === p.tech_email; });
+    h += '<div class="hist-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
+    h += '<span style="flex:1"><strong>' + esc(tech ? (tech.name || tech.email) : p.tech_email) + '</strong> &bull; ' + fee$(p.amount) +
+      '<br><span style="color:var(--dim);font-size:11px">' + esc(p.week_start) + ' – ' + esc(p.week_end) + ' &bull; ' + p.store_count + ' store' + (p.store_count === 1 ? '' : 's') + '</span></span>';
+    if (p.status === 'paid') {
+      h += '<span class="badge" style="background:var(--gn)">PAID</span>';
+    } else {
+      h += '<button class="btn btn-s" style="width:auto;padding:8px 14px;font-size:12px" onclick="markPayoutPaid(' + p.id + ')">Mark Paid</button>';
+    }
+    h += '</div>';
+  });
+
+  // Store fees
+  h += '<h3 style="margin:16px 0 10px">Store Fees</h3>';
+  h += '<div class="card">';
+  h += '<div style="display:flex;gap:8px;align-items:center">';
+  h += '<input type="number" id="bulkFee" placeholder="$ fee" step="0.01" min="0" style="flex:1;margin-bottom:0">';
+  h += '<button class="btn btn-p" style="width:auto;padding:10px 14px;font-size:13px" onclick="setAllFees()">Set ALL stores</button>';
+  h += '</div>';
+  h += '<p style="font-size:11px;color:var(--dim);margin-top:6px">Sets every store to this fee. Then adjust individual stores below.</p>';
+  h += '</div>';
+  h += '<div class="search"><input type="text" id="feeSearchInput" placeholder="Search store, city..." value="' + esc(feeSearch) + '"></div>';
+
+  // Group active assets by store location
+  var groups = {}, order = [];
+  ASSETS.forEach(function(a) {
+    if (feeSearch) {
+      var s = feeSearch.toLowerCase();
+      if (a.store.toLowerCase().indexOf(s) === -1 && a.city.toLowerCase().indexOf(s) === -1) return;
+    }
+    var key = a.store + '|' + a.address;
+    if (!groups[key]) { groups[key] = { store: a.store, address: a.address, city: a.city, fee: Number(a.pm_fee || 0), n: 0, key: key }; order.push(key); }
+    groups[key].n++;
+    if (Number(a.pm_fee || 0) > groups[key].fee) groups[key].fee = Number(a.pm_fee);
+  });
+
+  if (feeSearch && !order.length) {
+    h += '<p style="text-align:center;color:var(--dim);padding:20px 0">No stores found</p>';
+  }
+  var shown = feeSearch ? order : order.slice(0, 30);
+  shown.forEach(function(key, i) {
+    var g = groups[key];
+    h += '<div class="hist-item" style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
+    h += '<span style="flex:1"><strong>' + esc(g.store) + '</strong><br><span style="color:var(--dim);font-size:11px">' + esc(g.city) + ' &bull; ' + g.n + ' asset' + (g.n === 1 ? '' : 's') + '</span></span>';
+    h += '<input type="number" id="fee_' + i + '" value="' + g.fee.toFixed(2) + '" step="0.01" min="0" style="width:80px;margin-bottom:0;text-align:right">';
+    h += '<button class="btn btn-o" style="width:auto;padding:8px 12px;font-size:12px" onclick="saveStoreFee(' + i + ',\'' + esc(g.store).replace(/'/g, "\\'") + '\',\'' + esc(g.address).replace(/'/g, "\\'") + '\')">Save</button>';
+    h += '</div>';
+  });
+  if (!feeSearch && order.length > 30) {
+    h += '<p style="text-align:center;color:var(--dim);font-size:12px;padding:10px 0">Showing 30 of ' + order.length + ' stores — search to find others</p>';
+  }
+  return h;
+}
+
+async function markPayoutPaid(id) {
+  var { error } = await sb.from('payouts').update({ status: 'paid' }).eq('id', id);
+  if (error) { showStatus('Error: ' + error.message, 'err'); return; }
+  showStatus('Payout marked paid', 'ok');
+  await loadPayouts();
+  render();
+}
+
+async function saveStoreFee(i, store, address) {
+  var el = document.getElementById('fee_' + i);
+  var f = parseFloat(el && el.value);
+  if (isNaN(f) || f < 0) { showStatus('Enter a valid fee', 'err'); return; }
+  var { error } = await sb.from('assets').update({ pm_fee: f }).eq('store', store).eq('address', address);
+  if (error) { showStatus('Error: ' + error.message, 'err'); return; }
+  ASSETS.forEach(function(a) { if (a.store === store && a.address === address) a.pm_fee = f; });
+  showStatus(store + ' fee set to ' + fee$(f), 'ok');
+}
+
+async function setAllFees() {
+  var el = document.getElementById('bulkFee');
+  var f = parseFloat(el && el.value);
+  if (isNaN(f) || f < 0) { showStatus('Enter a valid fee', 'err'); return; }
+  if (!confirm('Set the PM fee for ALL stores to ' + fee$(f) + '?')) return;
+  var { error } = await sb.from('assets').update({ pm_fee: f }).eq('active', true);
+  if (error) { showStatus('Error: ' + error.message, 'err'); return; }
+  ASSETS.forEach(function(a) { a.pm_fee = f; });
+  showStatus('All stores set to ' + fee$(f), 'ok');
+  render();
 }
 
 // ===== ADMIN REPORTS (bulk PDF send) =====
@@ -875,11 +1102,13 @@ function renderAdminRoutes() {
     h += '</div>';
 
     stops.forEach(function(s, i) {
+      var ids = s.assets.map(function(a) { return a.id; });
       h += '<div class="stop-card">';
       h += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
       h += '<div><span class="stop-num pending">' + (i+1) + '</span><strong>' + esc(s.store) + '</strong><br>';
       h += '<span style="font-size:12px;color:var(--dim)">' + esc(s.address) + ', ' + esc(s.city) + '</span><br>';
       h += '<span style="font-size:12px;color:var(--dim)">' + s.assets.length + ' asset(s)</span></div>';
+      h += '<button class="remove-btn" title="Unassign" onclick="removeStopFromRoute([' + ids.join(',') + '])">✕</button>';
       h += '</div></div>';
     });
 
@@ -1180,6 +1409,17 @@ function renderRoute() {
     '<div class="progress-bar"><div class="fill" style="width:' + (stops.length > 0 ? (doneCount / stops.length * 100) : 0) + '%"></div></div>' +
   '</div>';
 
+  // Start/End day: re-optimize remaining stops from wherever you are
+  if (doneCount < stops.length) {
+    if (startingDay) {
+      h += '<div class="card" style="text-align:center"><span class="spinner"></span> Finding your location &amp; reordering route...</div>';
+    } else if (localStorage.getItem('fp_day_on')) {
+      h += '<button class="btn btn-o" style="margin-bottom:10px;border-color:var(--rd);color:var(--rd)" onclick="endDay()">🛑 End Day</button>';
+    } else {
+      h += '<button class="btn btn-s" style="margin-bottom:10px" onclick="startDay()">▶️ Start Day (route from my location)</button>';
+    }
+  }
+
   stops.forEach(function(s, i) {
     var isCurrent = !s.allDone && (i === 0 || stops[i-1].allDone);
     var cls = s.allDone ? 'completed' : (isCurrent ? 'current' : '');
@@ -1246,6 +1486,85 @@ function renderRouteStop() {
   return h;
 }
 
+// ===== Start / End Day =====
+var startingDay = false;
+
+function endDay() {
+  localStorage.removeItem('fp_day_on');
+  showStatus('Day ended — hit Start Day to pick back up', 'info');
+  render();
+}
+
+function getPosition() {
+  return new Promise(function(resolve) {
+    if (!navigator.geolocation) { resolve(null); return; }
+    navigator.geolocation.getCurrentPosition(
+      function(pos) { resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude }); },
+      function() { resolve(null); },
+      { enableHighAccuracy: true, timeout: 8000, maximumAge: 60000 }
+    );
+  });
+}
+
+async function startDay() {
+  if (startingDay) return;
+  startingDay = true;
+  render();
+
+  try {
+    var origin = await getPosition();
+    var stops = getRouteStops();
+    var doneStops = stops.filter(function(s) { return s.assets.every(function(a) { return isCompleted(a.serial); }); });
+    var todo = stops.filter(function(s) { return !s.assets.every(function(a) { return isCompleted(a.serial); }); });
+
+    if (!origin) {
+      // No GPS: start from the last completed stop, or keep current order
+      var last = doneStops[doneStops.length - 1];
+      if (last && last.assets[0]) { origin = { lat: last.assets[0].lat, lng: last.assets[0].lng }; }
+    }
+
+    if (origin && todo.length > 1) {
+      // Nearest-neighbor over the remaining stops from the origin
+      var ordered = [];
+      var remaining = todo.slice();
+      var cur = origin;
+      while (remaining.length > 0) {
+        var nearIdx = 0, nearDist = Infinity;
+        for (var i = 0; i < remaining.length; i++) {
+          var a0 = remaining[i].assets[0];
+          var d = haversine(cur.lat, cur.lng, a0.lat, a0.lng);
+          if (d < nearDist) { nearDist = d; nearIdx = i; }
+        }
+        ordered.push(remaining[nearIdx]);
+        cur = { lat: remaining[nearIdx].assets[0].lat, lng: remaining[nearIdx].assets[0].lng };
+        remaining.splice(nearIdx, 1);
+      }
+      todo = ordered;
+    }
+
+    // Persist new order: completed stops first, then re-optimized remainder
+    var seq = doneStops.concat(todo);
+    for (var s = 0; s < seq.length; s++) {
+      var ids = [];
+      myRoute.forEach(function(r) { if (r.stop_order === seq[s].order) ids.push(r.id); });
+      if (ids.length) {
+        var { error } = await sb.from('route_assignments').update({ stop_order: s }).in('id', ids);
+        if (error) { throw new Error(error.message); }
+      }
+    }
+
+    localStorage.setItem('fp_day_on', '1');
+    await loadMyRoute();
+    startingDay = false;
+    showStatus(origin ? 'Day started — route reordered from your location' : 'Day started (location unavailable — order unchanged)', 'ok');
+    render();
+  } catch (err) {
+    startingDay = false;
+    showStatus('Error reordering route: ' + err.message, 'err');
+    render();
+  }
+}
+
 function getRouteStops() {
   var stops = [];
   var seenOrder = {};
@@ -1269,6 +1588,8 @@ function goHistory() { screen = 'history'; render(); }
 
 async function goAdmin() {
   await loadTechProfiles();
+  await loadPayouts();
+  await loadAllAssignments();
   screen = 'admin';
   render();
 }
@@ -1346,8 +1667,9 @@ async function selectRouteTech(email) {
   render();
 }
 
-function goAddAssets() {
+async function goAddAssets() {
   // Switch to asset picker mode
+  await loadAllAssignments();
   screen = 'adminAssetPicker';
   search = '';
   render();
@@ -1383,9 +1705,21 @@ async function optimizeAndSaveRoute() {
 
 async function clearRoute() {
   if (!adminSelectedTech) return;
+  if (!confirm('Unassign ALL stores from this tech?')) return;
   await sb.from('route_assignments').delete().eq('tech_email', adminSelectedTech);
   adminTechAssets = [];
+  await loadAllAssignments();
   showStatus('Route cleared', 'ok');
+  render();
+}
+
+async function removeStopFromRoute(assetIds) {
+  if (!adminSelectedTech) return;
+  var { error } = await sb.from('route_assignments').delete().eq('tech_email', adminSelectedTech).in('asset_id', assetIds);
+  if (error) { showStatus('Error: ' + error.message, 'err'); return; }
+  adminTechAssets = adminTechAssets.filter(function(id) { return assetIds.indexOf(id) === -1; });
+  await loadAllAssignments();
+  showStatus('Store unassigned', 'ok');
   render();
 }
 
@@ -1590,12 +1924,18 @@ function renderAdminAssetPicker() {
            a.address.toLowerCase().indexOf(s) > -1;
   });
 
+  // Who has each asset (one tech per store: taken stores can't be added)
+  var assignedTo = {};
+  allAssignments.forEach(function(ra) { assignedTo[ra.asset_id] = ra.tech_email; });
+
   filtered.forEach(function(a) {
     var key = a.store + '|' + a.address + '|' + a.city;
     if (!groups[key]) {
-      groups[key] = { store: a.store, address: a.address, city: a.city, assets: [], allAssigned: true };
+      groups[key] = { store: a.store, address: a.address, city: a.city, assets: [], allAssigned: true, takenBy: null };
       groupOrder.push(key);
     }
+    var owner = assignedTo[a.id];
+    if (owner && owner !== adminSelectedTech) { groups[key].takenBy = owner; }
     var assigned = adminTechAssets.indexOf(a.id) > -1;
     if (!assigned) groups[key].allAssigned = false;
     groups[key].assets.push({ asset: a, assigned: assigned });
@@ -1606,7 +1946,10 @@ function renderAdminAssetPicker() {
     h += '<div class="store-grp">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center">';
     h += '<h4>📍 ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
-    if (!g.allAssigned) {
+    if (g.takenBy) {
+      var owner = techProfiles.find(function(t) { return t.email === g.takenBy; });
+      h += '<span style="color:var(--or);font-size:12px">🔒 ' + esc(owner ? (owner.name || owner.email) : g.takenBy) + '</span>';
+    } else if (!g.allAssigned) {
       var ids = g.assets.filter(function(x) { return !x.assigned; }).map(function(x) { return x.asset.id; });
       h += '<button class="btn btn-p" style="width:auto;padding:6px 12px;font-size:12px" onclick="addStoreToRoute([' + ids.join(',') + '])">+ Add All</button>';
     } else {
@@ -1639,14 +1982,17 @@ async function addStoreToRoute(assetIds) {
   var { error } = await sb.from('route_assignments').insert(inserts);
   if (error) {
     if (error.code === '23505') {
-      showStatus('Some assets already assigned', 'info');
+      showStatus('Store is already assigned to another tech', 'err');
+      await loadAllAssignments();
     } else {
       showStatus('Error: ' + error.message, 'err');
     }
+    render();
     return;
   }
 
   adminTechAssets = adminTechAssets.concat(toAdd);
+  await loadAllAssignments();
   showStatus(toAdd.length + ' asset(s) added to route', 'ok');
   render();
 }
@@ -1658,6 +2004,10 @@ function bindEvents() {
     si.addEventListener('input', function() { search = this.value; render(); });
     si.focus();
     si.setSelectionRange(si.value.length, si.value.length);
+  }
+  var fsi = document.getElementById('feeSearchInput');
+  if (fsi) {
+    fsi.addEventListener('input', function() { feeSearch = this.value; render(); var el = document.getElementById('feeSearchInput'); if (el) { el.focus(); el.setSelectionRange(el.value.length, el.value.length); } });
   }
 
   document.querySelectorAll('.asset-btn').forEach(function(btn) {
@@ -1712,6 +2062,7 @@ render = function() {
   else if (screen === 'select') { html += renderSelect(); }
   else if (screen === 'checklist') { html += renderChecklist(); }
   else if (screen === 'history') { html += renderHistory(); }
+  else if (screen === 'pay') { html += renderPay(); }
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
