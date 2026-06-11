@@ -110,7 +110,12 @@ var submitting = false;
 // Role & Admin state
 var userRole = null; // 'admin' or 'tech'
 var techProfiles = [];
-var adminTab = 'techs'; // 'techs' or 'routes'
+var adminTab = 'techs'; // 'techs', 'routes' or 'import'
+// Import state
+var importPreview = null; // { rows, newCount, updateCount, deactivateSerials, skipped }
+var importFileName = '';
+var importing = false;
+var importFullReplace = true;
 var adminSelectedTech = '';
 var adminTechAssets = []; // asset IDs assigned to selected tech
 // Route state (for tech view)
@@ -596,12 +601,15 @@ function renderAdmin() {
   h += '<div class="tab-bar">' +
     '<button class="' + (adminTab === 'techs' ? 'active' : '') + '" onclick="adminTab=\'techs\';render()">Technicians</button>' +
     '<button class="' + (adminTab === 'routes' ? 'active' : '') + '" onclick="adminTab=\'routes\';render()">Routes</button>' +
+    '<button class="' + (adminTab === 'import' ? 'active' : '') + '" onclick="adminTab=\'import\';render()">Accounts</button>' +
   '</div>';
 
   if (adminTab === 'techs') {
     h += renderAdminTechs();
-  } else {
+  } else if (adminTab === 'routes') {
     h += renderAdminRoutes();
+  } else {
+    h += renderAdminImport();
   }
   return h;
 }
@@ -678,6 +686,246 @@ function renderAdminRoutes() {
     }
   }
   return h;
+}
+
+// ===== ACCOUNT IMPORT (CSV from Freshpet) =====
+function renderAdminImport() {
+  var h = '<div class="card">';
+  h += '<h3>Reload Accounts from Spreadsheet</h3>';
+  h += '<p style="font-size:13px;color:var(--dim);margin-bottom:10px">Upload the Freshpet asset list as a CSV file. In Google Sheets: File &rarr; Download &rarr; Comma Separated Values (.csv). Assets are matched by serial number &mdash; existing assets are updated, new ones are added.</p>';
+  h += '<input type="file" id="csvFileInput" accept=".csv,text/csv" onchange="handleCSVFile(this)" style="width:100%;padding:10px;background:var(--sf2);border:1px solid var(--bd);border-radius:8px;color:var(--tx);font-size:13px;margin-bottom:8px">';
+  h += '</div>';
+
+  if (importing) {
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Importing accounts...</div>';
+    return h;
+  }
+
+  if (importPreview) {
+    var p = importPreview;
+    h += '<div class="card">';
+    h += '<h3>Preview: ' + esc(importFileName) + '</h3>';
+    h += '<div style="font-size:14px;line-height:1.9">';
+    h += '📄 ' + p.rows.length + ' assets in file<br>';
+    h += '➕ <strong>' + p.newCount + '</strong> new assets will be added<br>';
+    h += '🔄 <strong>' + p.updateCount + '</strong> existing assets will be updated<br>';
+    h += '🗑️ <strong>' + p.deactivateSerials.length + '</strong> current assets are not in the file';
+    h += '</div>';
+    if (p.skipped.length) {
+      h += '<h3>Skipped Rows (' + p.skipped.length + ')</h3>';
+      h += '<div style="font-size:12px;color:var(--dim);max-height:120px;overflow-y:auto">';
+      p.skipped.slice(0, 15).forEach(function(s) { h += esc(s) + '<br>'; });
+      if (p.skipped.length > 15) { h += '...and ' + (p.skipped.length - 15) + ' more'; }
+      h += '</div>';
+    }
+    h += '<label style="margin-top:10px"><input type="checkbox" onchange="importFullReplace=this.checked"' + (importFullReplace ? ' checked' : '') + '> Remove accounts not in this file (full replace)</label>';
+    h += '<button class="btn btn-s" style="margin-top:10px" onclick="runImport()">✅ Apply Import</button>';
+    h += '<button class="btn btn-o" style="margin-top:8px" onclick="importPreview=null;render()">Cancel</button>';
+    h += '</div>';
+  }
+
+  h += '<div class="card" style="font-size:12px;color:var(--dim)">';
+  h += 'Currently loaded: <strong style="color:var(--tx)">' + ASSETS.length + '</strong> active assets.<br>';
+  h += 'Removed accounts are deactivated (hidden), not deleted, so PM history is preserved. Photos, PDFs, routes and PM records are never touched by an import.';
+  h += '</div>';
+  return h;
+}
+
+function parseCSV(text) {
+  var rows = [], row = [], cur = '', inQ = false;
+  for (var i = 0; i < text.length; i++) {
+    var c = text[i];
+    if (inQ) {
+      if (c === '"') { if (text[i+1] === '"') { cur += '"'; i++; } else { inQ = false; } }
+      else { cur += c; }
+    }
+    else if (c === '"') { inQ = true; }
+    else if (c === ',') { row.push(cur); cur = ''; }
+    else if (c === '\n') { row.push(cur); cur = ''; if (row.some(function(x){ return x.trim() !== ''; })) rows.push(row); row = []; }
+    else if (c !== '\r') { cur += c; }
+  }
+  row.push(cur);
+  if (row.some(function(x){ return x.trim() !== ''; })) rows.push(row);
+  return rows;
+}
+
+// Maps Freshpet export headers (and simple ones) to asset fields
+var CSV_COLMAP = {
+  store: ['account name', 'store', 'store name'],
+  address: ['shipping address line 1', 'address', 'shipping street'],
+  city: ['city'],
+  state: ['shipping state/province', 'state', 'state/province'],
+  zip: ['shipping zip/postal code', 'zip', 'zip/postal code', 'zip code', 'postal code'],
+  phone: ['phone'],
+  manufacturer: ['manufacturer'],
+  model: ['model'],
+  serial: ['asset: serial number', 'serial number', 'serial'],
+  warranty: ['warranty']
+};
+
+function mapCSVHeader(headerRow) {
+  var idx = {};
+  headerRow.forEach(function(cell, i) {
+    var n = cell.trim().toLowerCase().replace(/^location:\s*/, '');
+    for (var field in CSV_COLMAP) {
+      if (idx[field] === undefined && CSV_COLMAP[field].indexOf(n) > -1) { idx[field] = i; }
+    }
+  });
+  return idx;
+}
+
+function handleCSVFile(input) {
+  var file = input.files && input.files[0];
+  if (!file) return;
+  importFileName = file.name;
+  var reader = new FileReader();
+  reader.onload = function(e) { buildImportPreview(e.target.result); };
+  reader.readAsText(file);
+}
+
+async function buildImportPreview(text) {
+  var raw = parseCSV(text);
+  if (raw.length < 2) { showStatus('CSV file appears to be empty', 'err'); return; }
+
+  var idx = mapCSVHeader(raw[0]);
+  var required = ['store', 'address', 'city', 'zip', 'serial'];
+  var missing = required.filter(function(f) { return idx[f] === undefined; });
+  if (missing.length) {
+    showStatus('CSV is missing columns: ' + missing.join(', '), 'err');
+    return;
+  }
+
+  var rows = [], skipped = [], seen = {};
+  for (var i = 1; i < raw.length; i++) {
+    var r = raw[i];
+    var get = function(f) { return idx[f] !== undefined && r[idx[f]] !== undefined ? r[idx[f]].trim() : ''; };
+    var rec = {
+      store: get('store'), address: get('address'), city: get('city'),
+      state: get('state') || 'CA', zip: get('zip'), phone: get('phone'),
+      manufacturer: get('manufacturer'), model: get('model'),
+      serial: get('serial'), warranty: get('warranty')
+    };
+    // Some Freshpet exports have a second section where City is inserted
+    // before State, shifting city->state, state->zip, zip->city, and phone
+    // ends up one column to the right.
+    if (!/^\d{5}/.test(rec.zip) && /^[A-Z]{2}$/i.test(rec.zip) && /^\d{5}/.test(rec.city)) {
+      var shifted = { city: rec.state, state: rec.zip, zip: rec.city };
+      if (idx.phone !== undefined && r[idx.phone + 1] !== undefined && /^USA$/i.test(rec.phone)) {
+        shifted.phone = r[idx.phone + 1].trim();
+      }
+      rec.city = shifted.city; rec.state = shifted.state; rec.zip = shifted.zip;
+      if (shifted.phone) rec.phone = shifted.phone;
+    }
+    // Skip repeated header rows, broken serials, and rows without a usable zip
+    if (/serial/i.test(rec.serial) || /header/i.test(rec.serial)) { continue; }
+    if (!rec.serial || rec.serial === '#REF!' || /^:?-+:?$/.test(rec.serial)) {
+      skipped.push('Row ' + (i + 1) + ': missing/invalid serial (' + (rec.store || '?') + ' ' + rec.model + ')');
+      continue;
+    }
+    if (!/^\d{5}/.test(rec.zip)) {
+      skipped.push('Row ' + (i + 1) + ': invalid zip "' + rec.zip + '" (' + rec.store + ', S/N ' + rec.serial + ')');
+      continue;
+    }
+    var key = rec.serial.toUpperCase();
+    if (seen[key]) { skipped.push('Row ' + (i + 1) + ': duplicate serial ' + rec.serial + ' (' + rec.store + ')'); continue; }
+    seen[key] = true;
+    rec.zip = rec.zip.substring(0, 5);
+    rows.push(rec);
+  }
+
+  if (rows.length === 0) { showStatus('No valid asset rows found in file', 'err'); return; }
+
+  // Compare against ALL assets in DB (including deactivated ones)
+  var { data: existing, error } = await sb.from('assets').select('id,serial,zip,lat,lng,active');
+  if (error) { showStatus('Failed to read current assets: ' + error.message, 'err'); return; }
+  var bySerial = {};
+  (existing || []).forEach(function(a) { bySerial[(a.serial || '').toUpperCase()] = a; });
+
+  var newCount = 0, updateCount = 0;
+  rows.forEach(function(rec) {
+    if (bySerial[rec.serial.toUpperCase()]) { updateCount++; } else { newCount++; }
+  });
+  var fileSerials = {};
+  rows.forEach(function(rec) { fileSerials[rec.serial.toUpperCase()] = true; });
+  var deactivateSerials = (existing || []).filter(function(a) {
+    return a.active && !fileSerials[(a.serial || '').toUpperCase()];
+  }).map(function(a) { return a.serial; });
+
+  importPreview = { rows: rows, newCount: newCount, updateCount: updateCount, deactivateSerials: deactivateSerials, skipped: skipped, existingBySerial: bySerial };
+  render();
+}
+
+async function geocodeZip(zip, cache) {
+  if (cache[zip] !== undefined) return cache[zip];
+  try {
+    var resp = await fetch('https://api.zippopotam.us/us/' + zip);
+    if (resp.ok) {
+      var d = await resp.json();
+      var p = d.places && d.places[0];
+      cache[zip] = p ? { lat: parseFloat(p.latitude), lng: parseFloat(p.longitude) } : null;
+    } else { cache[zip] = null; }
+  } catch (e) { cache[zip] = null; }
+  return cache[zip];
+}
+
+async function runImport() {
+  if (!importPreview || importing) return;
+  importing = true;
+  render();
+
+  try {
+    var p = importPreview;
+    var bySerial = p.existingBySerial;
+
+    // lat/lng: keep existing coordinates; for new assets reuse coordinates of
+    // another asset in the same zip, otherwise geocode the zip
+    var zipLL = {};
+    for (var s in bySerial) {
+      var a = bySerial[s];
+      if (a.lat != null && zipLL[a.zip] === undefined) { zipLL[a.zip] = { lat: a.lat, lng: a.lng }; }
+    }
+    var geoCache = {};
+    var upserts = [];
+    for (var i = 0; i < p.rows.length; i++) {
+      var rec = p.rows[i];
+      var existing = bySerial[rec.serial.toUpperCase()];
+      var ll = existing && existing.lat != null ? { lat: existing.lat, lng: existing.lng }
+        : (zipLL[rec.zip] || await geocodeZip(rec.zip, geoCache));
+      upserts.push({
+        store: rec.store, address: rec.address, city: rec.city, state: rec.state,
+        zip: rec.zip, phone: rec.phone, manufacturer: rec.manufacturer, model: rec.model,
+        serial: existing ? existing.serial : rec.serial, warranty: rec.warranty,
+        active: true, lat: ll ? ll.lat : null, lng: ll ? ll.lng : null,
+        updated_at: new Date().toISOString()
+      });
+    }
+
+    for (var j = 0; j < upserts.length; j += 100) {
+      var { error: upErr } = await sb.from('assets').upsert(upserts.slice(j, j + 100), { onConflict: 'serial' });
+      if (upErr) { throw new Error('Import failed at row ' + (j + 1) + ': ' + upErr.message); }
+    }
+
+    var deactivated = 0;
+    if (importFullReplace && p.deactivateSerials.length) {
+      for (var k = 0; k < p.deactivateSerials.length; k += 100) {
+        var chunk = p.deactivateSerials.slice(k, k + 100);
+        var { error: deErr } = await sb.from('assets').update({ active: false, updated_at: new Date().toISOString() }).in('serial', chunk);
+        if (deErr) { throw new Error('Deactivation failed: ' + deErr.message); }
+        deactivated += chunk.length;
+      }
+    }
+
+    await loadAssets();
+    importing = false;
+    var msg = 'Import complete: ' + p.newCount + ' added, ' + p.updateCount + ' updated';
+    if (deactivated) { msg += ', ' + deactivated + ' removed'; }
+    importPreview = null;
+    showStatus(msg, 'ok');
+  } catch (err) {
+    importing = false;
+    showStatus('Error: ' + err.message, 'err');
+    render();
+  }
 }
 
 // ===== TECH ROUTE VIEW =====
