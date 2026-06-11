@@ -115,7 +115,12 @@ var submitting = false;
 // Role & Admin state
 var userRole = null; // 'admin' or 'tech'
 var techProfiles = [];
-var adminTab = 'techs'; // 'techs', 'routes' or 'import'
+var adminTab = 'techs'; // 'techs', 'routes', 'import' or 'reports'
+// Reports state (bulk PDF send)
+var reportSel = {};
+var reportFrom = new Date(Date.now() - 29 * 864e5).toISOString().split('T')[0];
+var reportTo = new Date().toISOString().split('T')[0];
+var sharingReports = false;
 // Import state
 var importPreview = null; // { rows, newCount, updateCount, deactivateSerials, skipped }
 var importFileName = '';
@@ -699,19 +704,120 @@ function renderAdmin() {
   '</div>';
 
   h += '<div class="tab-bar">' +
-    '<button class="' + (adminTab === 'techs' ? 'active' : '') + '" onclick="adminTab=\'techs\';render()">Technicians</button>' +
+    '<button class="' + (adminTab === 'techs' ? 'active' : '') + '" onclick="adminTab=\'techs\';render()">Techs</button>' +
     '<button class="' + (adminTab === 'routes' ? 'active' : '') + '" onclick="adminTab=\'routes\';render()">Routes</button>' +
     '<button class="' + (adminTab === 'import' ? 'active' : '') + '" onclick="adminTab=\'import\';render()">Accounts</button>' +
+    '<button class="' + (adminTab === 'reports' ? 'active' : '') + '" onclick="adminTab=\'reports\';render()">Reports</button>' +
   '</div>';
 
   if (adminTab === 'techs') {
     h += renderAdminTechs();
   } else if (adminTab === 'routes') {
     h += renderAdminRoutes();
-  } else {
+  } else if (adminTab === 'import') {
     h += renderAdminImport();
+  } else {
+    h += renderAdminReports();
   }
   return h;
+}
+
+// ===== ADMIN REPORTS (bulk PDF send) =====
+function getReportList() {
+  return completedPMs.filter(function(pm) {
+    if (!pm.pdf_path) return false;
+    if (reportFrom && pm.pm_date < reportFrom) return false;
+    if (reportTo && pm.pm_date > reportTo) return false;
+    return true;
+  });
+}
+
+function renderAdminReports() {
+  var h = '<div class="card">';
+  h += '<h3>Send PM Reports</h3>';
+  h += '<p style="font-size:12px;color:var(--dim);margin-bottom:8px">Select completed PMs and send all their PDFs to Freshpet in one go.</p>';
+  h += '<div style="display:flex;gap:8px">' +
+    '<div style="flex:1">' + lbl('From') + '<input type="date" value="' + esc(reportFrom) + '" onchange="reportFrom=this.value;render()"></div>' +
+    '<div style="flex:1">' + lbl('To') + '<input type="date" value="' + esc(reportTo) + '" onchange="reportTo=this.value;render()"></div>' +
+  '</div>';
+  h += '</div>';
+
+  var list = getReportList();
+  var selCount = list.filter(function(pm) { return reportSel[pm.id]; }).length;
+
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<h3 style="margin:0">' + list.length + ' Report' + (list.length === 1 ? '' : 's') + '</h3>';
+  if (list.length) {
+    h += '<button class="btn btn-o" style="width:auto;padding:6px 12px;font-size:12px" onclick="toggleAllReports()">' +
+      (selCount === list.length ? 'Select None' : 'Select All') + '</button>';
+  }
+  h += '</div>';
+
+  if (sharingReports) {
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Preparing ' + selCount + ' PDF' + (selCount === 1 ? '' : 's') + '...</div>';
+  } else if (selCount > 0) {
+    h += '<button class="btn btn-s" style="margin-bottom:10px" onclick="shareSelectedReports()">📤 Send ' + selCount + ' PDF' + (selCount === 1 ? '' : 's') + '</button>';
+  }
+
+  list.forEach(function(pm) {
+    h += '<label class="asset-check"><input type="checkbox" onchange="reportSel[' + pm.id + ']=this.checked;render()"' + (reportSel[pm.id] ? ' checked' : '') + '>';
+    h += '<span style="flex:1"><strong>' + esc(pm.store) + '</strong> &bull; <span style="color:var(--gn)">' + esc(pm.pm_date) + '</span>' +
+      '<br><span style="color:var(--dim);font-size:11px">S/N ' + esc(pm.serial) + (pm.tech_name ? ' &bull; ' + esc(pm.tech_name) : '') + '</span></span></label>';
+  });
+  if (!list.length) {
+    h += '<p style="text-align:center;color:var(--dim);padding:20px 0">No PM reports in this date range</p>';
+  }
+  return h;
+}
+
+function toggleAllReports() {
+  var list = getReportList();
+  var allSelected = list.length > 0 && list.every(function(pm) { return reportSel[pm.id]; });
+  list.forEach(function(pm) { reportSel[pm.id] = !allSelected; });
+  render();
+}
+
+async function shareSelectedReports() {
+  if (sharingReports) return;
+  var list = getReportList().filter(function(pm) { return reportSel[pm.id]; });
+  if (!list.length) return;
+  sharingReports = true;
+  render();
+
+  try {
+    var files = [];
+    for (var i = 0; i < list.length; i++) {
+      var url = SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + list[i].pdf_path;
+      var resp = await fetch(url);
+      if (!resp.ok) { throw new Error('Could not fetch PDF for ' + list[i].store + ' (' + list[i].pm_date + ')'); }
+      var blob = await resp.blob();
+      files.push(new File([blob], list[i].pdf_path.split('/').pop(), { type: 'application/pdf' }));
+    }
+    sharingReports = false;
+
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: files }))) {
+      await navigator.share({ files: files, title: 'Freshpet PM Reports' });
+      showStatus(files.length + ' PDF' + (files.length === 1 ? '' : 's') + ' sent', 'ok');
+    } else {
+      // No share sheet (desktop browsers): download each file instead
+      files.forEach(function(f, idx) {
+        setTimeout(function() {
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(f);
+          a.download = f.name;
+          a.click();
+          setTimeout(function() { URL.revokeObjectURL(a.href); }, 10000);
+        }, idx * 300);
+      });
+      showStatus('Share sheet not available — downloading ' + files.length + ' PDF' + (files.length === 1 ? '' : 's'), 'info');
+    }
+    render();
+  } catch (err) {
+    sharingReports = false;
+    if (err.name === 'AbortError') { render(); return; } // user closed the share sheet
+    showStatus('Error: ' + err.message, 'err');
+    render();
+  }
 }
 
 function renderAdminTechs() {
