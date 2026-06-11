@@ -1,0 +1,1244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Freshpet PM Checklist</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<style>
+:root{--bg:#0f1117;--sf:#1a1d27;--sf2:#232733;--bd:#2e3340;--tx:#e4e6ed;--dim:#8b8f9e;--ac:#3b82f6;--gn:#22c55e;--rd:#ef4444;--or:#f59e0b}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:env(safe-area-inset-bottom)}
+.app{max-width:480px;margin:0 auto;padding:16px}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-bottom:12px}
+.btn{display:block;width:100%;padding:14px;border:none;border-radius:10px;font-size:15px;font-weight:600;cursor:pointer;text-align:center;transition:opacity .2s}
+.btn:active{opacity:.7}
+.btn-p{background:var(--ac);color:#fff}
+.btn-s{background:var(--gn);color:#fff}
+.btn-d{background:var(--rd);color:#fff}
+.btn-o{background:var(--sf2);color:var(--tx);border:1px solid var(--bd)}
+h1{font-size:22px;text-align:center;margin-bottom:4px}
+h2{font-size:17px;margin-bottom:12px;color:var(--ac)}
+h3{font-size:14px;color:var(--or);margin:14px 0 8px;text-transform:uppercase;letter-spacing:.5px}
+.sub{text-align:center;color:var(--dim);font-size:13px;margin-bottom:16px}
+input[type=text],input[type=date],input[type=number],input[type=email],textarea,select{width:100%;padding:10px 12px;background:var(--sf2);border:1px solid var(--bd);border-radius:8px;color:var(--tx);font-size:14px;margin-bottom:8px}
+textarea{min-height:80px;resize:vertical}
+label{display:flex;align-items:center;gap:8px;padding:6px 0;font-size:14px;color:var(--tx);cursor:pointer}
+label input[type=checkbox]{width:18px;height:18px;accent-color:var(--ac)}
+.search{position:sticky;top:0;z-index:10;padding:8px 0;background:var(--bg)}
+.search input{margin-bottom:0}
+.store-grp{margin-bottom:16px}
+.store-grp h4{font-size:13px;color:var(--dim);margin-bottom:6px;padding:0 4px}
+.asset-btn{display:block;width:100%;text-align:left;padding:12px;background:var(--sf2);border:1px solid var(--bd);border-radius:8px;color:var(--tx);font-size:14px;margin-bottom:6px;cursor:pointer;border-left:3px solid var(--ac)}
+.asset-btn:active{opacity:.7}
+.asset-btn .ser{color:var(--dim);font-size:12px}
+.asset-btn.done{border-left-color:var(--gn);opacity:.65}
+.photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
+.photo-grid div{position:relative;aspect-ratio:1;border-radius:8px;overflow:hidden}
+.photo-grid img{width:100%;height:100%;object-fit:cover}
+.photo-grid .del{position:absolute;top:4px;right:4px;background:var(--rd);color:#fff;border:none;border-radius:50%;width:24px;height:24px;font-size:14px;cursor:pointer;line-height:24px;text-align:center}
+.status{position:fixed;top:0;left:0;right:0;padding:14px;text-align:center;font-weight:600;z-index:100;font-size:14px}
+.status.ok{background:var(--gn);color:#fff}
+.status.err{background:var(--rd);color:#fff}
+.status.info{background:var(--ac);color:#fff}
+.hist-item{padding:10px;background:var(--sf2);border-radius:8px;margin-bottom:6px;font-size:13px}
+.hist-item .dt{color:var(--gn);font-weight:600}
+.login-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:20px;text-align:center}
+.login-wrap h1{font-size:26px}
+.login-wrap .logo{font-size:48px}
+.login-btn{display:flex;align-items:center;justify-content:center;gap:10px;padding:14px 28px;background:#fff;color:#333;border:none;border-radius:10px;font-size:16px;font-weight:600;cursor:pointer}
+.login-btn:active{opacity:.7}
+.login-btn svg{width:20px;height:20px}
+.user-bar{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;background:var(--sf);border:1px solid var(--bd);border-radius:10px;margin-bottom:12px;font-size:13px}
+.user-bar .email{color:var(--dim);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px}
+.user-bar button{background:var(--sf2);color:var(--dim);border:1px solid var(--bd);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
+.spinner{display:inline-block;width:18px;height:18px;border:2px solid var(--bd);border-top-color:var(--ac);border-radius:50%;animation:spin .6s linear infinite;vertical-align:middle;margin-right:6px}
+@keyframes spin{to{transform:rotate(360deg)}}
+.progress-bar{height:3px;background:var(--bd);border-radius:2px;margin:8px 0;overflow:hidden}
+.progress-bar .fill{height:100%;background:var(--ac);transition:width .3s}
+/* Admin & Route styles */
+.tab-bar{display:flex;gap:4px;margin-bottom:16px}
+.tab-bar button{flex:1;padding:10px;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;background:var(--sf2);color:var(--dim);border:1px solid var(--bd)}
+.tab-bar button.active{background:var(--ac);color:#fff;border-color:var(--ac)}
+.stop-card{background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:14px;margin-bottom:10px;border-left:4px solid var(--dim)}
+.stop-card.current{border-left-color:var(--ac);background:var(--sf2)}
+.stop-card.completed{border-left-color:var(--gn);opacity:.7}
+.stop-num{display:inline-flex;align-items:center;justify-content:center;width:26px;height:26px;border-radius:50%;font-size:12px;font-weight:700;margin-right:8px}
+.stop-num.current{background:var(--ac);color:#fff}
+.stop-num.done{background:var(--gn);color:#fff}
+.stop-num.pending{background:var(--sf2);color:var(--dim);border:1px solid var(--bd)}
+.nav-btn{display:inline-flex;align-items:center;gap:6px;padding:10px 16px;background:#1a73e8;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;margin-top:8px}
+.nav-btn:active{opacity:.7}
+.tech-row{display:flex;align-items:center;justify-content:space-between;padding:10px;background:var(--sf2);border-radius:8px;margin-bottom:6px;font-size:13px}
+.tech-row .role{font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600}
+.tech-row .role.admin{background:var(--or);color:#000}
+.tech-row .role.tech{background:var(--ac);color:#fff}
+.badge{display:inline-block;font-size:11px;padding:2px 8px;border-radius:4px;font-weight:600;background:var(--ac);color:#fff;margin-left:6px}
+.asset-check{display:flex;align-items:center;gap:8px;padding:10px;background:var(--sf2);border:1px solid var(--bd);border-radius:8px;margin-bottom:6px;font-size:13px;cursor:pointer}
+.asset-check:active{opacity:.7}
+.asset-check input{width:18px;height:18px;accent-color:var(--ac)}
+.remove-btn{background:none;border:none;color:var(--rd);font-size:18px;cursor:pointer;padding:4px 8px}
+</style>
+</head>
+<body>
+<div class="app" id="app"></div>
+<script>
+// ===== Supabase Init =====
+var SUPA_URL = 'https://mmkncrsaijexezmhfmiw.supabase.co';
+var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ta25jcnNhaWpleGV6bWhmbWl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3OTkyMjUsImV4cCI6MjA5NjM3NTIyNX0.lx4J-YhlFFrQVJMqjeBXXHNmgZfRe23xYGKZMEL8dPM';
+var sb = supabase.createClient(SUPA_URL, SUPA_KEY, {
+  auth: { flowType: 'implicit' }
+});
+
+// ===== State =====
+var screen = 'loading';
+var search = '';
+var ASSETS = [];
+var selectedAsset = null;
+var selectedStoreIdx = -1;
+var selectedAssetIdx = -1;
+var form = {};
+var photos = [];
+var completedPMs = [];
+var statusMsg = '';
+var statusType = 'ok';
+var currentUser = null;
+var submitting = false;
+// Role & Admin state
+var userRole = null; // 'admin' or 'tech'
+var techProfiles = [];
+var adminTab = 'techs'; // 'techs' or 'routes'
+var adminSelectedTech = '';
+var adminTechAssets = []; // asset IDs assigned to selected tech
+// Route state (for tech view)
+var myRoute = []; // route assignments + asset data
+var currentStopIdx = 0;
+var routeFromChecklist = false; // track if we came from route view
+
+// ===== LocalStorage helpers =====
+function saveProgress() {
+  try { localStorage.setItem('fp_progress', JSON.stringify({ si: selectedStoreIdx, ai: selectedAssetIdx, form: form })); } catch(e) {}
+}
+function loadProgress() {
+  try { var d = JSON.parse(localStorage.getItem('fp_progress')); if (d) { selectedStoreIdx = d.si; selectedAssetIdx = d.ai; form = d.form || {}; return true; } } catch(e) {}
+  return false;
+}
+function clearProgress() {
+  localStorage.removeItem('fp_progress');
+  photos = [];
+}
+
+// ===== Auth =====
+async function initAuth() {
+  var { data: { session } } = await sb.auth.getSession();
+  if (session) {
+    currentUser = session.user;
+    await loadAssets();
+    await loadCompletedPMs();
+    await checkUserRole();
+    screen = 'home';
+  } else {
+    screen = 'login';
+  }
+  render();
+
+  sb.auth.onAuthStateChange(async function(event, session) {
+    if (event === 'SIGNED_IN' && session) {
+      currentUser = session.user;
+      await loadAssets();
+      await loadCompletedPMs();
+      await checkUserRole();
+      screen = 'home';
+      render();
+    } else if (event === 'SIGNED_OUT') {
+      currentUser = null;
+      ASSETS = [];
+      completedPMs = [];
+      userRole = null;
+      screen = 'login';
+      render();
+    }
+  });
+}
+
+async function signInGoogle() {
+  var { error } = await sb.auth.signInWithOAuth({
+    provider: 'google',
+    options: { redirectTo: window.location.origin }
+  });
+  if (error) { showStatus('Login failed: ' + error.message, 'err'); }
+}
+
+async function signOut() {
+  await sb.auth.signOut();
+}
+
+// ===== Role Check =====
+async function checkUserRole() {
+  if (!currentUser) return;
+  var email = currentUser.email;
+  var { data } = await sb.from('tech_profiles').select('*').eq('email', email).single();
+  if (data) {
+    userRole = data.role;
+  } else {
+    // Auto-create tech profile for new users
+    await sb.from('tech_profiles').insert({ email: email, name: currentUser.user_metadata?.full_name || email.split('@')[0], role: 'tech' });
+    userRole = 'tech';
+  }
+}
+
+// ===== Data Loading =====
+async function loadAssets() {
+  var { data, error } = await sb.from('assets').select('*').eq('active', true).order('city').order('store');
+  if (error) { showStatus('Failed to load assets: ' + error.message, 'err'); return; }
+  ASSETS = data || [];
+}
+
+async function loadCompletedPMs() {
+  var { data, error } = await sb.from('completed_pms').select('*').order('created_at', { ascending: false });
+  if (!error && data) { completedPMs = data; }
+}
+
+async function loadTechProfiles() {
+  var { data } = await sb.from('tech_profiles').select('*').order('role').order('email');
+  techProfiles = data || [];
+}
+
+async function loadTechRoute(email) {
+  var { data } = await sb.from('route_assignments').select('*').eq('tech_email', email).eq('active', true).order('stop_order');
+  if (!data || data.length === 0) { adminTechAssets = []; return; }
+  adminTechAssets = data.map(function(r) { return r.asset_id; });
+}
+
+async function loadMyRoute() {
+  if (!currentUser) return;
+  var { data } = await sb.from('route_assignments').select('*').eq('tech_email', currentUser.email).eq('active', true).order('stop_order');
+  if (!data) { myRoute = []; return; }
+  // Join with asset data
+  myRoute = data.map(function(ra) {
+    var asset = ASSETS.find(function(a) { return a.id === ra.asset_id; });
+    return asset ? Object.assign({}, ra, { asset: asset }) : null;
+  }).filter(Boolean);
+}
+
+// ===== Helpers =====
+function isCompleted(serial) {
+  return completedPMs.some(function(pm) { return pm.serial === serial; });
+}
+function getCompletedDate(serial) {
+  var pm = completedPMs.find(function(p) { return p.serial === serial; });
+  return pm ? pm.pm_date : null;
+}
+
+function showStatus(msg, type) {
+  statusMsg = msg;
+  statusType = type || 'ok';
+  render();
+  setTimeout(function() { statusMsg = ''; render(); }, 4000);
+}
+
+function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+function lbl(t) { return '<label style="font-size:13px;color:var(--dim);margin-bottom:2px">' + t + '</label>'; }
+function inp(name, type, ph) { return '<input type="' + (type||'text') + '" name="' + name + '" placeholder="' + (ph||'') + '" value="' + esc(form[name]||'') + '">'; }
+function fld(t, name, type, ph) { return lbl(t) + inp(name, type, ph); }
+function chk(name, t) { return '<label><input type="checkbox" name="' + name + '"' + (form[name] ? ' checked' : '') + '> ' + t + '</label>'; }
+
+// ===== Route Optimization (Nearest-Neighbor) =====
+function haversine(lat1, lng1, lat2, lng2) {
+  var R = 3959; // miles
+  var dLat = (lat2 - lat1) * Math.PI / 180;
+  var dLng = (lng2 - lng1) * Math.PI / 180;
+  var a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+    Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+    Math.sin(dLng/2) * Math.sin(dLng/2);
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function optimizeRoute(assetIds) {
+  // Group assets by unique location (lat/lng)
+  var stops = [];
+  var seenAddr = {};
+  assetIds.forEach(function(id) {
+    var a = ASSETS.find(function(x) { return x.id === id; });
+    if (!a) return;
+    var key = (a.address || '') + '|' + (a.city || '');
+    if (!seenAddr[key]) {
+      seenAddr[key] = { lat: a.lat, lng: a.lng, ids: [id], addr: key };
+      stops.push(seenAddr[key]);
+    } else {
+      seenAddr[key].ids.push(id);
+    }
+  });
+  if (stops.length <= 1) {
+    var flat = [];
+    stops.forEach(function(s, i) { s.ids.forEach(function(id) { flat.push({ id: id, order: i }); }); });
+    return flat;
+  }
+  // Nearest-neighbor from first stop
+  var ordered = [stops[0]];
+  var remaining = stops.slice(1);
+  while (remaining.length > 0) {
+    var last = ordered[ordered.length - 1];
+    var nearIdx = 0, nearDist = Infinity;
+    for (var i = 0; i < remaining.length; i++) {
+      var d = haversine(last.lat, last.lng, remaining[i].lat, remaining[i].lng);
+      if (d < nearDist) { nearDist = d; nearIdx = i; }
+    }
+    ordered.push(remaining[nearIdx]);
+    remaining.splice(nearIdx, 1);
+  }
+  var flat = [];
+  ordered.forEach(function(s, i) { s.ids.forEach(function(id) { flat.push({ id: id, order: i }); }); });
+  return flat;
+}
+
+// ===== Navigation =====
+function openNavigation(address, city, state, zip) {
+  var addr = encodeURIComponent(address + ', ' + city + ', ' + state + ' ' + zip);
+  // Detect iOS
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent);
+  if (isIOS) {
+    window.open('maps://maps.apple.com/?daddr=' + addr, '_blank');
+  } else {
+    window.open('https://www.google.com/maps/dir/?api=1&destination=' + addr, '_blank');
+  }
+}
+
+// ===== Photo Handling =====
+function compressImg(file, cb) {
+  var reader = new FileReader();
+  reader.onload = function(e) {
+    var img = new Image();
+    img.onload = function() {
+      var c = document.createElement('canvas');
+      var max = 1000;
+      var w = img.width, h = img.height;
+      if (w > max || h > max) { var r = Math.min(max/w, max/h); w *= r; h *= r; }
+      c.width = w; c.height = h;
+      c.getContext('2d').drawImage(img, 0, 0, w, h);
+      cb(c.toDataURL('image/jpeg', 0.5));
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(file);
+}
+
+function takePhoto() {
+  var i = document.createElement('input');
+  i.type = 'file'; i.accept = 'image/*'; i.capture = 'environment';
+  i.onchange = function() { handlePhotos(i); };
+  i.click();
+}
+
+function uploadPhoto() {
+  var i = document.createElement('input');
+  i.type = 'file'; i.accept = 'image/*'; i.multiple = true;
+  i.onchange = function() { handlePhotos(i); };
+  i.click();
+}
+
+function handlePhotos(input) {
+  var files = input.files;
+  for (var j = 0; j < files.length; j++) {
+    (function(f) {
+      compressImg(f, function(d) { photos.push(d); render(); });
+    })(files[j]);
+  }
+}
+
+function removePhoto(i) {
+  photos.splice(i, 1);
+  render();
+}
+
+// ===== Render Router =====
+function render() {
+  var el = document.getElementById('app');
+  var html = '';
+  if (statusMsg) {
+    html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>';
+  }
+  if (screen === 'loading') { html += renderLoading(); }
+  else if (screen === 'login') { html += renderLogin(); }
+  else if (screen === 'home') { html += renderHome(); }
+  else if (screen === 'select') { html += renderSelect(); }
+  else if (screen === 'checklist') { html += renderChecklist(); }
+  else if (screen === 'history') { html += renderHistory(); }
+  else if (screen === 'admin') { html += renderAdmin(); }
+  else if (screen === 'route') { html += renderRoute(); }
+  else if (screen === 'routeStop') { html += renderRouteStop(); }
+  el.innerHTML = html;
+  bindEvents();
+}
+
+function renderLoading() {
+  return '<div class="login-wrap"><div class="logo">🐾</div><h1>Freshpet PM</h1><p class="sub"><span class="spinner"></span> Loading...</p></div>';
+}
+
+function renderLogin() {
+  return '<div class="login-wrap">' +
+    '<div class="logo">🐾</div>' +
+    '<h1>Freshpet PM</h1>' +
+    '<p class="sub">Preventative Maintenance Checklist</p>' +
+    '<button class="login-btn" onclick="signInGoogle()">' +
+      '<svg viewBox="0 0 24 24"><path fill="#4285F4" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z"/><path fill="#34A853" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path fill="#FBBC05" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z"/><path fill="#EA4335" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>' +
+      'Sign in with Google' +
+    '</button>' +
+    '<p class="sub" style="margin-top:12px;font-size:12px">Brix Beverage Service Team</p>' +
+  '</div>';
+}
+
+function renderHome() {
+  var hasProgress = localStorage.getItem('fp_progress');
+  var userBar = '<div class="user-bar">' +
+    '<span class="email">' + esc(currentUser.email || '') + (userRole === 'admin' ? ' <span class="badge" style="background:var(--or);color:#000">Admin</span>' : '') + '</span>' +
+    '<button onclick="signOut()">Sign Out</button>' +
+  '</div>';
+
+  var h = userBar +
+    '<h1>🐾 Freshpet PM</h1>' +
+    '<p class="sub">NorCal Route &bull; ' + ASSETS.length + ' Assets</p>';
+
+  if (hasProgress) {
+    h += '<div class="card">' +
+      '<p style="font-size:14px;margin-bottom:10px">📋 You have a PM in progress</p>' +
+      '<button class="btn btn-p" onclick="resumeProgress()">Resume PM</button>' +
+      '<button class="btn btn-o" style="margin-top:8px" onclick="clearProgress();render()">Discard</button>' +
+    '</div>';
+  }
+
+  // Route button (for techs with assigned routes)
+  h += '<button class="btn btn-p" style="margin-bottom:10px" onclick="goRoute()">🗺️ My Route</button>';
+  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goSelect()">🔧 Browse All Assets</button>';
+  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goHistory()">📊 PM History</button>';
+
+  // Admin button
+  if (userRole === 'admin') {
+    h += '<button class="btn btn-o" style="border-color:var(--or);color:var(--or)" onclick="goAdmin()">⚙️ Admin Panel</button>';
+  }
+  return h;
+}
+
+function renderSelect() {
+  var groups = {};
+  var cityOrder = [];
+  var filtered = ASSETS.filter(function(a) {
+    if (!search) return true;
+    var s = search.toLowerCase();
+    return a.store.toLowerCase().indexOf(s) > -1 ||
+           a.city.toLowerCase().indexOf(s) > -1 ||
+           a.serial.toLowerCase().indexOf(s) > -1 ||
+           a.address.toLowerCase().indexOf(s) > -1;
+  });
+
+  filtered.forEach(function(a, i) {
+    var key = a.store + '|' + a.address;
+    if (!groups[key]) {
+      groups[key] = { store: a.store, city: a.city, address: a.address, assets: [] };
+      cityOrder.push(key);
+    }
+    var origIdx = ASSETS.indexOf(a);
+    groups[key].assets.push({ asset: a, idx: origIdx });
+  });
+
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<h2 style="margin:0;flex:1">Select Asset</h2>' +
+  '</div>';
+  h += '<div class="search"><input type="text" id="searchInput" placeholder="Search store, city, serial..." value="' + esc(search) + '"></div>';
+
+  cityOrder.forEach(function(key) {
+    var g = groups[key];
+    h += '<div class="store-grp"><h4>📍 ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
+    h += '<div style="font-size:12px;color:var(--dim);margin-bottom:6px;padding:0 4px">' + esc(g.address) + '</div>';
+    g.assets.forEach(function(item) {
+      var a = item.asset;
+      var done = isCompleted(a.serial);
+      h += '<button class="asset-btn' + (done ? ' done' : '') + '" data-idx="' + item.idx + '">' +
+        esc(a.manufacturer) + ' ' + esc(a.model) +
+        (done ? ' ✅' : '') +
+        '<br><span class="ser">S/N: ' + esc(a.serial) + (a.warranty === 'UNDER' ? ' 🛡️' : '') + '</span>' +
+      '</button>';
+    });
+    h += '</div>';
+  });
+
+  if (filtered.length === 0) {
+    h += '<p style="text-align:center;color:var(--dim);padding:40px 0">No assets found</p>';
+  }
+
+  return h;
+}
+
+function renderChecklist() {
+  if (!selectedAsset) { screen = 'home'; return renderHome(); }
+  var a = selectedAsset;
+
+  var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="' + backFn + '">←</button>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:15px">' + esc(a.store) + '</h2>' +
+    '<div style="font-size:12px;color:var(--dim)">' + esc(a.serial) + ' &bull; ' + esc(a.model) + '</div></div>' +
+  '</div>';
+
+  h += '<div class="card">';
+  h += '<h3>Technician Info</h3>';
+  h += fld('Tech Name', 'techName', 'text', 'Your name');
+  h += fld('Service Company', 'serviceCompany', 'text', 'Company');
+  h += fld('Date', 'date', 'date');
+
+  h += '<h3>Settings on Arrival</h3>';
+  h += fld('Set Point 1', 'sp1', 'text', 'SP1');
+  h += fld('Voltage', 'voltage', 'text', 'Voltage reading');
+  h += fld('Interior Temp', 'intTemp', 'text', 'Temperature');
+
+  h += '<h3>A. Unit Location</h3>';
+  h += chk('onFloor', 'On Floor');
+  h += chk('notOnFloor', 'Not on Floor');
+  h += chk('petFood', 'Pet Food Aisle');
+  h += chk('notFound', 'Not Found');
+  h += chk('backOfStore', 'Back of Store');
+  h += chk('otherLoc', 'Other Location');
+  h += '<div id="otherLocWrap" style="display:' + (form.otherLoc ? 'block' : 'none') + '">' + inp('otherLocText', 'text', 'Specify location') + '</div>';
+
+  h += '<h3>B. Physical Condition</h3>';
+  h += chk('workingArrival', 'Working on Arrival');
+  h += chk('notWorkingArrival', 'Not Working on Arrival');
+  h += chk('workingDepart', 'Working on Departure');
+
+  h += '<h3>C. Cleanliness of Unit</h3>';
+  h += chk('cleanInterior', 'Interior Cleaned');
+  h += chk('cleanExterior', 'Exterior Cleaned');
+  h += chk('cleanGrill', 'Front Grill Cleaned');
+  h += chk('cleanCondPans', 'Condensate Pans');
+  h += chk('cleanCondenser', 'Condenser Cleaned');
+  h += chk('headerDamage', 'Header Damage');
+
+  h += '<h3>D. Maintenance Checklist</h3>';
+  h += chk('physicalDmg', 'Physical Damage');
+  h += chk('powerCord', 'Power Cord');
+  h += chk('extCord', 'Extension Cord (Y/N)');
+  h += chk('backSpacer', 'Back Spacer (Y/N)');
+  h += chk('cleanCoil', 'Clean Coil');
+  h += chk('emptyDrain', 'Empty Drain Pan');
+  h += chk('cleanFans', 'Clean Fans');
+  h += chk('wickingPads', 'Wicking Pads (Y/N)');
+  h += chk('cleanCondPansD', 'Clean Condensate Pans');
+  h += chk('cleanDrainLine', 'Clean Drain Line');
+  h += chk('ledCheck', 'LED Check');
+  h += chk('waterLeak', 'Water Leak');
+
+  h += '<h3>Comments / Observations</h3>';
+  h += '<textarea name="comments" placeholder="Notes...">' + esc(form.comments || '') + '</textarea>';
+
+  h += '<h3>Signatures</h3>';
+  h += fld('Store Contact', 'storeContact', 'text', 'Name');
+  h += fld('Service Rep', 'serviceRep', 'text', 'Name');
+
+  h += '<h3>Photos</h3>';
+  h += '<div style="display:flex;gap:8px;margin-bottom:8px">' +
+    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto()">📸 Camera</button>' +
+    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="uploadPhoto()">🖼️ Upload</button>' +
+  '</div>';
+
+  if (photos.length) {
+    h += '<div class="photo-grid">';
+    photos.forEach(function(p, i) {
+      h += '<div><img src="' + p + '"><button class="del" onclick="removePhoto(' + i + ')">×</button></div>';
+    });
+    h += '</div>';
+  }
+
+  h += '</div>';
+
+  if (submitting) {
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Uploading PM...</div>';
+  } else {
+    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:16px;padding:16px">✅ Submit PM</button>';
+  }
+
+  return h;
+}
+
+function renderHistory() {
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<h2 style="margin:0;flex:1">PM History</h2>' +
+  '</div>';
+
+  if (completedPMs.length === 0) {
+    h += '<p style="text-align:center;color:var(--dim);padding:40px 0">No completed PMs yet</p>';
+  } else {
+    completedPMs.forEach(function(pm) {
+      h += '<div class="hist-item">' +
+        '<span class="dt">' + esc(pm.pm_date) + '</span> &bull; ' +
+        esc(pm.store) + '<br>' +
+        '<span style="color:var(--dim)">S/N: ' + esc(pm.serial) + ' &bull; Tech: ' + esc(pm.tech_name || '') + '</span>';
+      if (pm.pdf_path) {
+        h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:12px">📄 View PDF</a>';
+      }
+      h += '</div>';
+    });
+  }
+  return h;
+}
+
+// ===== ADMIN PANEL =====
+function renderAdmin() {
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<h2 style="margin:0;flex:1">⚙️ Admin Panel</h2>' +
+  '</div>';
+
+  h += '<div class="tab-bar">' +
+    '<button class="' + (adminTab === 'techs' ? 'active' : '') + '" onclick="adminTab=\'techs\';render()">Technicians</button>' +
+    '<button class="' + (adminTab === 'routes' ? 'active' : '') + '" onclick="adminTab=\'routes\';render()">Routes</button>' +
+  '</div>';
+
+  if (adminTab === 'techs') {
+    h += renderAdminTechs();
+  } else {
+    h += renderAdminRoutes();
+  }
+  return h;
+}
+
+function renderAdminTechs() {
+  var h = '<div class="card">';
+  h += '<h3>Add Technician</h3>';
+  h += '<input type="email" id="newTechEmail" placeholder="Email address">';
+  h += '<input type="text" id="newTechName" placeholder="Full name">';
+  h += '<button class="btn btn-p" style="padding:10px" onclick="addTech()">+ Add Tech</button>';
+  h += '</div>';
+
+  h += '<h3 style="margin-bottom:12px">Team (' + techProfiles.length + ')</h3>';
+  techProfiles.forEach(function(t) {
+    h += '<div class="tech-row">' +
+      '<div><strong>' + esc(t.name || t.email) + '</strong><br>' +
+      '<span style="color:var(--dim);font-size:12px">' + esc(t.email) + '</span></div>' +
+      '<span class="role ' + t.role + '">' + t.role.toUpperCase() + '</span>' +
+    '</div>';
+  });
+  return h;
+}
+
+function renderAdminRoutes() {
+  var h = '<div class="card">';
+  h += '<h3>Select Technician</h3>';
+  h += '<select id="routeTechSelect" onchange="selectRouteTech(this.value)">';
+  h += '<option value="">-- Choose Tech --</option>';
+  techProfiles.forEach(function(t) {
+    h += '<option value="' + esc(t.email) + '"' + (adminSelectedTech === t.email ? ' selected' : '') + '>' + esc(t.name || t.email) + '</option>';
+  });
+  h += '</select>';
+  h += '</div>';
+
+  if (adminSelectedTech) {
+    // Show assigned assets
+    var assignedAssets = adminTechAssets.map(function(id) {
+      return ASSETS.find(function(a) { return a.id === id; });
+    }).filter(Boolean);
+
+    // Group by location
+    var stops = [];
+    var seenAddr = {};
+    assignedAssets.forEach(function(a) {
+      var key = a.address + '|' + a.city;
+      if (!seenAddr[key]) {
+        seenAddr[key] = { store: a.store, address: a.address, city: a.city, state: a.state, zip: a.zip, assets: [a] };
+        stops.push(seenAddr[key]);
+        seenAddr[key] = seenAddr[key];
+      } else {
+        seenAddr[key].assets.push(a);
+      }
+    });
+
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+    h += '<h3 style="margin:0">Route: ' + stops.length + ' stops, ' + assignedAssets.length + ' assets</h3>';
+    h += '</div>';
+
+    stops.forEach(function(s, i) {
+      h += '<div class="stop-card">';
+      h += '<div style="display:flex;justify-content:space-between;align-items:flex-start">';
+      h += '<div><span class="stop-num pending">' + (i+1) + '</span><strong>' + esc(s.store) + '</strong><br>';
+      h += '<span style="font-size:12px;color:var(--dim)">' + esc(s.address) + ', ' + esc(s.city) + '</span><br>';
+      h += '<span style="font-size:12px;color:var(--dim)">' + s.assets.length + ' asset(s)</span></div>';
+      h += '</div></div>';
+    });
+
+    h += '<div style="display:flex;gap:8px;margin-top:12px">';
+    h += '<button class="btn btn-p" style="flex:1" onclick="goAddAssets()">+ Add Stores</button>';
+    h += '<button class="btn btn-s" style="flex:1" onclick="optimizeAndSaveRoute()">🗺️ Optimize</button>';
+    h += '</div>';
+    if (assignedAssets.length > 0) {
+      h += '<button class="btn btn-d" style="margin-top:8px" onclick="clearRoute()">Clear Route</button>';
+    }
+  }
+  return h;
+}
+
+// ===== TECH ROUTE VIEW =====
+function renderRoute() {
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<h2 style="margin:0;flex:1">🗺️ My Route</h2>' +
+  '</div>';
+
+  if (myRoute.length === 0) {
+    h += '<div class="card" style="text-align:center;padding:40px 16px">' +
+      '<p style="font-size:16px;margin-bottom:8px">No route assigned yet</p>' +
+      '<p style="color:var(--dim);font-size:13px">Ask your admin to assign stops to your route.</p>' +
+    '</div>';
+    return h;
+  }
+
+  // Group by stop_order to form stops
+  var stops = [];
+  var seenOrder = {};
+  myRoute.forEach(function(r) {
+    var key = r.stop_order;
+    if (!seenOrder[key]) {
+      seenOrder[key] = { order: r.stop_order, assets: [r.asset], address: r.asset.address, city: r.asset.city, state: r.asset.state, zip: r.asset.zip, store: r.asset.store };
+      stops.push(seenOrder[key]);
+    } else {
+      seenOrder[key].assets.push(r.asset);
+    }
+  });
+
+  // Sort by order
+  stops.sort(function(a, b) { return a.order - b.order; });
+
+  // Determine completion status of each stop
+  var today = new Date().toISOString().split('T')[0];
+  stops.forEach(function(s) {
+    s.allDone = s.assets.every(function(a) { return isCompleted(a.serial); });
+    s.someDone = s.assets.some(function(a) { return isCompleted(a.serial); });
+  });
+
+  var doneCount = stops.filter(function(s) { return s.allDone; }).length;
+
+  h += '<div class="card" style="text-align:center">' +
+    '<div style="font-size:24px;font-weight:700">' + doneCount + '/' + stops.length + '</div>' +
+    '<div style="color:var(--dim);font-size:13px">Stops Completed</div>' +
+    '<div class="progress-bar"><div class="fill" style="width:' + (stops.length > 0 ? (doneCount / stops.length * 100) : 0) + '%"></div></div>' +
+  '</div>';
+
+  stops.forEach(function(s, i) {
+    var isCurrent = !s.allDone && (i === 0 || stops[i-1].allDone);
+    var cls = s.allDone ? 'completed' : (isCurrent ? 'current' : '');
+    var numCls = s.allDone ? 'done' : (isCurrent ? 'current' : 'pending');
+
+    h += '<div class="stop-card ' + cls + '">';
+    h += '<div style="display:flex;align-items:flex-start;gap:4px">';
+    h += '<span class="stop-num ' + numCls + '">' + (s.allDone ? '✓' : (i+1)) + '</span>';
+    h += '<div style="flex:1">';
+    h += '<strong>' + esc(s.store) + '</strong>';
+    if (isCurrent) { h += ' <span class="badge">Current</span>'; }
+    h += '<br><span style="font-size:12px;color:var(--dim)">' + esc(s.address) + ', ' + esc(s.city) + '</span>';
+    h += '<br><span style="font-size:12px;color:var(--dim)">' + s.assets.length + ' asset(s)';
+    var doneSoFar = s.assets.filter(function(a) { return isCompleted(a.serial); }).length;
+    if (doneSoFar > 0 && !s.allDone) { h += ' &bull; ' + doneSoFar + ' done'; }
+    h += '</span>';
+
+    if (isCurrent || !s.allDone) {
+      h += '<div style="display:flex;gap:8px;margin-top:8px">';
+      h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">🗺️ Navigate</button>';
+      h += '<button class="btn btn-p" style="display:inline-flex;align-items:center;padding:10px 16px;width:auto;margin-top:0" onclick="goRouteStop(' + i + ')">📋 PMs</button>';
+      h += '</div>';
+    }
+
+    h += '</div></div></div>';
+  });
+
+  return h;
+}
+
+function renderRouteStop() {
+  // Show assets at the current route stop
+  var stops = getRouteStops();
+  var stop = stops[currentStopIdx];
+  if (!stop) { screen = 'route'; return renderRoute(); }
+
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goRoute()">←</button>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:15px">Stop ' + (currentStopIdx + 1) + ': ' + esc(stop.store) + '</h2>' +
+    '<div style="font-size:12px;color:var(--dim)">' + esc(stop.address) + ', ' + esc(stop.city) + '</div></div>' +
+  '</div>';
+
+  h += '<button class="nav-btn" style="width:100%;justify-content:center;margin-bottom:12px" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">🗺️ Navigate to This Stop</button>';
+
+  h += '<h3>Assets at This Stop</h3>';
+  stop.assets.forEach(function(a) {
+    var done = isCompleted(a.serial);
+    var idx = ASSETS.indexOf(a);
+    h += '<div class="asset-btn' + (done ? ' done' : '') + '" style="cursor:pointer" onclick="startChecklistFromRoute(' + idx + ')">' +
+      esc(a.manufacturer) + ' ' + esc(a.model) +
+      (done ? ' ✅' : ' →') +
+      '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
+    '</div>';
+  });
+
+  // Next stop button
+  if (currentStopIdx < stops.length - 1) {
+    var allDone = stop.assets.every(function(a) { return isCompleted(a.serial); });
+    if (allDone) {
+      h += '<button class="btn btn-s" style="margin-top:12px" onclick="goRouteStop(' + (currentStopIdx + 1) + ')">Next Stop →</button>';
+    }
+  }
+
+  return h;
+}
+
+function getRouteStops() {
+  var stops = [];
+  var seenOrder = {};
+  myRoute.forEach(function(r) {
+    var key = r.stop_order;
+    if (!seenOrder[key]) {
+      seenOrder[key] = { order: r.stop_order, assets: [r.asset], address: r.asset.address, city: r.asset.city, state: r.asset.state, zip: r.asset.zip, store: r.asset.store };
+      stops.push(seenOrder[key]);
+    } else {
+      seenOrder[key].assets.push(r.asset);
+    }
+  });
+  stops.sort(function(a, b) { return a.order - b.order; });
+  return stops;
+}
+
+// ===== Navigation Functions =====
+function goHome() { screen = 'home'; search = ''; routeFromChecklist = false; render(); }
+function goSelect() { screen = 'select'; search = ''; routeFromChecklist = false; render(); }
+function goHistory() { screen = 'history'; render(); }
+
+async function goAdmin() {
+  await loadTechProfiles();
+  screen = 'admin';
+  render();
+}
+
+async function goRoute() {
+  await loadMyRoute();
+  screen = 'route';
+  render();
+}
+
+function goRouteStop(idx) {
+  currentStopIdx = idx;
+  screen = 'routeStop';
+  render();
+}
+
+function goBackToRouteStop() {
+  routeFromChecklist = false;
+  screen = 'routeStop';
+  render();
+}
+
+function startChecklist(idx) {
+  selectedAsset = ASSETS[idx];
+  selectedAssetIdx = idx;
+  form = {
+    techName: localStorage.getItem('fp_techName') || '',
+    serviceCompany: localStorage.getItem('fp_company') || '',
+    date: new Date().toISOString().split('T')[0]
+  };
+  photos = [];
+  screen = 'checklist';
+  render();
+}
+
+function startChecklistFromRoute(idx) {
+  routeFromChecklist = true;
+  startChecklist(idx);
+}
+
+function resumeProgress() {
+  if (loadProgress()) {
+    selectedAsset = ASSETS[selectedAssetIdx];
+    screen = 'checklist';
+    render();
+  }
+}
+
+// ===== Admin Actions =====
+async function addTech() {
+  var email = document.getElementById('newTechEmail').value.trim();
+  var name = document.getElementById('newTechName').value.trim();
+  if (!email) { showStatus('Enter an email address', 'err'); return; }
+  if (!name) { name = email.split('@')[0]; }
+
+  var { error } = await sb.from('tech_profiles').insert({ email: email, name: name, role: 'tech' });
+  if (error) {
+    if (error.code === '23505') { showStatus('Tech already exists', 'err'); }
+    else { showStatus('Error: ' + error.message, 'err'); }
+    return;
+  }
+  showStatus('Tech added: ' + name, 'ok');
+  await loadTechProfiles();
+  render();
+}
+
+async function selectRouteTech(email) {
+  adminSelectedTech = email;
+  if (email) {
+    await loadTechRoute(email);
+  } else {
+    adminTechAssets = [];
+  }
+  render();
+}
+
+function goAddAssets() {
+  // Switch to asset picker mode
+  screen = 'adminAssetPicker';
+  search = '';
+  render();
+}
+
+async function optimizeAndSaveRoute() {
+  if (adminTechAssets.length === 0) { showStatus('No assets to optimize', 'err'); return; }
+
+  // Run nearest-neighbor optimization
+  var optimized = optimizeRoute(adminTechAssets);
+
+  // Delete existing assignments for this tech
+  await sb.from('route_assignments').delete().eq('tech_email', adminSelectedTech);
+
+  // Insert new assignments with optimized order
+  var inserts = optimized.map(function(item) {
+    return {
+      tech_email: adminSelectedTech,
+      asset_id: item.id,
+      stop_order: item.order,
+      route_name: 'Primary Route',
+      active: true
+    };
+  });
+
+  var { error } = await sb.from('route_assignments').insert(inserts);
+  if (error) { showStatus('Error saving route: ' + error.message, 'err'); return; }
+
+  showStatus('Route optimized and saved! (' + optimized.length + ' assets)', 'ok');
+  await loadTechRoute(adminSelectedTech);
+  render();
+}
+
+async function clearRoute() {
+  if (!adminSelectedTech) return;
+  await sb.from('route_assignments').delete().eq('tech_email', adminSelectedTech);
+  adminTechAssets = [];
+  showStatus('Route cleared', 'ok');
+  render();
+}
+
+// ===== Submit =====
+async function submitForm() {
+  if (submitting) return;
+  if (!form.techName) { showStatus('Please enter tech name', 'err'); return; }
+
+  submitting = true;
+  render();
+
+  try {
+    localStorage.setItem('fp_techName', form.techName);
+    localStorage.setItem('fp_company', form.serviceCompany || '');
+
+    var a = selectedAsset;
+    var timestamp = Date.now();
+    var safeStore = a.store.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+    var baseName = safeStore + '_' + a.serial + '_' + (form.date || '').replace(/-/g, '');
+
+    var photoPaths = [];
+    for (var i = 0; i < photos.length; i++) {
+      var photoBlob = dataURLtoBlob(photos[i]);
+      var photoPath = baseName + '_photo_' + (i + 1) + '_' + timestamp + '.jpg';
+      var { data: pData, error: pErr } = await sb.storage.from('fp-photos').upload(photoPath, photoBlob, {
+        contentType: 'image/jpeg',
+        upsert: false
+      });
+      if (pErr) { console.warn('Photo upload error:', pErr); }
+      else { photoPaths.push(photoPath); }
+    }
+
+    var pdfDoc = await new Promise(function(resolve) {
+      generatePDF(a, form, photos, function(doc) { resolve(doc); });
+    });
+
+    var pdfBlob = pdfDoc.output('blob');
+    var pdfPath = baseName + '_' + timestamp + '.pdf';
+    var { error: pdfErr } = await sb.storage.from('fp-pdfs').upload(pdfPath, pdfBlob, {
+      contentType: 'application/pdf',
+      upsert: false
+    });
+    if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
+
+    var { error: dbErr } = await sb.from('completed_pms').insert({
+      asset_id: a.id,
+      tech_user_id: currentUser.id,
+      tech_name: form.techName,
+      service_company: form.serviceCompany || '',
+      pm_date: form.date || new Date().toISOString().split('T')[0],
+      form_data: form,
+      pdf_path: pdfPath,
+      photo_paths: photoPaths,
+      store: a.store,
+      serial: a.serial
+    });
+
+    if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+    await loadCompletedPMs();
+    clearProgress();
+    submitting = false;
+
+    // If came from route, go back to route stop
+    if (routeFromChecklist) {
+      routeFromChecklist = false;
+      screen = 'routeStop';
+      showStatus('PM submitted!', 'ok');
+    } else {
+      screen = 'home';
+      showStatus('PM submitted successfully!', 'ok');
+    }
+
+  } catch (err) {
+    submitting = false;
+    showStatus('Error: ' + err.message, 'err');
+    render();
+  }
+}
+
+function dataURLtoBlob(dataURL) {
+  var parts = dataURL.split(',');
+  var mime = parts[0].match(/:(.*?);/)[1];
+  var b64 = atob(parts[1]);
+  var arr = new Uint8Array(b64.length);
+  for (var i = 0; i < b64.length; i++) arr[i] = b64.charCodeAt(i);
+  return new Blob([arr], { type: mime });
+}
+
+// ===== PDF Generation =====
+function generatePDF(a, f, ph, cb) {
+  var jsPDF = window.jspdf.jsPDF;
+  var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+  var W = 612, LM = 40, RM = W - 40, COL2 = 326;
+  var y = 30;
+
+  function checkbox(x, yy, checked) { doc.setLineWidth(.75); doc.setDrawColor(0); doc.rect(x, yy-7.5, 9, 9); if (checked) { doc.setLineWidth(1.2); doc.line(x+2, yy-3, x+4, yy-.5); doc.line(x+4, yy-.5, x+7.5, yy-6); doc.setLineWidth(.75); } }
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+  doc.text('Preventative Maintenance Service Checklist', W/2, y, { align: 'center' }); y += 16;
+  doc.setFontSize(9); doc.text('***NOTE***', W/2, y, { align: 'center' }); y += 11;
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+  doc.text('All inspections and services listed in this PM are to be performed by Certified Refrigeration Technicians Only!', W/2, y, { align: 'center' }); y += 18;
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica','bold');doc.text('Store:',LM,y);doc.setFont('helvetica','normal');doc.text(a.store,LM+38,y);
+  doc.setFont('helvetica','bold');doc.text('Date:',COL2,y);doc.setFont('helvetica','normal');doc.text(f.date||'',COL2+32,y);y+=17;
+  doc.setFont('helvetica','bold');doc.text('Address:',LM,y);doc.setFont('helvetica','normal');doc.text(a.address,LM+52,y);
+  doc.setFont('helvetica','bold');doc.text('Phone:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.phone,COL2+40,y);y+=17;
+  doc.setFont('helvetica','bold');doc.text('City:',LM,y);doc.setFont('helvetica','normal');doc.text(a.city,LM+28,y);
+  doc.setFont('helvetica','bold');doc.text('State:',240,y);doc.setFont('helvetica','normal');doc.text(a.state,276,y);
+  doc.setFont('helvetica','bold');doc.text('Zip:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.zip,COL2+24,y);y+=17;
+  doc.setFont('helvetica','bold');doc.text('Serial:',LM,y);doc.setFont('helvetica','normal');doc.text(a.serial,LM+42,y);
+  doc.setFont('helvetica','bold');doc.text('Model:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.model,COL2+42,y);y+=17;
+  doc.setFont('helvetica','bold');doc.text('Manufacturer:',LM,y);doc.setFont('helvetica','normal');doc.text(a.manufacturer,LM+78,y);
+  doc.setFont('helvetica','bold');doc.text('Warranty:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.warranty,COL2+56,y);y+=10;
+  doc.setLineWidth(1);doc.line(LM,y,RM,y);y+=10;
+
+  doc.setFont('helvetica','bold');doc.setFontSize(8);
+  doc.text('Tech: '+(f.techName||''),LM,y);doc.text('Company: '+(f.serviceCompany||''),COL2,y);y+=12;
+  doc.text('SP1: '+(f.sp1||'___'),LM,y);doc.text('Voltage: '+(f.voltage||'___'),180,y);doc.text('Temp: '+(f.intTemp||'___'),340,y);y+=14;
+
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('A. Unit Location',LM,y);y+=12;
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  checkbox(LM,y,f.onFloor);doc.text('On Floor',LM+14,y);checkbox(LM+85,y,f.notOnFloor);doc.text('Not on Floor',LM+99,y);y+=13;
+  checkbox(LM,y,f.petFood);doc.text('Pet Food',LM+14,y);checkbox(LM+100,y,f.notFound);doc.text('Not Found',LM+114,y);checkbox(LM+210,y,f.backOfStore);doc.text('Back of Store',LM+224,y);y+=13;
+
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('B. Physical Condition',LM,y);doc.text('C. Cleanliness',COL2,y);y+=12;
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  checkbox(LM,y,f.workingArrival);doc.text('Working Arrival',LM+14,y);checkbox(COL2,y,f.cleanInterior);doc.text('Interior',COL2+14,y);checkbox(COL2+65,y,f.cleanCondPans);doc.text('Cond Pans',COL2+79,y);y+=13;
+  checkbox(LM,y,f.notWorkingArrival);doc.text('Not Working Arrival',LM+14,y);checkbox(COL2,y,f.cleanExterior);doc.text('Exterior',COL2+14,y);checkbox(COL2+65,y,f.cleanCondenser);doc.text('Condenser',COL2+79,y);y+=13;
+  checkbox(LM,y,f.workingDepart);doc.text('Working Departure',LM+14,y);checkbox(COL2,y,f.cleanGrill);doc.text('Front Grill',COL2+14,y);checkbox(COL2+75,y,f.headerDamage);doc.text('Header Dmg',COL2+89,y);y+=13;
+
+  doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('D. Maintenance',LM,y);y+=12;
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  var mi=[['physicalDmg','Physical Damage','powerCord','Power Cord'],['extCord','Ext Cord (Y/N)','backSpacer','Back Spacer (Y/N)'],['cleanCoil','Clean Coil','emptyDrain','Empty Drain Pan'],['cleanFans','Clean Fans','wickingPads','Wicking Pads (Y/N)'],['cleanCondPansD','Clean Cond Pans','cleanDrainLine','Clean Drain Line'],['ledCheck','LED Check','waterLeak','Water Leak']];
+  mi.forEach(function(r){checkbox(LM,y,f[r[0]]);doc.text(r[1],LM+14,y);checkbox(COL2,y,f[r[2]]);doc.text(r[3],COL2+14,y);y+=13;});
+
+  y+=4;doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('Comments:',LM,y);y+=10;
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  var cmt=doc.splitTextToSize(f.comments||'(none)',RM-LM);doc.text(cmt,LM,y);y+=Math.max(cmt.length*10,20);
+
+  y+=6;doc.setFontSize(8);
+  doc.text('Store Contact: '+(f.storeContact||''),LM,y);y+=12;
+  doc.text('Service Rep: '+(f.serviceRep||''),LM,y);y+=16;
+
+  doc.setFont('helvetica','bold');doc.setFontSize(7);
+  doc.text('AHT: 800-905-4768 | MTL: 888-685-8324 | TRUE: 800-325-6152 | MINUS FORTY: 800.800.5706',LM,y);
+
+  if (ph && ph.length) {
+    for (var i = 0; i < ph.length; i++) {
+      doc.addPage();doc.setFont('helvetica','bold');doc.setFontSize(11);
+      doc.text('Photo '+(i+1)+' of '+ph.length+' — '+a.store+' (S/N: '+a.serial+')',W/2,30,{align:'center'});
+      try{var ip=doc.getImageProperties(ph[i]);var iw=ip.width,ih=ip.height;var sc=Math.min((RM-LM)/iw,680/ih,1);iw*=sc;ih*=sc;doc.addImage(ph[i],'JPEG',LM+((RM-LM)-iw)/2,50,iw,ih);}catch(e){}
+    }
+  }
+  cb(doc);
+}
+
+// ===== Admin Asset Picker =====
+function renderAdminAssetPicker() {
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="screen=\'admin\';render()">←</button>' +
+    '<h2 style="margin:0;flex:1">Add Stores to Route</h2>' +
+  '</div>';
+  h += '<p style="font-size:12px;color:var(--dim);margin-bottom:8px">Assigning to: <strong>' + esc(adminSelectedTech) + '</strong></p>';
+  h += '<div class="search"><input type="text" id="searchInput" placeholder="Search store, city, address..." value="' + esc(search) + '"></div>';
+
+  // Group by store location
+  var groups = {};
+  var groupOrder = [];
+  var filtered = ASSETS.filter(function(a) {
+    if (!search) return true;
+    var s = search.toLowerCase();
+    return a.store.toLowerCase().indexOf(s) > -1 ||
+           a.city.toLowerCase().indexOf(s) > -1 ||
+           a.address.toLowerCase().indexOf(s) > -1;
+  });
+
+  filtered.forEach(function(a) {
+    var key = a.store + '|' + a.address + '|' + a.city;
+    if (!groups[key]) {
+      groups[key] = { store: a.store, address: a.address, city: a.city, assets: [], allAssigned: true };
+      groupOrder.push(key);
+    }
+    var assigned = adminTechAssets.indexOf(a.id) > -1;
+    if (!assigned) groups[key].allAssigned = false;
+    groups[key].assets.push({ asset: a, assigned: assigned });
+  });
+
+  groupOrder.forEach(function(key) {
+    var g = groups[key];
+    h += '<div class="store-grp">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
+    h += '<h4>📍 ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
+    if (!g.allAssigned) {
+      var ids = g.assets.filter(function(x) { return !x.assigned; }).map(function(x) { return x.asset.id; });
+      h += '<button class="btn btn-p" style="width:auto;padding:6px 12px;font-size:12px" onclick="addStoreToRoute([' + ids.join(',') + '])">+ Add All</button>';
+    } else {
+      h += '<span style="color:var(--gn);font-size:12px">✓ Assigned</span>';
+    }
+    h += '</div>';
+    h += '<div style="font-size:12px;color:var(--dim);margin-bottom:4px;padding:0 4px">' + esc(g.address) + ' &bull; ' + g.assets.length + ' asset(s)</div>';
+    h += '</div>';
+  });
+
+  return h;
+}
+
+async function addStoreToRoute(assetIds) {
+  // Add assets that aren't already assigned
+  var toAdd = assetIds.filter(function(id) { return adminTechAssets.indexOf(id) === -1; });
+  if (toAdd.length === 0) { showStatus('Already assigned', 'info'); return; }
+
+  var maxOrder = adminTechAssets.length > 0 ? adminTechAssets.length : 0;
+  var inserts = toAdd.map(function(id, i) {
+    return {
+      tech_email: adminSelectedTech,
+      asset_id: id,
+      stop_order: maxOrder + i,
+      route_name: 'Primary Route',
+      active: true
+    };
+  });
+
+  var { error } = await sb.from('route_assignments').insert(inserts);
+  if (error) {
+    if (error.code === '23505') {
+      showStatus('Some assets already assigned', 'info');
+    } else {
+      showStatus('Error: ' + error.message, 'err');
+    }
+    return;
+  }
+
+  adminTechAssets = adminTechAssets.concat(toAdd);
+  showStatus(toAdd.length + ' asset(s) added to route', 'ok');
+  render();
+}
+
+// ===== Event Binding =====
+function bindEvents() {
+  var si = document.getElementById('searchInput');
+  if (si) {
+    si.addEventListener('input', function() { search = this.value; render(); });
+    si.focus();
+    si.setSelectionRange(si.value.length, si.value.length);
+  }
+
+  document.querySelectorAll('.asset-btn').forEach(function(btn) {
+    if (btn.getAttribute('data-idx') !== null) {
+      btn.addEventListener('click', function() {
+        var idx = parseInt(this.getAttribute('data-idx'));
+        startChecklist(idx);
+      });
+    }
+  });
+
+  if (screen === 'checklist') {
+    document.querySelectorAll('input[name],textarea[name],select[name]').forEach(function(el) {
+      var handler = function() {
+        if (el.type === 'checkbox') {
+          form[el.name] = el.checked;
+          if (el.name === 'otherLoc') {
+            var w = document.getElementById('otherLocWrap');
+            if (w) w.style.display = el.checked ? 'block' : 'none';
+          }
+        } else {
+          form[el.name] = el.value;
+        }
+        saveProgress();
+      };
+      el.addEventListener('change', handler);
+      if (el.type !== 'checkbox') el.addEventListener('input', handler);
+    });
+  }
+}
+
+// Override render to include admin asset picker
+var _origRender = render;
+render = function() {
+  var el = document.getElementById('app');
+  var html = '';
+  if (statusMsg) {
+    html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>';
+  }
+  if (screen === 'adminAssetPicker') {
+    html += renderAdminAssetPicker();
+    el.innerHTML = html;
+    bindEvents();
+    return;
+  }
+  // Call original screens
+  if (screen === 'loading') { html += renderLoading(); }
+  else if (screen === 'login') { html += renderLogin(); }
+  else if (screen === 'home') { html += renderHome(); }
+  else if (screen === 'select') { html += renderSelect(); }
+  else if (screen === 'checklist') { html += renderChecklist(); }
+  else if (screen === 'history') { html += renderHistory(); }
+  else if (screen === 'admin') { html += renderAdmin(); }
+  else if (screen === 'route') { html += renderRoute(); }
+  else if (screen === 'routeStop') { html += renderRouteStop(); }
+  el.innerHTML = html;
+  bindEvents();
+};
+
+// ===== Init =====
+initAuth();
+</script>
+</body>
+</html>
