@@ -123,6 +123,9 @@ var submitting = false;
 // Role & Admin state
 var userRole = null; // 'admin' or 'tech'
 var myRate = null; // flat per-PM rate for this tech (overrides asset fees)
+var myName = null; // tech profile name
+var reopenPmId = null; // editing an existing PM
+var ticketFlag = false; // submit as service ticket (needs review)
 var techProfiles = [];
 var adminTab = 'techs'; // 'techs', 'routes', 'import', 'reports' or 'pay'
 // Assignment & pay state
@@ -214,6 +217,7 @@ async function checkUserRole() {
   var { data } = await sb.from('tech_profiles').select('*').eq('email', email).single();
   if (data) {
     userRole = data.role;
+    myName = data.name || null;
     myRate = data.pm_rate != null && Number(data.pm_rate) > 0 ? Number(data.pm_rate) : null;
   } else {
     // Auto-create tech profile for new users
@@ -593,13 +597,14 @@ function renderSelect() {
 function renderChecklist() {
   if (!selectedAsset) { screen = 'home'; return renderHome(); }
   var a = selectedAsset;
+  var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">✏️ Editing a previously submitted PM — submitting will update it</div>' : '';
 
   var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="' + backFn + '">←</button>' +
     '<div style="flex:1"><h2 style="margin:0;font-size:15px">' + esc(a.store) + '</h2>' +
     '<div style="font-size:12px;color:var(--dim)">' + esc(a.serial) + ' &bull; ' + esc(a.model) + '</div></div>' +
-  '</div>';
+  '</div>' + reopenBanner;
 
   h += '<div class="card">';
   h += '<h3>Technician Info</h3>';
@@ -676,7 +681,11 @@ function renderChecklist() {
   if (submitting) {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Uploading PM...</div>';
   } else {
-    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:16px;padding:16px">✅ Submit PM</button>';
+    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">✅ ' + (reopenPmId ? 'Update PM' : 'Submit PM') + '</button>';
+    h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">🚨 Open Service Ticket</button>';
+    if (!reopenPmId) {
+      h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">📋 PM PREV COMP (done elsewhere)</button>';
+    }
   }
 
   return h;
@@ -694,11 +703,15 @@ function renderHistory() {
     completedPMs.forEach(function(pm) {
       h += '<div class="hist-item">' +
         '<span class="dt">' + esc(pm.pm_date) + '</span> &bull; ' +
-        esc(pm.store) + '<br>' +
+        esc(pm.store) +
+        (pm.needs_review ? ' <span class="badge" style="background:var(--rd)">NEEDS REVIEW</span>' : '') +
+        (pm.prev_comp ? ' <span class="badge" style="background:var(--dim)">PREV COMP</span>' : '') +
+        '<br>' +
         '<span style="color:var(--dim)">S/N: ' + esc(pm.serial) + ' &bull; Tech: ' + esc(pm.tech_name || '') + '</span>';
       if (pm.pdf_path) {
-        h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:12px">📄 View PDF</a>' +
-          ' &nbsp; <a href="#" onclick="sharePDF(\'' + esc(pm.pdf_path) + '\');return false" style="color:var(--ac);font-size:12px">📤 Send to Freshpet</a>';
+        h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:13px">📄 View PDF</a>' +
+          ' &nbsp; <a href="#" onclick="sharePDF(\'' + esc(pm.pdf_path) + '\');return false" style="color:var(--ac);font-size:13px">📤 Send to Freshpet</a>' +
+          ' &nbsp; <a href="#" onclick="reopenPM(' + pm.id + ');return false" style="color:var(--ac);font-size:13px">✏️ Reopen</a>';
       }
       h += '</div>';
     });
@@ -723,7 +736,7 @@ function fee$(n) { return '$' + Number(n || 0).toFixed(2); }
 // Each PM this tech completed in the given week = one paid line item (per asset)
 function myWeekItems(range) {
   return completedPMs.filter(function(pm) {
-    return pm.tech_user_id === currentUser.id && pm.pm_date >= range.start && pm.pm_date <= range.end;
+    return pm.tech_user_id === currentUser.id && !pm.prev_comp && pm.pm_date >= range.start && pm.pm_date <= range.end;
   }).map(function(pm) {
     var a = ASSETS.find(function(x) { return x.id === pm.asset_id; });
     return {
@@ -969,6 +982,10 @@ function renderAdmin() {
     '<button class="' + (adminTab === 'import' ? 'active' : '') + '" onclick="adminTab=\'import\';render()">Accounts</button>' +
     '<button class="' + (adminTab === 'reports' ? 'active' : '') + '" onclick="adminTab=\'reports\';render()">Reports</button>' +
     '<button class="' + (adminTab === 'pay' ? 'active' : '') + '" onclick="adminTab=\'pay\';render()">Pay</button>' +
+    (function() {
+      var n = completedPMs.filter(function(p) { return p.needs_review; }).length;
+      return '<button class="' + (adminTab === 'review' ? 'active' : '') + '"' + (n ? ' style="color:var(--rd)"' : '') + ' onclick="adminTab=\'review\';render()">Review' + (n ? ' (' + n + ')' : '') + '</button>';
+    })() +
   '</div>';
 
   if (adminTab === 'techs') {
@@ -979,10 +996,47 @@ function renderAdmin() {
     h += renderAdminImport();
   } else if (adminTab === 'reports') {
     h += renderAdminReports();
-  } else {
+  } else if (adminTab === 'pay') {
     h += renderAdminPay();
+  } else {
+    h += renderAdminReview();
   }
   return h;
+}
+
+// ===== ADMIN REVIEW (open service tickets) =====
+function renderAdminReview() {
+  var list = completedPMs.filter(function(p) { return p.needs_review; });
+  var h = '<h3 style="margin-bottom:10px">Needs Review (' + list.length + ')</h3>';
+  if (!list.length) {
+    h += '<div class="card" style="text-align:center;color:var(--dim)">No open service tickets 🎉</div>';
+    return h;
+  }
+  list.forEach(function(pm) {
+    h += '<div class="hist-item" style="border-left:4px solid var(--rd)">';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
+    h += '<span style="flex:1"><strong>' + esc(pm.store) + '</strong> &bull; <span class="dt">' + esc(pm.pm_date) + '</span>' +
+      '<br><span style="color:var(--dim);font-size:12px">S/N ' + esc(pm.serial) + ' &bull; ' + esc(pm.tech_name || '') + '</span></span>';
+    h += '<button class="btn btn-s" style="width:auto;padding:8px 14px;font-size:13px" onclick="clearReview(' + pm.id + ')">✓ Clear</button>';
+    h += '</div>';
+    if (pm.form_data && pm.form_data.comments) {
+      h += '<div style="font-size:13px;color:var(--dim);margin-top:6px">💬 ' + esc(pm.form_data.comments) + '</div>';
+    }
+    if (pm.pdf_path) {
+      h += '<a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:13px">📄 View PDF</a>' +
+        ' &nbsp; <a href="#" onclick="reopenPM(' + pm.id + ');return false" style="color:var(--ac);font-size:13px">✏️ Reopen</a>';
+    }
+    h += '</div>';
+  });
+  return h;
+}
+
+async function clearReview(pmId) {
+  var { error } = await sb.from('completed_pms').update({ needs_review: false }).eq('id', pmId);
+  if (error) { showStatus('Error: ' + error.message, 'err'); return; }
+  await loadCompletedPMs();
+  showStatus('Review cleared', 'ok');
+  render();
 }
 
 // ===== ADMIN PAY (fees & payout requests) =====
@@ -1791,8 +1845,8 @@ function getRouteStops() {
 }
 
 // ===== Navigation Functions =====
-function goHome() { screen = 'home'; search = ''; routeFromChecklist = false; render(); }
-function goSelect() { screen = 'select'; search = ''; routeFromChecklist = false; render(); }
+function goHome() { screen = 'home'; search = ''; routeFromChecklist = false; reopenPmId = null; ticketFlag = false; render(); }
+function goSelect() { screen = 'select'; search = ''; routeFromChecklist = false; reopenPmId = null; ticketFlag = false; render(); }
 function goHistory() { screen = 'history'; render(); }
 
 async function goAdmin() {
@@ -1821,14 +1875,36 @@ function goBackToRouteStop() {
   render();
 }
 
+// "First L." from the tech profile / Google account
+function shortTechName() {
+  var full = myName || (currentUser && currentUser.user_metadata && currentUser.user_metadata.full_name) || (currentUser ? currentUser.email.split('@')[0] : '');
+  var parts = full.trim().split(/\s+/);
+  if (parts.length >= 2) { return parts[0] + ' ' + parts[parts.length - 1][0].toUpperCase() + '.'; }
+  return parts[0] || '';
+}
+
+// Everything pre-filled for the normal case; tech only changes what's wrong
+function defaultForm() {
+  var name = shortTechName();
+  return {
+    techName: name,
+    serviceCompany: 'Freeflow Beverage Solutions',
+    serviceRep: name,
+    date: new Date().toISOString().split('T')[0],
+    onFloor: true, petFood: true,
+    workingArrival: true, workingDepart: true,
+    cleanInterior: true, cleanExterior: true, cleanGrill: true, cleanCondPans: true, cleanCondenser: true,
+    powerCord: true, cleanCoil: true, emptyDrain: true, cleanFans: true,
+    cleanCondPansD: true, cleanDrainLine: true, ledCheck: true
+  };
+}
+
 function startChecklist(idx) {
   selectedAsset = ASSETS[idx];
   selectedAssetIdx = idx;
-  form = {
-    techName: localStorage.getItem('fp_techName') || '',
-    serviceCompany: localStorage.getItem('fp_company') || '',
-    date: new Date().toISOString().split('T')[0]
-  };
+  reopenPmId = null;
+  ticketFlag = false;
+  form = defaultForm();
   photos = [];
   sigs = { store: null, tech: null };
   screen = 'checklist';
@@ -1979,7 +2055,8 @@ async function submitForm() {
     });
     if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
 
-    var { error: dbErr } = await sb.from('completed_pms').insert({
+    var prevPm = reopenPmId ? completedPMs.find(function(p) { return p.id === reopenPmId; }) : null;
+    var record = {
       asset_id: a.id,
       tech_user_id: currentUser.id,
       tech_name: form.techName,
@@ -1989,10 +2066,26 @@ async function submitForm() {
       pdf_path: pdfPath,
       photo_paths: photoPaths,
       store: a.store,
-      serial: a.serial
-    });
+      serial: a.serial,
+      needs_review: ticketFlag || !!(prevPm && prevPm.needs_review)
+    };
+    var dbErr;
+    if (reopenPmId) {
+      dbErr = (await sb.from('completed_pms').update(record).eq('id', reopenPmId)).error;
+    } else {
+      dbErr = (await sb.from('completed_pms').insert(record)).error;
+    }
 
     if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+    var wasTicket = ticketFlag;
+    var wasReopen = !!reopenPmId;
+    reopenPmId = null;
+    ticketFlag = false;
+    if (wasTicket) {
+      var sent = await sendReviewEmail(pdfPath, a);
+      showStatus(sent ? '🚨 Service ticket opened — emailed to service@brixbev.com' : 'PM flagged NEEDS REVIEW, but the email failed (check Resend setup)', sent ? 'ok' : 'err');
+    }
 
     // Save a local copy so the report can be sent to Freshpet right away
     try { pdfDoc.save(baseName + '.pdf'); } catch(e) {}
@@ -2005,15 +2098,97 @@ async function submitForm() {
     if (routeFromChecklist) {
       routeFromChecklist = false;
       screen = 'routeStop';
-      showStatus('PM submitted!', 'ok');
     } else {
       screen = 'home';
-      showStatus('PM submitted successfully!', 'ok');
     }
+    if (!wasTicket) { showStatus(wasReopen ? 'PM updated!' : 'PM submitted successfully!', 'ok'); }
 
   } catch (err) {
     submitting = false;
     showStatus('Error: ' + err.message, 'err');
+    render();
+  }
+}
+
+function openServiceTicket() {
+  if (!confirm('Open a service ticket?\n\nThe PM will be ' + (reopenPmId ? 'updated' : 'submitted') + ', flagged NEEDS REVIEW, and the PDF emailed to service@brixbev.com.')) return;
+  ticketFlag = true;
+  submitForm();
+}
+
+async function sendReviewEmail(pdfPath, a) {
+  try {
+    var { error } = await sb.functions.invoke('send-pm-review', { body: {
+      pdfUrl: SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pdfPath,
+      store: a.store,
+      serial: a.serial,
+      techName: form.techName || shortTechName(),
+      pmDate: form.date || '',
+      comments: form.comments || ''
+    } });
+    if (error) { throw error; }
+    return true;
+  } catch (e) {
+    console.warn('Review email failed:', e);
+    return false;
+  }
+}
+
+// Close a PM out as completed from another source (no checklist, not paid)
+async function markPrevComp() {
+  var a = selectedAsset;
+  if (!a) return;
+  if (!confirm('Mark this PM as PREVIOUSLY COMPLETED from another source?\n\n' + a.store + ' — S/N ' + a.serial + '\nNo checklist or PDF will be created and it will not count toward pay.')) return;
+  var { error } = await sb.from('completed_pms').insert({
+    asset_id: a.id,
+    tech_user_id: currentUser.id,
+    tech_name: shortTechName(),
+    service_company: 'Freeflow Beverage Solutions',
+    pm_date: new Date().toISOString().split('T')[0],
+    form_data: { prevComp: true },
+    store: a.store,
+    serial: a.serial,
+    prev_comp: true
+  });
+  if (error) { showStatus('Error: ' + error.message, 'err'); return; }
+  await loadCompletedPMs();
+  clearProgress();
+  if (routeFromChecklist) { routeFromChecklist = false; screen = 'routeStop'; }
+  else { screen = 'select'; }
+  showStatus('Marked PM PREV COMP ✓', 'ok');
+  render();
+}
+
+// Reopen a submitted PM for edits (pulls its data and photos back in)
+function blobToDataURL(blob) {
+  return new Promise(function(res) { var r = new FileReader(); r.onload = function() { res(r.result); }; r.readAsDataURL(blob); });
+}
+
+async function reopenPM(pmId) {
+  var pm = completedPMs.find(function(p) { return p.id === pmId; });
+  if (!pm) return;
+  if (pm.prev_comp) { showStatus('PREV COMP entries have no checklist to edit', 'err'); return; }
+  if (pm.tech_user_id !== currentUser.id && userRole !== 'admin') { showStatus('Only the tech who submitted this PM (or an admin) can reopen it', 'err'); return; }
+  var idx = ASSETS.findIndex(function(x) { return x.id === pm.asset_id; });
+  if (idx === -1) { showStatus('Asset is no longer active', 'err'); return; }
+  selectedAsset = ASSETS[idx];
+  selectedAssetIdx = idx;
+  form = Object.assign({}, pm.form_data || {});
+  photos = [];
+  sigs = { store: null, tech: null };
+  reopenPmId = pm.id;
+  ticketFlag = false;
+  routeFromChecklist = false;
+  screen = 'checklist';
+  render();
+  // Pull existing photos back in so they stay in the regenerated PDF
+  if (pm.photo_paths && pm.photo_paths.length) {
+    for (var i = 0; i < pm.photo_paths.length; i++) {
+      try {
+        var resp = await fetch(SUPA_URL + '/storage/v1/object/public/fp-photos/' + pm.photo_paths[i]);
+        if (resp.ok) { photos.push(await blobToDataURL(await resp.blob())); }
+      } catch (e) {}
+    }
     render();
   }
 }
