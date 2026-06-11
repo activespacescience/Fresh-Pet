@@ -81,6 +81,10 @@ label input[type=checkbox]{width:18px;height:18px;accent-color:var(--ac)}
 .asset-check:active{opacity:.7}
 .asset-check input{width:18px;height:18px;accent-color:var(--ac)}
 .remove-btn{background:none;border:none;color:var(--rd);font-size:18px;cursor:pointer;padding:4px 8px}
+.sig-canvas{display:block;width:100%;height:120px;background:#fff;border:1px solid var(--bd);border-radius:8px;touch-action:none;cursor:crosshair}
+.sig-bar{display:flex;justify-content:space-between;align-items:center;margin:2px 0 10px}
+.sig-bar .hint{font-size:11px;color:var(--dim)}
+.sig-bar button{background:var(--sf2);color:var(--dim);border:1px solid var(--bd);border-radius:6px;padding:4px 10px;font-size:12px;cursor:pointer}
 </style>
 </head>
 <body>
@@ -102,6 +106,7 @@ var selectedStoreIdx = -1;
 var selectedAssetIdx = -1;
 var form = {};
 var photos = [];
+var sigs = { store: null, tech: null }; // signature dataURLs
 var completedPMs = [];
 var statusMsg = '';
 var statusType = 'ok';
@@ -110,7 +115,12 @@ var submitting = false;
 // Role & Admin state
 var userRole = null; // 'admin' or 'tech'
 var techProfiles = [];
-var adminTab = 'techs'; // 'techs', 'routes' or 'import'
+var adminTab = 'techs'; // 'techs', 'routes', 'import' or 'reports'
+// Reports state (bulk PDF send)
+var reportSel = {};
+var reportFrom = new Date(Date.now() - 29 * 864e5).toISOString().split('T')[0];
+var reportTo = new Date().toISOString().split('T')[0];
+var sharingReports = false;
 // Import state
 var importPreview = null; // { rows, newCount, updateCount, deactivateSerials, skipped }
 var importFileName = '';
@@ -125,15 +135,16 @@ var routeFromChecklist = false; // track if we came from route view
 
 // ===== LocalStorage helpers =====
 function saveProgress() {
-  try { localStorage.setItem('fp_progress', JSON.stringify({ si: selectedStoreIdx, ai: selectedAssetIdx, form: form })); } catch(e) {}
+  try { localStorage.setItem('fp_progress', JSON.stringify({ si: selectedStoreIdx, ai: selectedAssetIdx, form: form, sigs: sigs })); } catch(e) {}
 }
 function loadProgress() {
-  try { var d = JSON.parse(localStorage.getItem('fp_progress')); if (d) { selectedStoreIdx = d.si; selectedAssetIdx = d.ai; form = d.form || {}; return true; } } catch(e) {}
+  try { var d = JSON.parse(localStorage.getItem('fp_progress')); if (d) { selectedStoreIdx = d.si; selectedAssetIdx = d.ai; form = d.form || {}; sigs = d.sigs || { store: null, tech: null }; return true; } } catch(e) {}
   return false;
 }
 function clearProgress() {
   localStorage.removeItem('fp_progress');
   photos = [];
+  sigs = { store: null, tech: null };
 }
 
 // ===== Auth =====
@@ -250,6 +261,78 @@ function lbl(t) { return '<label style="font-size:13px;color:var(--dim);margin-b
 function inp(name, type, ph) { return '<input type="' + (type||'text') + '" name="' + name + '" placeholder="' + (ph||'') + '" value="' + esc(form[name]||'') + '">'; }
 function fld(t, name, type, ph) { return lbl(t) + inp(name, type, ph); }
 function chk(name, t) { return '<label><input type="checkbox" name="' + name + '"' + (form[name] ? ' checked' : '') + '> ' + t + '</label>'; }
+
+// ===== Signature Pads =====
+function sigPad(key, title) {
+  return lbl(title) +
+    '<canvas class="sig-canvas" id="sig_' + key + '"></canvas>' +
+    '<div class="sig-bar">' +
+      '<span class="hint">' + (sigs[key] ? '✓ Signed' : 'Sign above with finger or stylus') + '</span>' +
+      '<button type="button" onclick="clearSig(\'' + key + '\')">Clear</button>' +
+    '</div>';
+}
+
+function initSigPad(key) {
+  var c = document.getElementById('sig_' + key);
+  if (!c) return;
+  c.width = c.offsetWidth || 400;
+  c.height = 120;
+  var ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  ctx.strokeStyle = '#111';
+  ctx.lineWidth = 2;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (sigs[key]) {
+    var im = new Image();
+    im.onload = function() { ctx.drawImage(im, 0, 0, c.width, c.height); };
+    im.src = sigs[key];
+  }
+  var drawing = false;
+  function pos(e) { var r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
+  c.addEventListener('pointerdown', function(e) {
+    e.preventDefault();
+    drawing = true;
+    try { c.setPointerCapture(e.pointerId); } catch(err) {}
+    var p = pos(e);
+    ctx.beginPath();
+    ctx.moveTo(p[0], p[1]);
+    ctx.lineTo(p[0] + 0.1, p[1] + 0.1);
+    ctx.stroke();
+  });
+  c.addEventListener('pointermove', function(e) {
+    if (!drawing) return;
+    e.preventDefault();
+    var p = pos(e);
+    ctx.lineTo(p[0], p[1]);
+    ctx.stroke();
+  });
+  function end() {
+    if (!drawing) return;
+    drawing = false;
+    sigs[key] = c.toDataURL('image/png');
+    saveProgress();
+    var hint = c.nextElementSibling && c.nextElementSibling.querySelector('.hint');
+    if (hint) hint.textContent = '✓ Signed';
+  }
+  c.addEventListener('pointerup', end);
+  c.addEventListener('pointercancel', end);
+  c.addEventListener('pointerleave', end);
+}
+
+function clearSig(key) {
+  sigs[key] = null;
+  saveProgress();
+  var c = document.getElementById('sig_' + key);
+  if (c) {
+    var ctx = c.getContext('2d');
+    ctx.fillStyle = '#fff';
+    ctx.fillRect(0, 0, c.width, c.height);
+    var hint = c.nextElementSibling && c.nextElementSibling.querySelector('.hint');
+    if (hint) hint.textContent = 'Sign above with finger or stylus';
+  }
+}
 
 // ===== Route Optimization (Nearest-Neighbor) =====
 function haversine(lat1, lng1, lat2, lng2) {
@@ -541,7 +624,9 @@ function renderChecklist() {
 
   h += '<h3>Signatures</h3>';
   h += fld('Store Contact', 'storeContact', 'text', 'Name');
+  h += sigPad('store', 'Store Manager Signature');
   h += fld('Service Rep', 'serviceRep', 'text', 'Name');
+  h += sigPad('tech', 'Technician Signature');
 
   h += '<h3>Photos</h3>';
   h += '<div style="display:flex;gap:8px;margin-bottom:8px">' +
@@ -583,12 +668,32 @@ function renderHistory() {
         esc(pm.store) + '<br>' +
         '<span style="color:var(--dim)">S/N: ' + esc(pm.serial) + ' &bull; Tech: ' + esc(pm.tech_name || '') + '</span>';
       if (pm.pdf_path) {
-        h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:12px">📄 View PDF</a>';
+        h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:12px">📄 View PDF</a>' +
+          ' &nbsp; <a href="#" onclick="sharePDF(\'' + esc(pm.pdf_path) + '\');return false" style="color:var(--ac);font-size:12px">📤 Send to Freshpet</a>';
       }
       h += '</div>';
     });
   }
   return h;
+}
+
+// ===== Share PDF (email/text to Freshpet) =====
+async function sharePDF(path) {
+  var url = SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + path;
+  try {
+    if (navigator.share) {
+      var resp = await fetch(url);
+      var blob = await resp.blob();
+      var file = new File([blob], path.split('/').pop(), { type: 'application/pdf' });
+      if (!navigator.canShare || navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Freshpet PM Report' });
+        return;
+      }
+    }
+  } catch(e) {
+    if (e.name === 'AbortError') return; // user closed the share sheet
+  }
+  window.open(url, '_blank');
 }
 
 // ===== ADMIN PANEL =====
@@ -599,19 +704,120 @@ function renderAdmin() {
   '</div>';
 
   h += '<div class="tab-bar">' +
-    '<button class="' + (adminTab === 'techs' ? 'active' : '') + '" onclick="adminTab=\'techs\';render()">Technicians</button>' +
+    '<button class="' + (adminTab === 'techs' ? 'active' : '') + '" onclick="adminTab=\'techs\';render()">Techs</button>' +
     '<button class="' + (adminTab === 'routes' ? 'active' : '') + '" onclick="adminTab=\'routes\';render()">Routes</button>' +
     '<button class="' + (adminTab === 'import' ? 'active' : '') + '" onclick="adminTab=\'import\';render()">Accounts</button>' +
+    '<button class="' + (adminTab === 'reports' ? 'active' : '') + '" onclick="adminTab=\'reports\';render()">Reports</button>' +
   '</div>';
 
   if (adminTab === 'techs') {
     h += renderAdminTechs();
   } else if (adminTab === 'routes') {
     h += renderAdminRoutes();
-  } else {
+  } else if (adminTab === 'import') {
     h += renderAdminImport();
+  } else {
+    h += renderAdminReports();
   }
   return h;
+}
+
+// ===== ADMIN REPORTS (bulk PDF send) =====
+function getReportList() {
+  return completedPMs.filter(function(pm) {
+    if (!pm.pdf_path) return false;
+    if (reportFrom && pm.pm_date < reportFrom) return false;
+    if (reportTo && pm.pm_date > reportTo) return false;
+    return true;
+  });
+}
+
+function renderAdminReports() {
+  var h = '<div class="card">';
+  h += '<h3>Send PM Reports</h3>';
+  h += '<p style="font-size:12px;color:var(--dim);margin-bottom:8px">Select completed PMs and send all their PDFs to Freshpet in one go.</p>';
+  h += '<div style="display:flex;gap:8px">' +
+    '<div style="flex:1">' + lbl('From') + '<input type="date" value="' + esc(reportFrom) + '" onchange="reportFrom=this.value;render()"></div>' +
+    '<div style="flex:1">' + lbl('To') + '<input type="date" value="' + esc(reportTo) + '" onchange="reportTo=this.value;render()"></div>' +
+  '</div>';
+  h += '</div>';
+
+  var list = getReportList();
+  var selCount = list.filter(function(pm) { return reportSel[pm.id]; }).length;
+
+  h += '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+  h += '<h3 style="margin:0">' + list.length + ' Report' + (list.length === 1 ? '' : 's') + '</h3>';
+  if (list.length) {
+    h += '<button class="btn btn-o" style="width:auto;padding:6px 12px;font-size:12px" onclick="toggleAllReports()">' +
+      (selCount === list.length ? 'Select None' : 'Select All') + '</button>';
+  }
+  h += '</div>';
+
+  if (sharingReports) {
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Preparing ' + selCount + ' PDF' + (selCount === 1 ? '' : 's') + '...</div>';
+  } else if (selCount > 0) {
+    h += '<button class="btn btn-s" style="margin-bottom:10px" onclick="shareSelectedReports()">📤 Send ' + selCount + ' PDF' + (selCount === 1 ? '' : 's') + '</button>';
+  }
+
+  list.forEach(function(pm) {
+    h += '<label class="asset-check"><input type="checkbox" onchange="reportSel[' + pm.id + ']=this.checked;render()"' + (reportSel[pm.id] ? ' checked' : '') + '>';
+    h += '<span style="flex:1"><strong>' + esc(pm.store) + '</strong> &bull; <span style="color:var(--gn)">' + esc(pm.pm_date) + '</span>' +
+      '<br><span style="color:var(--dim);font-size:11px">S/N ' + esc(pm.serial) + (pm.tech_name ? ' &bull; ' + esc(pm.tech_name) : '') + '</span></span></label>';
+  });
+  if (!list.length) {
+    h += '<p style="text-align:center;color:var(--dim);padding:20px 0">No PM reports in this date range</p>';
+  }
+  return h;
+}
+
+function toggleAllReports() {
+  var list = getReportList();
+  var allSelected = list.length > 0 && list.every(function(pm) { return reportSel[pm.id]; });
+  list.forEach(function(pm) { reportSel[pm.id] = !allSelected; });
+  render();
+}
+
+async function shareSelectedReports() {
+  if (sharingReports) return;
+  var list = getReportList().filter(function(pm) { return reportSel[pm.id]; });
+  if (!list.length) return;
+  sharingReports = true;
+  render();
+
+  try {
+    var files = [];
+    for (var i = 0; i < list.length; i++) {
+      var url = SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + list[i].pdf_path;
+      var resp = await fetch(url);
+      if (!resp.ok) { throw new Error('Could not fetch PDF for ' + list[i].store + ' (' + list[i].pm_date + ')'); }
+      var blob = await resp.blob();
+      files.push(new File([blob], list[i].pdf_path.split('/').pop(), { type: 'application/pdf' }));
+    }
+    sharingReports = false;
+
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: files }))) {
+      await navigator.share({ files: files, title: 'Freshpet PM Reports' });
+      showStatus(files.length + ' PDF' + (files.length === 1 ? '' : 's') + ' sent', 'ok');
+    } else {
+      // No share sheet (desktop browsers): download each file instead
+      files.forEach(function(f, idx) {
+        setTimeout(function() {
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(f);
+          a.download = f.name;
+          a.click();
+          setTimeout(function() { URL.revokeObjectURL(a.href); }, 10000);
+        }, idx * 300);
+      });
+      showStatus('Share sheet not available — downloading ' + files.length + ' PDF' + (files.length === 1 ? '' : 's'), 'info');
+    }
+    render();
+  } catch (err) {
+    sharingReports = false;
+    if (err.name === 'AbortError') { render(); return; } // user closed the share sheet
+    showStatus('Error: ' + err.message, 'err');
+    render();
+  }
 }
 
 function renderAdminTechs() {
@@ -1094,6 +1300,7 @@ function startChecklist(idx) {
     date: new Date().toISOString().split('T')[0]
   };
   photos = [];
+  sigs = { store: null, tech: null };
   screen = 'checklist';
   render();
 }
@@ -1186,6 +1393,12 @@ async function clearRoute() {
 async function submitForm() {
   if (submitting) return;
   if (!form.techName) { showStatus('Please enter tech name', 'err'); return; }
+  if (!sigs.store || !sigs.tech) {
+    var missingSigs = [];
+    if (!sigs.store) missingSigs.push('store manager');
+    if (!sigs.tech) missingSigs.push('technician');
+    if (!confirm('Missing ' + missingSigs.join(' and ') + ' signature. Submit anyway?')) return;
+  }
 
   submitting = true;
   render();
@@ -1212,7 +1425,7 @@ async function submitForm() {
     }
 
     var pdfDoc = await new Promise(function(resolve) {
-      generatePDF(a, form, photos, function(doc) { resolve(doc); });
+      generatePDF(a, form, photos, sigs, function(doc) { resolve(doc); });
     });
 
     var pdfBlob = pdfDoc.output('blob');
@@ -1237,6 +1450,9 @@ async function submitForm() {
     });
 
     if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+    // Save a local copy so the report can be sent to Freshpet right away
+    try { pdfDoc.save(baseName + '.pdf'); } catch(e) {}
 
     await loadCompletedPMs();
     clearProgress();
@@ -1269,7 +1485,7 @@ function dataURLtoBlob(dataURL) {
 }
 
 // ===== PDF Generation =====
-function generatePDF(a, f, ph, cb) {
+function generatePDF(a, f, ph, sg, cb) {
   var jsPDF = window.jspdf.jsPDF;
   var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
   var W = 612, LM = 40, RM = W - 40, COL2 = 326;
@@ -1321,9 +1537,25 @@ function generatePDF(a, f, ph, cb) {
   doc.setFont('helvetica','normal');doc.setFontSize(8);
   var cmt=doc.splitTextToSize(f.comments||'(none)',RM-LM);doc.text(cmt,LM,y);y+=Math.max(cmt.length*10,20);
 
-  y+=6;doc.setFontSize(8);
-  doc.text('Store Contact: '+(f.storeContact||''),LM,y);y+=12;
-  doc.text('Service Rep: '+(f.serviceRep||''),LM,y);y+=16;
+  y+=6;
+  if (y > 640) { doc.addPage(); y = 40; }
+  var sigH = 0;
+  function drawSig(img, x) {
+    if (!img) return;
+    try {
+      var sp = doc.getImageProperties(img);
+      var sw = 200, sh = Math.min(sw * sp.height / sp.width, 58);
+      doc.addImage(img, 'PNG', x, y, sw, sh);
+      if (sh > sigH) sigH = sh;
+    } catch(e) {}
+  }
+  drawSig(sg && sg.store, LM);
+  drawSig(sg && sg.tech, COL2);
+  y += sigH;
+  doc.setLineWidth(.5);doc.line(LM,y+2,LM+200,y+2);doc.line(COL2,y+2,COL2+200,y+2);y+=12;
+  doc.setFont('helvetica','normal');doc.setFontSize(8);
+  doc.text('Store Contact: '+(f.storeContact||''),LM,y);
+  doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=16;
 
   doc.setFont('helvetica','bold');doc.setFontSize(7);
   doc.text('AHT: 800-905-4768 | MTL: 888-685-8324 | TRUE: 800-325-6152 | MINUS FORTY: 800.800.5706',LM,y);
@@ -1438,6 +1670,8 @@ function bindEvents() {
   });
 
   if (screen === 'checklist') {
+    initSigPad('store');
+    initSigPad('tech');
     document.querySelectorAll('input[name],textarea[name],select[name]').forEach(function(el) {
       var handler = function() {
         if (el.type === 'checkbox') {
