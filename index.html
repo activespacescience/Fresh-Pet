@@ -153,16 +153,41 @@ var routeFromChecklist = false; // track if we came from route view
 
 // ===== LocalStorage helpers =====
 function saveProgress() {
-  try { localStorage.setItem('fp_progress', JSON.stringify({ si: selectedStoreIdx, ai: selectedAssetIdx, form: form, sigs: sigs })); } catch(e) {}
+  try {
+    var d = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, photos: photos, reopenId: reopenPmId };
+    try {
+      localStorage.setItem('fp_progress', JSON.stringify(d));
+    } catch (e) {
+      // photos can overflow localStorage — keep at least the form & signatures
+      d.photos = [];
+      localStorage.setItem('fp_progress', JSON.stringify(d));
+    }
+  } catch(e) {}
 }
 function loadProgress() {
-  try { var d = JSON.parse(localStorage.getItem('fp_progress')); if (d) { selectedStoreIdx = d.si; selectedAssetIdx = d.ai; form = d.form || {}; sigs = d.sigs || { store: null, tech: null }; return true; } } catch(e) {}
+  try {
+    var d = JSON.parse(localStorage.getItem('fp_progress'));
+    if (d) {
+      selectedStoreIdx = d.si;
+      selectedAssetIdx = d.ai;
+      form = d.form || {};
+      sigs = d.sigs || { store: null, tech: null };
+      photos = d.photos || [];
+      reopenPmId = d.reopenId || null;
+      if (d.serial) {
+        var i = ASSETS.findIndex(function(a) { return a.serial === d.serial; });
+        if (i > -1) { selectedAssetIdx = i; }
+      }
+      return true;
+    }
+  } catch(e) {}
   return false;
 }
 function clearProgress() {
   localStorage.removeItem('fp_progress');
   photos = [];
   sigs = { store: null, tech: null };
+  reopenPmId = null;
 }
 
 // ===== Auth =====
@@ -181,12 +206,21 @@ async function initAuth() {
 
   sb.auth.onAuthStateChange(async function(event, session) {
     if (event === 'SIGNED_IN' && session) {
+      // Supabase re-fires SIGNED_IN every time the app regains focus
+      // (e.g. after the camera). Don't reset the UI mid-PM — only do the
+      // full init when this is actually a new sign-in.
+      if (currentUser && currentUser.id === session.user.id) {
+        currentUser = session.user;
+        return;
+      }
       currentUser = session.user;
       await loadAssets();
       await loadCompletedPMs();
       await checkUserRole();
       screen = 'home';
       render();
+    } else if (event === 'TOKEN_REFRESHED' && session) {
+      currentUser = session.user;
     } else if (event === 'SIGNED_OUT') {
       currentUser = null;
       ASSETS = [];
@@ -462,13 +496,14 @@ function handlePhotos(input) {
   var files = input.files;
   for (var j = 0; j < files.length; j++) {
     (function(f) {
-      compressImg(f, function(d) { photos.push(d); render(); });
+      compressImg(f, function(d) { photos.push(d); saveProgress(); render(); });
     })(files[j]);
   }
 }
 
 function removePhoto(i) {
   photos.splice(i, 1);
+  saveProgress();
   render();
 }
 
@@ -1919,6 +1954,7 @@ function startChecklistFromRoute(idx) {
 function resumeProgress() {
   if (loadProgress()) {
     selectedAsset = ASSETS[selectedAssetIdx];
+    if (!selectedAsset) { clearProgress(); showStatus('Saved PM could not be restored (asset not found)', 'err'); render(); return; }
     screen = 'checklist';
     render();
   }
