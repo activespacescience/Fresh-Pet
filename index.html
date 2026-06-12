@@ -67,11 +67,11 @@ label input[type=checkbox]{width:26px;height:26px;accent-color:var(--gn)}
 .stop-card{background:var(--sf);border-radius:16px;padding:15px;margin-bottom:10px;border-left:4px solid var(--bd);box-shadow:var(--shadow)}
 .stop-card.current{border-left-color:var(--gn);background:#f0faf2}
 .stop-card.completed{border-left-color:var(--gn);opacity:.6}
-.stop-num{display:inline-flex;align-items:center;justify-content:center;width:28px;height:28px;border-radius:50%;font-size:13px;font-weight:700;margin-right:8px}
+.stop-num{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;font-size:16px;font-weight:700;margin-right:8px}
 .stop-num.current{background:var(--gn);color:#fff}
 .stop-num.done{background:var(--gn);color:#fff}
 .stop-num.pending{background:var(--sf2);color:var(--dim)}
-.nav-btn{display:inline-flex;align-items:center;gap:6px;padding:11px 17px;background:var(--gn);color:#fff;border:none;border-radius:12px;font-size:15px;font-weight:600;cursor:pointer;margin-top:8px;font-family:inherit}
+.nav-btn{display:inline-flex;align-items:center;gap:6px;padding:13px 19px;background:var(--gn);color:#fff;border:none;border-radius:12px;font-size:17px;font-weight:600;cursor:pointer;margin-top:8px;font-family:inherit}
 .nav-btn:active{opacity:.7}
 .tech-row{display:flex;align-items:center;justify-content:space-between;padding:13px 14px;background:var(--sf);border-radius:14px;margin-bottom:8px;font-size:14px;box-shadow:var(--shadow)}
 .tech-row .role{font-size:12px;padding:3px 10px;border-radius:8px;font-weight:700}
@@ -1733,7 +1733,7 @@ function renderRoute() {
 
   h += '<div class="card" style="text-align:center">' +
     '<div style="font-size:24px;font-weight:700">' + doneCount + '/' + stops.length + '</div>' +
-    '<div style="color:var(--dim);font-size:13px">Stops Completed</div>' +
+    '<div style="color:var(--dim);font-size:16px">Stops Completed</div>' +
     '<div class="progress-bar"><div class="fill" style="width:' + (stops.length > 0 ? (doneCount / stops.length * 100) : 0) + '%"></div></div>' +
   '</div>';
 
@@ -1761,10 +1761,10 @@ function renderRoute() {
     h += '<div style="display:flex;align-items:flex-start;gap:4px">';
     h += '<span class="stop-num ' + numCls + '">' + (s.allDone ? '✓' : (i+1)) + '</span>';
     h += '<div style="flex:1">';
-    h += '<strong>' + esc(s.store) + '</strong>';
+    h += '<strong style="font-size:20px">' + esc(s.store) + '</strong>';
     if (isCurrent) { h += ' <span class="badge">Current</span>'; }
-    h += '<br><span style="font-size:13px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">' + esc(s.address) + ', ' + esc(s.city) + '</span>';
-    h += '<br><span style="font-size:12px;color:var(--dim)">' + s.assets.length + ' asset(s)';
+    h += '<br><span style="font-size:17px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">' + esc(s.address) + ', ' + esc(s.city) + '</span>';
+    h += '<br><span style="font-size:16px;color:var(--dim)">' + s.assets.length + ' asset(s)';
     var doneSoFar = s.assets.filter(function(a) { return isCompleted(a.serial); }).length;
     if (doneSoFar > 0 && !s.allDone) { h += ' &bull; ' + doneSoFar + ' done'; }
     h += '</span>';
@@ -1790,8 +1790,8 @@ function renderRouteStop() {
 
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="goRoute()">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:15px">Stop ' + (currentStopIdx + 1) + ': ' + esc(stop.store) + '</h2>' +
-    '<div style="font-size:13px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">' + esc(stop.address) + ', ' + esc(stop.city) + '</div></div>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:21px">Stop ' + (currentStopIdx + 1) + ': ' + esc(stop.store) + '</h2>' +
+    '<div style="font-size:17px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">' + esc(stop.address) + ', ' + esc(stop.city) + '</div></div>' +
   '</div>';
 
   h += '<button class="nav-btn" style="width:100%;justify-content:center;margin-bottom:12px" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">🗺️ Navigate to This Stop</button>';
