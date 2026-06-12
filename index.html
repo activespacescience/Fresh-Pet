@@ -11,32 +11,32 @@
 <style>
 :root{--bg:#f2f2f7;--sf:#ffffff;--sf2:#f2f2f7;--bd:#e2e2e7;--tx:#1c1c1e;--dim:#8e8e93;--ac:#34c759;--gn:#34c759;--rd:#ff3b30;--or:#ff9500;--shadow:0 1px 3px rgba(0,0,0,.07)}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{font-family:'SF Pro Rounded',-apple-system,BlinkMacSystemFont,'Arial Rounded MT Bold','Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:env(safe-area-inset-bottom);font-size:16px;-webkit-font-smoothing:antialiased}
+body{font-family:'SF Pro Rounded',-apple-system,BlinkMacSystemFont,'Arial Rounded MT Bold','Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:env(safe-area-inset-bottom);font-size:17px;-webkit-font-smoothing:antialiased}
 .app{max-width:480px;margin:0 auto;padding:16px}
 .card{background:var(--sf);border:none;border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
-.btn{display:block;width:100%;padding:15px;border:none;border-radius:14px;font-size:17px;font-weight:600;cursor:pointer;text-align:center;transition:opacity .15s,transform .1s;font-family:inherit}
+.btn{display:block;width:100%;padding:17px;border:none;border-radius:14px;font-size:19px;font-weight:600;cursor:pointer;text-align:center;transition:opacity .15s,transform .1s;font-family:inherit}
 .btn:active{opacity:.75;transform:scale(.985)}
 .btn-p{background:var(--gn);color:#fff}
 .btn-s{background:var(--gn);color:#fff}
 .btn-d{background:var(--rd);color:#fff}
 .btn-o{background:var(--sf);color:var(--tx);border:1px solid var(--bd);box-shadow:var(--shadow)}
-h1{font-size:28px;text-align:center;margin-bottom:4px;font-weight:700;letter-spacing:-.4px}
-h2{font-size:20px;margin-bottom:12px;font-weight:700;letter-spacing:-.3px}
-h3{font-size:13px;color:var(--dim);margin:16px 0 8px;text-transform:uppercase;letter-spacing:.6px;font-weight:600}
-.sub{text-align:center;color:var(--dim);font-size:15px;margin-bottom:16px}
-input[type=text],input[type=date],input[type=number],input[type=email],textarea,select{width:100%;padding:13px 14px;background:var(--sf2);border:1px solid transparent;border-radius:12px;color:var(--tx);font-size:16px;margin-bottom:8px;font-family:inherit;-webkit-appearance:none}
+h1{font-size:30px;text-align:center;margin-bottom:4px;font-weight:700;letter-spacing:-.4px}
+h2{font-size:22px;margin-bottom:12px;font-weight:700;letter-spacing:-.3px}
+h3{font-size:15px;color:var(--dim);margin:18px 0 8px;text-transform:uppercase;letter-spacing:.6px;font-weight:700}
+.sub{text-align:center;color:var(--dim);font-size:16px;margin-bottom:16px}
+input[type=text],input[type=date],input[type=number],input[type=email],textarea,select{width:100%;padding:14px;background:var(--sf2);border:1px solid transparent;border-radius:12px;color:var(--tx);font-size:18px;margin-bottom:8px;font-family:inherit;-webkit-appearance:none}
 input:focus,textarea:focus,select:focus{outline:none;border-color:var(--gn);background:#fff}
 textarea{min-height:90px;resize:vertical}
-label{display:flex;align-items:center;gap:10px;padding:8px 0;font-size:16px;color:var(--tx);cursor:pointer}
-label input[type=checkbox]{width:22px;height:22px;accent-color:var(--gn)}
+label{display:flex;align-items:center;gap:12px;padding:10px 0;font-size:18px;color:var(--tx);cursor:pointer}
+label input[type=checkbox]{width:26px;height:26px;accent-color:var(--gn)}
 .search{position:sticky;top:0;z-index:10;padding:8px 0;background:var(--bg)}
 .search input{margin-bottom:0;background:var(--sf);box-shadow:var(--shadow)}
 .store-grp{margin-bottom:18px}
-.store-grp h4{font-size:14px;color:var(--dim);margin-bottom:6px;padding:0 4px;font-weight:600}
-.asset-btn{display:block;width:100%;text-align:left;padding:14px;background:var(--sf);border:none;border-radius:14px;color:var(--tx);font-size:16px;font-weight:600;margin-bottom:8px;cursor:pointer;border-left:4px solid var(--gn);box-shadow:var(--shadow);font-family:inherit}
+.store-grp h4{font-size:16px;color:var(--dim);margin-bottom:6px;padding:0 4px;font-weight:700}
+.asset-btn{display:block;width:100%;text-align:left;padding:17px;background:#007aff;border:none;border-radius:14px;color:#fff;font-size:19px;font-weight:700;margin-bottom:10px;cursor:pointer;box-shadow:var(--shadow);font-family:inherit}
 .asset-btn:active{opacity:.7}
-.asset-btn .ser{color:var(--dim);font-size:13px;font-weight:400}
-.asset-btn.done{border-left-color:var(--gn);opacity:.55}
+.asset-btn .ser{color:rgba(255,255,255,.85);font-size:15px;font-weight:500}
+.asset-btn.done{background:var(--gn)}
 .photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
 .photo-grid div{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden}
 .photo-grid img{width:100%;height:100%;object-fit:cover}
@@ -45,7 +45,7 @@ label input[type=checkbox]{width:22px;height:22px;accent-color:var(--gn)}
 .status.ok{background:var(--gn);color:#fff}
 .status.err{background:var(--rd);color:#fff}
 .status.info{background:#3a3a3c;color:#fff}
-.hist-item{padding:13px 14px;background:var(--sf);border-radius:14px;margin-bottom:8px;font-size:14px;box-shadow:var(--shadow)}
+.hist-item{padding:14px;background:var(--sf);border-radius:14px;margin-bottom:8px;font-size:15px;box-shadow:var(--shadow)}
 .hist-item .dt{color:var(--gn);font-weight:600}
 .login-wrap{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:80vh;gap:20px;text-align:center}
 .login-wrap h1{font-size:30px}
@@ -87,6 +87,11 @@ label input[type=checkbox]{width:22px;height:22px;accent-color:var(--gn)}
 .sig-bar .hint{font-size:12px;color:var(--dim)}
 .sig-bar button{background:var(--sf2);color:var(--tx);border:none;border-radius:10px;padding:6px 13px;font-size:13px;font-weight:600;cursor:pointer;font-family:inherit}
 
+.back-btn{width:auto !important;padding:12px 22px !important;background:var(--rd) !important;color:#fff !important;font-size:26px !important;font-weight:800;line-height:1;border-radius:14px}
+.sig-modal{position:fixed;inset:0;background:var(--bg);z-index:200;display:flex;flex-direction:column;padding:16px;padding-bottom:max(16px,env(safe-area-inset-bottom));touch-action:none;overscroll-behavior:none}
+.sig-modal-head{font-size:20px;font-weight:700;text-align:center;padding:8px 0 14px}
+.sig-modal canvas{flex:1;width:100%;background:#fff;border:2px solid var(--bd);border-radius:16px;touch-action:none}
+.sig-modal-btns{display:flex;gap:10px;padding-top:14px}
 /* Dark mode */
 body.dark{--bg:#000000;--sf:#1c1c1e;--sf2:#2c2c2e;--bd:#3a3a3c;--tx:#f2f2f7;--dim:#98989e;--ac:#30d158;--gn:#30d158;--rd:#ff453a;--shadow:0 1px 3px rgba(0,0,0,.4)}
 body.dark input:focus,body.dark textarea:focus,body.dark select:focus{background:var(--sf2)}
@@ -328,32 +333,56 @@ function inp(name, type, ph) { return '<input type="' + (type||'text') + '" name
 function fld(t, name, type, ph) { return lbl(t) + inp(name, type, ph); }
 function chk(name, t) { return '<label><input type="checkbox" name="' + name + '"' + (form[name] ? ' checked' : '') + '> ' + t + '</label>'; }
 
-// ===== Signature Pads =====
+// ===== Signature Pads (fullscreen modal) =====
+var sigModalKey = null;
+
 function sigPad(key, title) {
-  return lbl(title) +
-    '<canvas class="sig-canvas" id="sig_' + key + '"></canvas>' +
-    '<div class="sig-bar">' +
-      '<span class="hint">' + (sigs[key] ? '✓ Signed' : 'Sign above with finger or stylus') + '</span>' +
-      '<button type="button" onclick="clearSig(\'' + key + '\')">Clear</button>' +
+  var h = lbl(title);
+  if (sigs[key]) {
+    h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:12px">' +
+      '<img src="' + sigs[key] + '" style="height:60px;flex:1;background:#fff;border:1px solid var(--bd);border-radius:12px;object-fit:contain">' +
+      '<button type="button" class="btn btn-o" style="width:auto;padding:12px 16px;font-size:16px" onclick="openSigModal(\'' + key + '\')">Re-sign</button>' +
     '</div>';
+  } else {
+    h += '<button type="button" class="btn btn-o" style="margin-bottom:12px;border:2px dashed var(--dim);color:var(--dim)" onclick="openSigModal(\'' + key + '\')">✍️ Tap to Sign</button>';
+  }
+  return h;
 }
 
-function initSigPad(key) {
-  var c = document.getElementById('sig_' + key);
+function openSigModal(key) {
+  sigModalKey = key;
+  render();
+}
+
+function renderSigModal() {
+  var title = sigModalKey === 'store' ? 'Store Manager Signature' : 'Technician Signature';
+  return '<div class="sig-modal">' +
+    '<div class="sig-modal-head">✍️ ' + title + '</div>' +
+    '<canvas id="sigModalCanvas"></canvas>' +
+    '<div class="sig-modal-btns">' +
+      '<button class="btn btn-o" style="flex:1" onclick="clearSigModal()">Clear</button>' +
+      '<button class="btn btn-o" style="flex:1" onclick="sigModalKey=null;render()">Cancel</button>' +
+      '<button class="btn btn-s" style="flex:1.4" onclick="doneSigModal()">✓ Done</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function initSigModalCanvas() {
+  var c = document.getElementById('sigModalCanvas');
   if (!c) return;
-  c.width = c.offsetWidth || 400;
-  c.height = 120;
+  c.width = c.offsetWidth;
+  c.height = c.offsetHeight;
   var ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, c.width, c.height);
   ctx.strokeStyle = '#111';
-  ctx.lineWidth = 2;
+  ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (sigs[key]) {
+  if (sigs[sigModalKey]) {
     var im = new Image();
     im.onload = function() { ctx.drawImage(im, 0, 0, c.width, c.height); };
-    im.src = sigs[key];
+    im.src = sigs[sigModalKey];
   }
   var drawing = false;
   function pos(e) { var r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
@@ -374,31 +403,30 @@ function initSigPad(key) {
     ctx.lineTo(p[0], p[1]);
     ctx.stroke();
   });
-  function end() {
-    if (!drawing) return;
-    drawing = false;
-    sigs[key] = c.toDataURL('image/png');
-    saveProgress();
-    var hint = c.nextElementSibling && c.nextElementSibling.querySelector('.hint');
-    if (hint) hint.textContent = '✓ Signed';
-  }
+  function end() { drawing = false; }
   c.addEventListener('pointerup', end);
   c.addEventListener('pointercancel', end);
-  c.addEventListener('pointerleave', end);
 }
 
-function clearSig(key) {
-  sigs[key] = null;
-  saveProgress();
-  var c = document.getElementById('sig_' + key);
-  if (c) {
-    var ctx = c.getContext('2d');
-    ctx.fillStyle = '#fff';
-    ctx.fillRect(0, 0, c.width, c.height);
-    var hint = c.nextElementSibling && c.nextElementSibling.querySelector('.hint');
-    if (hint) hint.textContent = 'Sign above with finger or stylus';
-  }
+function clearSigModal() {
+  var c = document.getElementById('sigModalCanvas');
+  if (!c) return;
+  var ctx = c.getContext('2d');
+  ctx.fillStyle = '#fff';
+  ctx.fillRect(0, 0, c.width, c.height);
+  sigs[sigModalKey] = null;
 }
+
+function doneSigModal() {
+  var c = document.getElementById('sigModalCanvas');
+  if (c) {
+    sigs[sigModalKey] = c.toDataURL('image/png');
+    saveProgress();
+  }
+  sigModalKey = null;
+  render();
+}
+
 
 // ===== Route Optimization (Nearest-Neighbor) =====
 function haversine(lat1, lng1, lat2, lng2) {
@@ -526,6 +554,7 @@ function render() {
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
+  if (sigModalKey) { html += renderSigModal(); }
   el.innerHTML = html;
   bindEvents();
 }
@@ -555,8 +584,7 @@ function renderHome() {
     '<button onclick="signOut()">Sign Out</button></span>' +
   '</div>';
 
-  var h = userBar +
-    '<h1>🐾 Freshpet PM</h1>' +
+  var h = '<h1>🐾 Freshpet PM</h1>' +
     '<p class="sub">NorCal Route &bull; ' + ASSETS.length + ' Assets</p>';
 
   if (hasProgress) {
@@ -577,6 +605,7 @@ function renderHome() {
   if (userRole === 'admin') {
     h += '<button class="btn btn-o" style="color:var(--rd)" onclick="goAdmin()">⚙️ Admin Panel</button>';
   }
+  h += '<div style="margin-top:18px">' + userBar + '</div>';
   return h;
 }
 
@@ -603,7 +632,7 @@ function renderSelect() {
   });
 
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<button class="btn back-btn" onclick="goHome()">←</button>' +
     '<h2 style="margin:0;flex:1">Select Asset</h2>' +
   '</div>';
   h += '<div class="search"><input type="text" id="searchInput" placeholder="Search store, city, serial..." value="' + esc(search) + '"></div>';
@@ -638,9 +667,10 @@ function renderChecklist() {
 
   var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="' + backFn + '">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:15px">' + esc(a.store) + '</h2>' +
-    '<div style="font-size:12px;color:var(--dim)">' + esc(a.serial) + ' &bull; ' + esc(a.model) + '</div></div>' +
+    '<button class="btn back-btn" onclick="' + backFn + '">←</button>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(a.store) + '</h2>' +
+    '<div style="font-size:17px;font-weight:600;margin-top:2px">' + esc(a.manufacturer) + ' ' + esc(a.model) + '</div>' +
+    '<div style="font-size:16px;color:var(--dim)">S/N: ' + esc(a.serial) + ' &bull; ' + esc(a.city) + '</div></div>' +
   '</div>' + reopenBanner;
 
   h += '<div class="card">';
@@ -652,7 +682,15 @@ function renderChecklist() {
   h += '<h3>Settings on Arrival</h3>';
   h += fld('Set Point 1', 'sp1', 'text', 'SP1');
   h += fld('Voltage', 'voltage', 'text', 'Voltage reading');
-  h += fld('Interior Temp', 'intTemp', 'text', 'Temperature');
+  h += lbl('Interior Temp');
+  h += '<select name="intTemp">';
+  var tempVals = [];
+  for (var tv = 45; tv >= 35; tv--) { tempVals.push(tv + '°F'); }
+  if (form.intTemp && tempVals.indexOf(form.intTemp) === -1) { tempVals.unshift(form.intTemp); }
+  tempVals.forEach(function(v) {
+    h += '<option value="' + esc(v) + '"' + (form.intTemp === v ? ' selected' : '') + '>' + esc(v) + '</option>';
+  });
+  h += '</select>';
 
   h += '<h3>A. Unit Location</h3>';
   h += chk('onFloor', 'On Floor');
@@ -730,7 +768,7 @@ function renderChecklist() {
 
 function renderHistory() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<button class="btn back-btn" onclick="goHome()">←</button>' +
     '<h2 style="margin:0;flex:1">PM History</h2>' +
   '</div>';
 
@@ -1009,7 +1047,7 @@ async function sharePDF(path) {
 // ===== ADMIN PANEL =====
 function renderAdmin() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<button class="btn back-btn" onclick="goHome()">←</button>' +
     '<h2 style="margin:0;flex:1">⚙️ Admin Panel</h2>' +
   '</div>';
 
@@ -1632,7 +1670,7 @@ async function runImport() {
 // ===== TECH ROUTE VIEW =====
 function renderRoute() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goHome()">←</button>' +
+    '<button class="btn back-btn" onclick="goHome()">←</button>' +
     '<h2 style="margin:0;flex:1">🗺️ My Route</h2>' +
   '</div>';
 
@@ -1727,7 +1765,7 @@ function renderRouteStop() {
   if (!stop) { screen = 'route'; return renderRoute(); }
 
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="goRoute()">←</button>' +
+    '<button class="btn back-btn" onclick="goRoute()">←</button>' +
     '<div style="flex:1"><h2 style="margin:0;font-size:15px">Stop ' + (currentStopIdx + 1) + ': ' + esc(stop.store) + '</h2>' +
     '<div style="font-size:13px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">' + esc(stop.address) + ', ' + esc(stop.city) + '</div></div>' +
   '</div>';
@@ -1928,6 +1966,9 @@ function defaultForm() {
     serviceCompany: 'Freeflow Beverage Solutions',
     serviceRep: name,
     date: new Date().toISOString().split('T')[0],
+    sp1: '41°F',
+    voltage: '120',
+    intTemp: '38°F',
     onFloor: true, petFood: true,
     workingArrival: true, workingDepart: true,
     cleanInterior: true, cleanExterior: true, cleanGrill: true, cleanCondPans: true, cleanCondenser: true,
@@ -2337,7 +2378,7 @@ function generatePDF(a, f, ph, sg, cb) {
 // ===== Admin Asset Picker =====
 function renderAdminAssetPicker() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn btn-o" style="width:auto;padding:10px 16px" onclick="screen=\'admin\';render()">←</button>' +
+    '<button class="btn back-btn" onclick="screen=\'admin\';render()">←</button>' +
     '<h2 style="margin:0;flex:1">Add Stores to Route</h2>' +
   '</div>';
   h += '<p style="font-size:12px;color:var(--dim);margin-bottom:8px">Assigning to: <strong>' + esc(adminSelectedTech) + '</strong></p>';
@@ -2449,9 +2490,9 @@ function bindEvents() {
     }
   });
 
+  if (sigModalKey) { initSigModalCanvas(); }
+
   if (screen === 'checklist') {
-    initSigPad('store');
-    initSigPad('tech');
     document.querySelectorAll('input[name],textarea[name],select[name]').forEach(function(el) {
       var handler = function() {
         if (el.type === 'checkbox') {
@@ -2496,6 +2537,7 @@ render = function() {
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
+  if (sigModalKey) { html += renderSigModal(); }
   el.innerHTML = html;
   bindEvents();
 };
