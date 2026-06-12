@@ -199,6 +199,7 @@ async function initAuth() {
     await loadCompletedPMs();
     await checkUserRole();
     screen = 'home';
+    tryAutoResume(); // reopened mid-PM (e.g. iOS reloaded the page for the camera)
   } else {
     screen = 'login';
   }
@@ -218,6 +219,7 @@ async function initAuth() {
       await loadCompletedPMs();
       await checkUserRole();
       screen = 'home';
+      tryAutoResume();
       render();
     } else if (event === 'TOKEN_REFRESHED' && session) {
       currentUser = session.user;
@@ -1943,6 +1945,7 @@ function startChecklist(idx) {
   photos = [];
   sigs = { store: null, tech: null };
   screen = 'checklist';
+  saveProgress();
   render();
 }
 
@@ -1951,13 +1954,19 @@ function startChecklistFromRoute(idx) {
   startChecklist(idx);
 }
 
+// Drop straight back into an unfinished PM (used on every app start)
+function tryAutoResume() {
+  if (!localStorage.getItem('fp_progress')) return false;
+  if (!loadProgress()) return false;
+  selectedAsset = ASSETS[selectedAssetIdx];
+  if (!selectedAsset) return false;
+  screen = 'checklist';
+  return true;
+}
+
 function resumeProgress() {
-  if (loadProgress()) {
-    selectedAsset = ASSETS[selectedAssetIdx];
-    if (!selectedAsset) { clearProgress(); showStatus('Saved PM could not be restored (asset not found)', 'err'); render(); return; }
-    screen = 'checklist';
-    render();
-  }
+  if (tryAutoResume()) { render(); }
+  else { clearProgress(); showStatus('Saved PM could not be restored', 'err'); render(); }
 }
 
 // ===== Admin Actions =====
@@ -2216,6 +2225,7 @@ async function reopenPM(pmId) {
   ticketFlag = false;
   routeFromChecklist = false;
   screen = 'checklist';
+  saveProgress();
   render();
   // Pull existing photos back in so they stay in the regenerated PDF
   if (pm.photo_paths && pm.photo_paths.length) {
