@@ -692,9 +692,9 @@ function renderChecklist() {
   var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="' + backFn + '">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(a.store) + '</h2>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(a.store) + ' - ' + esc(a.city) + '</h2>' +
     '<div style="font-size:17px;font-weight:600;margin-top:2px">' + esc(a.manufacturer) + ' ' + esc(a.model) + '</div>' +
-    '<div style="font-size:16px;color:var(--dim)">S/N: ' + esc(a.serial) + ' &bull; ' + esc(a.city) + '</div></div>' +
+    '<div style="font-size:17px;color:var(--dim)">S/N: ' + esc(a.serial) + '</div></div>' +
   '</div>' + reopenBanner;
 
   h += '<div class="card">';
