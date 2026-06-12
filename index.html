@@ -129,6 +129,7 @@ var submitting = false;
 var userRole = null; // 'admin' or 'tech'
 var myRate = null; // flat per-PM rate for this tech (overrides asset fees)
 var myName = null; // tech profile name
+var mySig = null; // locked-in technician signature (auto-applied to PMs)
 var reopenPmId = null; // editing an existing PM
 var ticketFlag = false; // submit as service ticket (needs review)
 var techProfiles = [];
@@ -259,6 +260,7 @@ async function checkUserRole() {
   if (data) {
     userRole = data.role;
     myName = data.name || null;
+    mySig = data.signature || null;
     myRate = data.pm_rate != null && Number(data.pm_rate) > 0 ? Number(data.pm_rate) : null;
   } else {
     // Auto-create tech profile for new users
@@ -355,7 +357,7 @@ function openSigModal(key) {
 }
 
 function renderSigModal() {
-  var title = sigModalKey === 'store' ? 'Store Manager Signature' : 'Technician Signature';
+  var title = sigModalKey === 'store' ? 'Store Manager Signature' : (sigModalKey === 'mySig' ? 'My Signature (saved to your profile)' : 'Technician Signature');
   return '<div class="sig-modal">' +
     '<div class="sig-modal-head">✍️ ' + title + '</div>' +
     '<canvas id="sigModalCanvas"></canvas>' +
@@ -379,10 +381,11 @@ function initSigModalCanvas() {
   ctx.lineWidth = 3;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (sigs[sigModalKey]) {
+  var existingSig = sigModalKey === 'mySig' ? mySig : sigs[sigModalKey];
+  if (existingSig) {
     var im = new Image();
     im.onload = function() { ctx.drawImage(im, 0, 0, c.width, c.height); };
-    im.src = sigs[sigModalKey];
+    im.src = existingSig;
   }
   var drawing = false;
   function pos(e) { var r = c.getBoundingClientRect(); return [e.clientX - r.left, e.clientY - r.top]; }
@@ -414,16 +417,25 @@ function clearSigModal() {
   var ctx = c.getContext('2d');
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, c.width, c.height);
-  sigs[sigModalKey] = null;
+  if (sigModalKey !== 'mySig') { sigs[sigModalKey] = null; }
 }
 
-function doneSigModal() {
+async function doneSigModal() {
   var c = document.getElementById('sigModalCanvas');
-  if (c) {
-    sigs[sigModalKey] = c.toDataURL('image/png');
+  var key = sigModalKey;
+  sigModalKey = null;
+  if (c && key === 'mySig') {
+    mySig = c.toDataURL('image/png');
+    render();
+    var { error } = await sb.from('tech_profiles').update({ signature: mySig }).eq('email', currentUser.email);
+    if (error) { showStatus('Could not save signature: ' + error.message, 'err'); return; }
+    showStatus('Signature locked in — every PM will be signed automatically', 'ok');
+    return;
+  }
+  if (c && key) {
+    sigs[key] = c.toDataURL('image/png');
     saveProgress();
   }
-  sigModalKey = null;
   render();
 }
 
@@ -605,6 +617,18 @@ function renderHome() {
   if (userRole === 'admin') {
     h += '<button class="btn btn-o" style="color:var(--rd)" onclick="goAdmin()">⚙️ Admin Panel</button>';
   }
+  h += '<div class="card" style="margin-top:14px">';
+  if (mySig) {
+    h += '<div style="display:flex;align-items:center;gap:10px">';
+    h += '<img src="' + mySig + '" style="height:52px;flex:1;background:#fff;border:1px solid var(--bd);border-radius:10px;object-fit:contain">';
+    h += '<button class="btn btn-o" style="width:auto;padding:12px 16px;font-size:16px" onclick="openSigModal(\'mySig\')">Change</button>';
+    h += '</div>';
+    h += '<div style="font-size:14px;color:var(--gn);margin-top:8px">✓ Your signature is signed onto every PM automatically</div>';
+  } else {
+    h += '<button class="btn btn-p" onclick="openSigModal(\'mySig\')">✍️ Lock In My Signature</button>';
+    h += '<div style="font-size:14px;color:var(--dim);margin-top:8px">Sign once — it gets applied to every PM so you never sign twice</div>';
+  }
+  h += '</div>';
   h += '<div style="margin-top:18px">' + userBar + '</div>';
   return h;
 }
@@ -668,9 +692,9 @@ function renderChecklist() {
   var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="' + backFn + '">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(a.store) + '</h2>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(a.store) + ' - ' + esc(a.city) + '</h2>' +
     '<div style="font-size:17px;font-weight:600;margin-top:2px">' + esc(a.manufacturer) + ' ' + esc(a.model) + '</div>' +
-    '<div style="font-size:16px;color:var(--dim)">S/N: ' + esc(a.serial) + ' &bull; ' + esc(a.city) + '</div></div>' +
+    '<div style="font-size:17px;color:var(--dim)">S/N: ' + esc(a.serial) + '</div></div>' +
   '</div>' + reopenBanner;
 
   h += '<div class="card">';
@@ -1984,7 +2008,7 @@ function startChecklist(idx) {
   ticketFlag = false;
   form = defaultForm();
   photos = [];
-  sigs = { store: null, tech: null };
+  sigs = { store: null, tech: mySig || null };
   screen = 'checklist';
   saveProgress();
   render();
@@ -2261,7 +2285,7 @@ async function reopenPM(pmId) {
   selectedAssetIdx = idx;
   form = Object.assign({}, pm.form_data || {});
   photos = [];
-  sigs = { store: null, tech: null };
+  sigs = { store: null, tech: mySig || null };
   reopenPmId = pm.id;
   ticketFlag = false;
   routeFromChecklist = false;
