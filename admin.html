@@ -1,0 +1,345 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0F172A">
+<title>Freshpet · Admin Console</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Pre-paint: follow the shared APBG theme (same origin as the gateway). -->
+<script>
+  (function(){ try { var t = localStorage.getItem('apbg_theme')==='light'?'light':'dark'; document.documentElement.setAttribute('data-apbg-theme', t); } catch(e){} })();
+</script>
+<!-- APBG cross-app waffle launcher + shared light/dark toggle. -->
+<script src="https://alamedapointbg.com/appswitcher.js" defer></script>
+<style>
+:root{
+  --bg:#0F172A; --sf:#171f33; --sf2:#1f2a44; --bd:#2b3a5c; --bd2:#3a4d75;
+  --tx:#E2E8F0; --tx2:#9fb0c7; --dim:#6b7b96;
+  --ac:#3B82F6; --ac2:#2563EB; --gn:#34D399; --am:#FBBF24; --rd:#F87171;
+  --shadow:0 4px 14px rgba(0,0,0,.35);
+}
+html[data-apbg-theme="light"]{
+  --bg:#EEF2F7; --sf:#FFFFFF; --sf2:#F1F5FA; --bd:#D7DEE9; --bd2:#C2CDDC;
+  --tx:#0F1B2D; --tx2:#46566e; --dim:#7387a0;
+  --ac:#2563EB; --ac2:#1D4ED8; --gn:#1E9E5F; --am:#C9920C; --rd:#E0454A;
+  --shadow:0 4px 14px rgba(15,23,42,.10);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;-webkit-font-smoothing:antialiased;transition:background .25s,color .25s}
+.mono{font-family:'JetBrains Mono',monospace}
+a{color:var(--ac);text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font-family:inherit;color:inherit}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 22px 60px}
+/* Header */
+.hd{display:flex;align-items:center;gap:14px;padding:14px 0 18px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.hd .logo{font-size:1.35rem;font-weight:800;letter-spacing:-.02em}
+.hd .logo .fp{color:var(--ac)}
+.hd .sub{font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--tx2)}
+.hd .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.who{font-size:.78rem;color:var(--tx2);font-weight:600}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:10px;font-size:.84rem;font-weight:700;background:var(--ac);color:#fff;transition:filter .15s,background .15s}
+.btn:hover{filter:brightness(1.08)}
+.btn.o{background:var(--sf2);color:var(--tx);border:1px solid var(--bd)}
+.btn.o:hover{border-color:var(--bd2);background:var(--sf)}
+.btn.sm{padding:6px 11px;font-size:.78rem;border-radius:8px}
+.btn.gn{background:var(--gn)}.btn.rd{background:var(--rd)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+/* Tabs */
+.tabs{display:flex;gap:6px;margin:18px 0 16px;flex-wrap:wrap}
+.tab{padding:9px 16px;border-radius:10px;font-size:.86rem;font-weight:700;color:var(--tx2);background:transparent;border:1px solid transparent}
+.tab.on{background:var(--sf);color:var(--tx);border-color:var(--bd)}
+.tab:hover{color:var(--tx)}
+/* Cards / layout */
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:16px;box-shadow:var(--shadow);padding:18px;margin-bottom:16px}
+.card h3{font-size:1rem;font-weight:800;margin-bottom:4px}
+.card .hint{font-size:.78rem;color:var(--tx2);margin-bottom:14px;line-height:1.5}
+.row{display:flex;gap:14px;flex-wrap:wrap}
+.col{flex:1;min-width:280px}
+label.f{display:block;font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--tx2);margin:0 0 5px}
+select,input[type=text],input[type=number],input[type=search]{width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:.88rem;outline:none}
+select:focus,input:focus{border-color:var(--ac)}
+.muted{color:var(--tx2);font-size:.82rem}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:999px;border:1px solid var(--bd)}
+.pill.gn{color:var(--gn);border-color:var(--gn);background:rgba(52,211,153,.1)}
+.pill.am{color:var(--am);border-color:var(--am);background:rgba(251,191,36,.1)}
+.pill.dim{color:var(--tx2)}
+/* Route list */
+.stop{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--bd);border-radius:12px;background:var(--bg);margin-bottom:8px}
+.stop .n{flex:none;width:30px;height:30px;border-radius:50%;background:var(--ac);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:.85rem}
+.stop .meta{flex:1;min-width:0}
+.stop .meta .s{font-weight:700;font-size:.9rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stop .meta .a{font-size:.76rem;color:var(--tx2);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stop .acts{display:flex;gap:4px;flex:none}
+.ic{width:30px;height:30px;border-radius:8px;background:var(--sf2);border:1px solid var(--bd);display:flex;align-items:center;justify-content:center;font-size:.9rem}
+.ic:hover{border-color:var(--bd2)}
+.ic:disabled{opacity:.35}
+.addrow{display:flex;align-items:center;gap:10px;padding:8px 11px;border:1px solid var(--bd);border-radius:10px;margin-bottom:6px;background:var(--bg)}
+.addrow .meta{flex:1;min-width:0}
+.addlist{max-height:340px;overflow-y:auto;margin-top:8px;padding-right:4px}
+.grp-h{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin:12px 0 6px}
+/* Table */
+table{width:100%;border-collapse:collapse}
+th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--bd);font-size:.86rem}
+th{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);font-weight:700}
+td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace}
+tr.tot td{border-top:2px solid var(--bd);font-weight:800;border-bottom:none}
+.empty{padding:34px 16px;text-align:center;color:var(--tx2);font-size:.9rem}
+/* Login */
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.login .box{background:var(--sf);border:1px solid var(--bd);border-radius:22px;padding:38px 32px;max-width:380px;width:100%;text-align:center;box-shadow:var(--shadow)}
+.login .box .logo{font-size:1.6rem;font-weight:800;margin-bottom:6px}
+.login .box .sub{font-size:.82rem;color:var(--tx2);margin-bottom:24px}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;padding:12px 20px;border-radius:12px;font-weight:700;font-size:.86rem;color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:90vw}
+.toast.ok{background:var(--gn)}.toast.err{background:var(--rd)}.toast.info{background:var(--ac)}
+@media(max-width:680px){ .wrap{padding:14px 14px 60px} .hd .sub{display:none} th.hide,td.hide{display:none} }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="toast"></div>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Freshpet — Admin Console (back office)
+// A second GUI over the SAME Supabase project the handheld field app uses
+// (mmkncrsaijexezmhfmiw). One source of truth: routes + payouts edited here
+// are the same rows the field app reads, so nothing is mirrored/synced —
+// there's only one database. Admin-gated via tech_profiles.role.
+// ═══════════════════════════════════════════════════════════════════
+
+var SUPA_URL = 'https://mmkncrsaijexezmhfmiw.supabase.co';
+var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ta25jcnNhaWpleGV6bWhmbWl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3OTkyMjUsImV4cCI6MjA5NjM3NTIyNX0.lx4J-YhlFFrQVJMqjeBXXHNmgZfRe23xYGKZMEL8dPM';
+var sb = supabase.createClient(SUPA_URL, SUPA_KEY, { auth: { flowType: 'implicit' } });
+
+// ── shared APBG theme (same-origin localStorage key) ──
+function applyTheme(t){ try { document.documentElement.setAttribute('data-apbg-theme', t || (localStorage.getItem('apbg_theme')==='light'?'light':'dark')); } catch(e){} }
+window.addEventListener('apbg:themechange', function(e){ applyTheme(e&&e.detail&&e.detail.theme); });
+window.addEventListener('storage', function(e){ if(e&&e.key==='apbg_theme') applyTheme(e.newValue); });
+
+// ── state ──
+var screen = 'loading';     // loading | login | denied | app
+var user = null, profile = null;
+var tab = 'routes';          // routes | payments
+var techs = [], assets = [], assignments = [], payouts = [];
+var routeTech = '';          // selected tech email in Routes
+var routeStops = [];         // working list [{asset_id, asset}] for selected tech
+var addSearch = '';
+var payWeek = '';            // selected week_start
+var saving = false;
+
+function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
+function money(n){ return '$' + Number(n||0).toFixed(2); }
+function toast(msg, type){ var t=document.getElementById('toast'); t.innerHTML='<div class="toast '+(type||'info')+'">'+esc(msg)+'</div>'; setTimeout(function(){ t.innerHTML=''; }, 3500); }
+
+// ── auth ──
+async function init(){
+  applyTheme();
+  var { data:{ session } } = await sb.auth.getSession();
+  if (session){ user = session.user; await afterLogin(); }
+  else { screen='login'; render(); }
+  sb.auth.onAuthStateChange(async function(ev, s){
+    if (ev==='SIGNED_IN' && s){ if (user && user.id===s.user.id) { user=s.user; return; } user=s.user; await afterLogin(); }
+    else if (ev==='SIGNED_OUT'){ user=null; profile=null; screen='login'; render(); }
+  });
+}
+async function afterLogin(){
+  var { data } = await sb.from('tech_profiles').select('*').eq('email', user.email).single();
+  profile = data || null;
+  if (!profile || profile.role !== 'admin'){ screen='denied'; render(); return; }
+  await loadAll();
+  screen='app'; render();
+}
+async function signIn(){ var { error } = await sb.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: window.location.href.split('#')[0] } }); if(error) toast('Login failed: '+error.message,'err'); }
+async function signOut(){ await sb.auth.signOut(); }
+
+// ── data ──
+async function loadAll(){
+  var r = await Promise.all([
+    sb.from('tech_profiles').select('*').order('role').order('email'),
+    sb.from('assets').select('*').eq('active', true).order('city').order('store'),
+    sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
+    sb.from('payouts').select('*').order('week_start', { ascending:false })
+  ]);
+  techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
+  if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
+}
+function assetById(id){ return assets.find(function(a){ return a.id===id; }); }
+function techName(email){ var t=techs.find(function(x){ return x.email===email; }); return (t&&t.name) || email; }
+
+// ── Routes ──
+function selectRouteTech(email){
+  routeTech = email; addSearch=''; routeStops=[];
+  if (email){
+    assignments.filter(function(a){ return a.tech_email===email; })
+      .sort(function(a,b){ return (a.stop_order||0)-(b.stop_order||0); })
+      .forEach(function(a){ var as=assetById(a.asset_id); if(as) routeStops.push({ asset_id:a.asset_id, asset:as }); });
+  }
+  render();
+}
+function moveStop(i, dir){ var j=i+dir; if(j<0||j>=routeStops.length) return; var t=routeStops[i]; routeStops[i]=routeStops[j]; routeStops[j]=t; render(); }
+function removeStop(i){ routeStops.splice(i,1); render(); }
+function addStop(id){ if(routeStops.some(function(s){return s.asset_id===id;})) return; var as=assetById(id); if(as){ routeStops.push({asset_id:id, asset:as}); render(); } }
+async function saveRoute(){
+  if(!routeTech) return;
+  saving=true; render();
+  // Rebuild the tech's route as one ordered set (same pattern the field app uses).
+  var del = await sb.from('route_assignments').delete().eq('tech_email', routeTech);
+  if(del.error){ saving=false; render(); return toast('Save failed: '+del.error.message,'err'); }
+  if(routeStops.length){
+    var rows = routeStops.map(function(s, i){ return { tech_email:routeTech, asset_id:s.asset_id, stop_order:i, route_name:'Primary Route', active:true }; });
+    var ins = await sb.from('route_assignments').insert(rows);
+    if(ins.error){ saving=false; render(); return toast('Save failed: '+ins.error.message,'err'); }
+  }
+  await loadAll(); saving=false; toast('Route saved for '+techName(routeTech),'ok'); render();
+}
+
+// ── Payments ──
+function setPayWeek(w){ payWeek=w; render(); }
+async function markPaid(id){
+  if(!confirm('Mark this payout PAID?')) return;
+  var { error } = await sb.from('payouts').update({ status:'paid' }).eq('id', id);
+  if(error) return toast('Failed: '+error.message,'err');
+  await loadAll(); toast('Marked paid','ok'); render();
+}
+async function saveRate(email, val){
+  var rate = val===''? null : Number(val);
+  if(val!=='' && (isNaN(rate)||rate<0)) return toast('Invalid rate','err');
+  var { error } = await sb.from('tech_profiles').update({ pm_rate: rate }).eq('email', email);
+  if(error) return toast('Failed: '+error.message,'err');
+  await loadAll(); toast('Rate saved for '+techName(email),'ok'); render();
+}
+
+// ═══ render ═══
+function render(){
+  var app = document.getElementById('app');
+  if (screen==='loading'){ app.innerHTML='<div class="empty" style="margin-top:80px">Loading…</div>'; return; }
+  if (screen==='login'){
+    app.innerHTML='<div class="login"><div class="box"><div class="logo">🐾 <span style="color:var(--ac)">Freshpet</span> Admin</div><div class="sub">Back-office console — routes &amp; payments</div><button class="btn" style="width:100%;justify-content:center" onclick="signIn()">Sign in with Google</button></div></div>';
+    return;
+  }
+  if (screen==='denied'){
+    app.innerHTML='<div class="login"><div class="box"><div class="logo">🔒 Admin only</div><div class="sub">'+esc(user?user.email:'')+' isn\'t an admin on Freshpet. Ask a super-admin to set your role, then reload.</div><button class="btn o" style="width:100%;justify-content:center" onclick="signOut()">Sign out</button></div></div>';
+    return;
+  }
+  var h = '<div class="wrap">';
+  h += '<div class="hd"><div><div class="logo">🐾 <span class="fp">Freshpet</span> Admin</div></div><div class="sub">Back office</div>'
+     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><a class="btn o sm" href="./">📱 Field app</a><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
+  h += '<div class="tabs">'
+     + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">🗺️ Routes</button>'
+     + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">💰 Payments</button>'
+     + '</div>';
+  h += tab==='routes' ? renderRoutes() : renderPayments();
+  h += '</div>';
+  app.innerHTML = h;
+}
+
+function renderRoutes(){
+  var assignedIds = {}; assignments.forEach(function(a){ assignedIds[a.asset_id]=a.tech_email; });
+  var techOpts = '<option value="">— select a technician —</option>' + techs.map(function(t){
+    var n = assignments.filter(function(a){return a.tech_email===t.email;}).length;
+    return '<option value="'+esc(t.email)+'"'+(t.email===routeTech?' selected':'')+'>'+esc(t.name||t.email)+(n?' ('+n+' stops)':'')+'</option>';
+  }).join('');
+
+  var h = '<div class="card"><h3>Load routes</h3><div class="hint">Pick a technician, build their ordered stop list, then Save. This writes the same <span class="mono">route_assignments</span> rows the handheld app reads — the field route updates the moment you save.</div>';
+  h += '<label class="f">Technician</label><select onchange="selectRouteTech(this.value)" style="max-width:420px">'+techOpts+'</select></div>';
+
+  if(!routeTech) return h + '<div class="card"><div class="empty">Select a technician to view and edit their route.</div></div>';
+
+  // Current route
+  h += '<div class="row">';
+  h += '<div class="col"><div class="card"><h3>'+esc(techName(routeTech))+' · route <span class="muted">('+routeStops.length+' stops)</span></h3>';
+  if(!routeStops.length){ h += '<div class="empty">No stops yet. Add stores from the right.</div>'; }
+  else {
+    routeStops.forEach(function(s,i){
+      var a=s.asset;
+      h += '<div class="stop"><div class="n">'+(i+1)+'</div><div class="meta"><div class="s">'+esc(a.store||a.serial||('Asset '+a.id))+'</div><div class="a">'+esc([a.address,a.city,a.state].filter(Boolean).join(', '))+'</div></div>'
+        + '<div class="acts">'
+        + '<button class="ic" onclick="moveStop('+i+',-1)" '+(i===0?'disabled':'')+' title="Up">▲</button>'
+        + '<button class="ic" onclick="moveStop('+i+',1)" '+(i===routeStops.length-1?'disabled':'')+' title="Down">▼</button>'
+        + '<button class="ic" onclick="removeStop('+i+')" title="Remove">✕</button>'
+        + '</div></div>';
+    });
+  }
+  h += '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn gn" onclick="saveRoute()" '+(saving?'disabled':'')+'>'+(saving?'Saving…':'💾 Save route')+'</button><button class="btn o" onclick="selectRouteTech(routeTech)">↺ Reset</button></div>';
+  h += '</div></div>';
+
+  // Add stores
+  var q = addSearch.trim().toLowerCase();
+  var avail = assets.filter(function(a){
+    if(routeStops.some(function(s){return s.asset_id===a.id;})) return false;
+    if(!q) return true;
+    return ((a.store||'')+' '+(a.city||'')+' '+(a.address||'')+' '+(a.serial||'')).toLowerCase().indexOf(q)>=0;
+  });
+  h += '<div class="col"><div class="card"><h3>Add stops</h3><div class="hint">Tap to add. A 🔵 dot means the store is already on another tech\'s route.</div>';
+  h += '<input type="search" placeholder="Search store, city, address, serial…" value="'+esc(addSearch)+'" oninput="addSearch=this.value;render();this.focus()">';
+  h += '<div class="addlist">';
+  if(!avail.length){ h += '<div class="empty">No matching stores.</div>'; }
+  else {
+    var byCity={}; avail.forEach(function(a){ (byCity[a.city||'—']||(byCity[a.city||'—']=[])).push(a); });
+    Object.keys(byCity).sort().forEach(function(city){
+      h += '<div class="grp-h">'+esc(city)+'</div>';
+      byCity[city].forEach(function(a){
+        var other = assignedIds[a.id] && assignedIds[a.id]!==routeTech;
+        h += '<div class="addrow"><div class="meta"><div class="s" style="font-weight:700;font-size:.86rem">'+(other?'🔵 ':'')+esc(a.store||a.serial)+'</div><div class="a muted" style="font-size:.74rem">'+esc([a.address,a.city].filter(Boolean).join(', '))+(other?' · on '+esc(techName(assignedIds[a.id])):'')+'</div></div><button class="btn sm" onclick="addStop('+a.id+')">+ Add</button></div>';
+      });
+    });
+  }
+  h += '</div></div></div>';
+  h += '</div>';
+  return h;
+}
+
+function renderPayments(){
+  // distinct weeks present in payouts
+  var weeks=[]; payouts.forEach(function(p){ if(weeks.indexOf(p.week_start)<0) weeks.push(p.week_start); });
+  weeks.sort().reverse();
+  if(!payWeek && weeks.length) payWeek=weeks[0];
+
+  var h='';
+  // Weekly payouts
+  var weekOpts = weeks.length ? weeks.map(function(w){ var p=payouts.find(function(x){return x.week_start===w;}); var end=p?p.week_end:''; return '<option value="'+esc(w)+'"'+(w===payWeek?' selected':'')+'>'+esc(w)+(end?' → '+esc(end):'')+'</option>'; }).join('') : '<option value="">— no payouts yet —</option>';
+  var wk = payouts.filter(function(p){ return p.week_start===payWeek; });
+  var total = wk.reduce(function(s,p){ return s+Number(p.amount||0); },0);
+  var paid = wk.filter(function(p){return p.status==='paid';}).reduce(function(s,p){return s+Number(p.amount||0);},0);
+
+  h += '<div class="card"><h3>Weekly payouts</h3><div class="hint">Submitted by techs from the field app — review and mark paid here. Same <span class="mono">payouts</span> rows; the tech sees “PAID” instantly.</div>';
+  h += '<label class="f">Week</label><select onchange="setPayWeek(this.value)" style="max-width:320px">'+weekOpts+'</select>';
+  if(!wk.length){ h += '<div class="empty">No payouts for this week.</div>'; }
+  else {
+    h += '<div style="overflow-x:auto;margin-top:14px"><table><thead><tr><th>Technician</th><th class="num">Stores</th><th class="num hide">PMs</th><th class="num">Amount</th><th>Status</th><th></th></tr></thead><tbody>';
+    wk.forEach(function(p){
+      var paidPill = p.status==='paid' ? '<span class="pill gn">Paid</span>' : '<span class="pill am">Submitted</span>';
+      var nItems = Array.isArray(p.details)?p.details.length:(p.store_count||0);
+      h += '<tr><td>'+esc(techName(p.tech_email))+'<div class="muted" style="font-size:.72rem">'+esc(p.tech_email)+'</div></td>'
+         + '<td class="num">'+(p.store_count||0)+'</td>'
+         + '<td class="num hide">'+nItems+'</td>'
+         + '<td class="num">'+money(p.amount)+'</td>'
+         + '<td>'+paidPill+'</td>'
+         + '<td>'+(p.status==='paid'?'':'<button class="btn gn sm" onclick="markPaid('+p.id+')">Mark paid</button>')+'</td></tr>';
+    });
+    h += '<tr class="tot"><td>Total</td><td class="num"></td><td class="num hide"></td><td class="num">'+money(total)+'</td><td colspan="2" class="muted" style="font-weight:600">'+money(paid)+' paid · '+money(total-paid)+' outstanding</td></tr>';
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  // Rates
+  h += '<div class="card"><h3>Per-PM rates</h3><div class="hint">Flat rate paid per completed PM for each tech (overrides per-asset fees). Stored on <span class="mono">tech_profiles.pm_rate</span>.</div>';
+  h += '<div style="overflow-x:auto"><table><thead><tr><th>Technician</th><th>Role</th><th class="num">Rate / PM</th><th></th></tr></thead><tbody>';
+  techs.forEach(function(t){
+    h += '<tr><td>'+esc(t.name||t.email)+'<div class="muted" style="font-size:.72rem">'+esc(t.email)+'</div></td>'
+       + '<td><span class="pill '+(t.role==='admin'?'am':'dim')+'">'+esc(t.role||'tech')+'</span></td>'
+       + '<td class="num"><input type="number" step="0.01" min="0" id="rate_'+esc(t.email)+'" value="'+(t.pm_rate!=null?Number(t.pm_rate):'')+'" placeholder="—" style="max-width:120px;text-align:right"></td>'
+       + '<td><button class="btn o sm" onclick="saveRate(\''+esc(t.email)+'\', document.getElementById(\'rate_'+esc(t.email)+'\').value)">Save</button></td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
+init();
+</script>
+</body>
+</html>
