@@ -1,0 +1,2 @@
+# Pretty URL for the back-office console (also reachable at /admin.html)
+/admin   /admin.html   200

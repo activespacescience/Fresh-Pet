@@ -678,6 +678,9 @@ function renderHome() {
   // Admin button
   if (userRole === 'admin') {
     h += '<button class="btn btn-o" style="color:var(--rd)" onclick="goAdmin()">⚙️ Admin Panel</button>';
+    // Dedicated back-office console (routes + payments) — same Supabase backend,
+    // bigger screen layout for when you're at a computer.
+    h += '<a class="btn btn-o" style="display:block;text-align:center;margin-top:8px;text-decoration:none" href="admin.html">🖥️ Admin Console (routes &amp; pay)</a>';
   }
   h += '<div class="card" style="margin-top:14px">';
   if (mySig) {
