@@ -165,6 +165,7 @@ var importing = false;
 var importFullReplace = true;
 var adminSelectedTech = '';
 var adminTechAssets = []; // asset IDs assigned to selected tech
+var pickerSel = {};       // multi-select in the Add-Stores picker: { storeKey: true }
 // Route state (for tech view)
 var myRoute = []; // route assignments + asset data
 var currentStopIdx = 0;
@@ -2286,6 +2287,7 @@ async function goAddAssets() {
   await loadAllAssignments();
   screen = 'adminAssetPicker';
   search = '';
+  pickerSel = {};
   render();
 }
 
@@ -2638,6 +2640,8 @@ function renderAdminAssetPicker() {
            a.address.toLowerCase().indexOf(s) > -1;
   });
 
+  var selCount = Object.keys(pickerSel).filter(function(k){ return pickerSel[k]; }).length;
+
   // Who has each asset (one tech per store: taken stores can't be added)
   var assignedTo = {};
   allAssignments.forEach(function(ra) { assignedTo[ra.asset_id] = ra.tech_email; });
@@ -2655,19 +2659,43 @@ function renderAdminAssetPicker() {
     groups[key].assets.push({ asset: a, assigned: assigned });
   });
 
+  // Keys of stores that can still be added (not taken, not already fully assigned)
+  var eligibleKeys = groupOrder.filter(function(k){ return !groups[k].takenBy && !groups[k].allAssigned; });
+  var allShownSelected = eligibleKeys.length > 0 && eligibleKeys.every(function(k){ return pickerSel[k]; });
+
+  // Multi-select action bar
+  h += '<div class="card" style="position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px">';
+  if (eligibleKeys.length) {
+    h += '<button class="btn btn-o" style="width:auto;padding:8px 12px;font-size:13px" onclick="toggleSelectAllShown()">' + (allShownSelected ? '☑ Deselect shown' : '☐ Select all shown') + '</button>';
+  }
+  h += '<span style="font-size:13px;color:var(--dim)">' + selCount + ' selected</span>';
+  if (selCount) {
+    h += '<button class="btn btn-p" style="width:auto;padding:8px 14px;font-size:13px;margin-left:auto" onclick="assignSelectedStores()">➕ Assign ' + selCount + ' store' + (selCount === 1 ? '' : 's') + '</button>';
+    h += '<button class="btn btn-o" style="width:auto;padding:8px 12px;font-size:13px" onclick="pickerSel={};render()">Clear</button>';
+  }
+  h += '</div>';
+
   groupOrder.forEach(function(key) {
     var g = groups[key];
-    h += '<div class="store-grp">';
-    h += '<div style="display:flex;justify-content:space-between;align-items:center">';
-    h += '<h4>📍 ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
+    var eligible = !g.takenBy && !g.allAssigned;
+    var checked = !!pickerSel[key];
+    var encKey = encodeURIComponent(key);
+    h += '<div class="store-grp"' + (checked ? ' style="outline:2px solid var(--ac)"' : '') + '>';
+    h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
+    h += '<div style="display:flex;align-items:center;gap:10px;min-width:0">';
+    if (eligible) {
+      h += '<input type="checkbox" style="width:22px;height:22px;flex:none" onclick="togglePickStore(\'' + encKey + '\')"' + (checked ? ' checked' : '') + '>';
+    }
+    h += '<h4 style="margin:0;overflow:hidden;text-overflow:ellipsis">📍 ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
+    h += '</div>';
     if (g.takenBy) {
       var owner = techProfiles.find(function(t) { return t.email === g.takenBy; });
-      h += '<span style="color:var(--rd);font-size:12px">🔒 ' + esc(owner ? (owner.name || owner.email) : g.takenBy) + '</span>';
+      h += '<span style="color:var(--rd);font-size:12px;flex:none">🔒 ' + esc(owner ? (owner.name || owner.email) : g.takenBy) + '</span>';
     } else if (!g.allAssigned) {
       var ids = g.assets.filter(function(x) { return !x.assigned; }).map(function(x) { return x.asset.id; });
-      h += '<button class="btn btn-p" style="width:auto;padding:6px 12px;font-size:12px" onclick="addStoreToRoute([' + ids.join(',') + '])">+ Add All</button>';
+      h += '<button class="btn btn-p" style="width:auto;padding:6px 12px;font-size:12px;flex:none" onclick="addStoreToRoute([' + ids.join(',') + '])">+ Add</button>';
     } else {
-      h += '<span style="color:var(--gn);font-size:12px">✓ Assigned</span>';
+      h += '<span style="color:var(--gn);font-size:12px;flex:none">✓ Assigned</span>';
     }
     h += '</div>';
     h += '<div style="font-size:12px;color:var(--dim);margin-bottom:4px;padding:0 4px">' + esc(g.address) + ' &bull; ' + g.assets.length + ' asset(s)</div>';
@@ -2675,6 +2703,63 @@ function renderAdminAssetPicker() {
   });
 
   return h;
+}
+
+function togglePickStore(enc) {
+  var k = decodeURIComponent(enc);
+  if (pickerSel[k]) delete pickerSel[k]; else pickerSel[k] = true;
+  render();
+}
+function toggleSelectAllShown() {
+  var s = (search || '').toLowerCase();
+  var assignedTo = {};
+  allAssignments.forEach(function(ra) { assignedTo[ra.asset_id] = ra.tech_email; });
+  // Rebuild the eligible store keys currently shown
+  var groups = {}, order = [];
+  ASSETS.forEach(function(a) {
+    if (s && a.store.toLowerCase().indexOf(s) < 0 && a.city.toLowerCase().indexOf(s) < 0 && a.address.toLowerCase().indexOf(s) < 0) return;
+    var key = a.store + '|' + a.address + '|' + a.city;
+    if (!groups[key]) { groups[key] = { taken: false, allAssigned: true }; order.push(key); }
+    var owner = assignedTo[a.id];
+    if (owner && owner !== adminSelectedTech) groups[key].taken = true;
+    if (adminTechAssets.indexOf(a.id) < 0) groups[key].allAssigned = false;
+  });
+  var eligible = order.filter(function(k) { return !groups[k].taken && !groups[k].allAssigned; });
+  var allSel = eligible.length > 0 && eligible.every(function(k) { return pickerSel[k]; });
+  eligible.forEach(function(k) { if (allSel) delete pickerSel[k]; else pickerSel[k] = true; });
+  render();
+}
+async function assignSelectedStores() {
+  if (!adminSelectedTech) { showStatus('Choose a tech first', 'err'); return; }
+  var keys = Object.keys(pickerSel).filter(function(k) { return pickerSel[k]; });
+  if (!keys.length) { showStatus('No stores selected', 'err'); return; }
+  var assignedTo = {};
+  allAssignments.forEach(function(ra) { assignedTo[ra.asset_id] = ra.tech_email; });
+  var ids = [];
+  ASSETS.forEach(function(a) {
+    var key = a.store + '|' + a.address + '|' + a.city;
+    if (keys.indexOf(key) < 0) return;
+    if (adminTechAssets.indexOf(a.id) > -1) return;                          // already this tech
+    if (assignedTo[a.id] && assignedTo[a.id] !== adminSelectedTech) return;  // taken by another tech
+    ids.push(a.id);
+  });
+  if (!ids.length) { showStatus('Selected stores are already assigned', 'info'); pickerSel = {}; render(); return; }
+  var maxOrder = adminTechAssets.length;
+  var inserts = ids.map(function(id, i) {
+    return { tech_email: adminSelectedTech, asset_id: id, stop_order: maxOrder + i, route_name: 'Primary Route', active: true };
+  });
+  var { error } = await sb.from('route_assignments').insert(inserts);
+  if (error) {
+    if (error.code === '23505') { showStatus('One or more stores were just taken by another tech', 'err'); await loadAllAssignments(); }
+    else { showStatus('Error: ' + error.message, 'err'); }
+    render();
+    return;
+  }
+  adminTechAssets = adminTechAssets.concat(ids);
+  pickerSel = {};
+  await loadAllAssignments();
+  showStatus(keys.length + ' store(s) assigned (' + ids.length + ' assets)', 'ok');
+  render();
 }
 
 async function addStoreToRoute(assetIds) {
