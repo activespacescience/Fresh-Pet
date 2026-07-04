@@ -134,6 +134,9 @@ var saving = false;
 
 // ── Billing ──
 var BILL_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-invoice';
+var PAYOUT_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-payout-bill';
+var payBusy = false;          // tech-payout bill in flight
+var payBillResult = null;     // last payout bill result
 var completedPMs = [];        // all completed_pms rows
 var billSel = {};             // { id: true } selected for invoicing
 var billRate = 30;            // $ per PM (Freshpet default)
@@ -176,7 +179,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,prev_comp,billed,invoice_doc_number,bill_amount').order('pm_date', { ascending:false })
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_bill_ref').order('pm_date', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
@@ -370,15 +373,75 @@ function renderRoutes(){
   return h;
 }
 
+async function createPayoutBill(techUserId){
+  var t = techs.find(function(x){ return x.user_id===techUserId; });
+  if(!t) return;
+  var unpaid = completedPMs.filter(function(p){ return !p.prev_comp && !p.paid_out && p.tech_user_id===techUserId; });
+  var rate = t.pm_rate!=null ? Number(t.pm_rate) : null;
+  if(rate==null || rate<=0) return toast('Set a per-PM rate for '+(t.name||t.email)+' first (below)','err');
+  if(!unpaid.length) return toast('No unpaid PMs for this tech','err');
+  if(!confirm('Create a QuickBooks BILL to '+(t.name||t.email)+' for '+unpaid.length+' PM'+(unpaid.length===1?'':'s')+' @ '+money(rate)+' = '+money(unpaid.length*rate)+'?\n\nThis posts a real vendor bill in QBO and marks these PMs paid out.')) return;
+  payBusy=true; payBillResult=null; render();
+  try{
+    var token = await billToken();
+    var res = await fetch(PAYOUT_FN, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body: JSON.stringify({ mode:'create', techUserId:techUserId, rate:rate }) });
+    var j = await res.json();
+    if(!res.ok) throw new Error(j.error || ('HTTP '+res.status));
+    payBillResult = j;
+    await loadAll();
+    toast('Bill #'+(j.bill&&j.bill.docNumber)+' created for '+(j.bill&&j.bill.vendor),'ok');
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+  payBusy=false; render();
+}
+
+function renderTechPay(){
+  var byTech={}, paidCount={};
+  completedPMs.forEach(function(p){
+    if(!p.tech_user_id) return;
+    if(p.paid_out){ paidCount[p.tech_user_id]=(paidCount[p.tech_user_id]||0)+1; return; }
+    if(p.prev_comp) return;
+    (byTech[p.tech_user_id]=byTech[p.tech_user_id]||[]).push(p);
+  });
+  var h = '<div class="card"><h3>Technician pay</h3><div class="hint">Each completed PM (per asset, <span class="mono">PREV COMP</span> excluded) earns the tech their per-PM rate. Create a QuickBooks <strong>bill</strong> (what we owe the tech) for their unpaid PMs — separate from what we invoice Freshpet. Set/edit rates in the Per-PM rates section below.</div>';
+
+  if(payBillResult){
+    var b=payBillResult.bill||{};
+    h += '<div class="card" style="background:var(--sf2);border-color:var(--gn);margin:0 0 14px"><h3 style="color:var(--gn)">✓ Bill #'+esc(b.docNumber)+' created</h3>'
+       + '<div class="muted" style="font-size:.85rem">'+payBillResult.paidCount+' PM(s) · '+money(b.total)+' · vendor '+esc(b.vendor)+'</div>'
+       + ((payBillResult.warnings&&payBillResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">⚠ '+payBillResult.warnings.map(esc).join('<br>⚠ ')+'</div>':'')
+       + '</div>';
+  }
+
+  var rows = techs.filter(function(t){ return t.user_id && ((byTech[t.user_id]&&byTech[t.user_id].length) || paidCount[t.user_id]); });
+  if(!rows.length){ h += '<div class="empty" style="padding:20px">No technician pay to show yet.</div>'; h += '</div>'; return h; }
+  h += '<div style="overflow-x:auto"><table><thead><tr><th>Technician</th><th class="num">Unpaid PMs</th><th class="num">Rate / PM</th><th class="num">Owed</th><th>Paid to date</th><th></th></tr></thead><tbody>';
+  rows.forEach(function(t){
+    var unpaid = (byTech[t.user_id]||[]).length;
+    var rate = t.pm_rate!=null?Number(t.pm_rate):null;
+    var owed = rate!=null ? unpaid*rate : null;
+    h += '<tr><td>'+esc(t.name||t.email)+'<div class="muted" style="font-size:.72rem">'+esc(t.email)+'</div></td>'
+       + '<td class="num">'+unpaid+'</td>'
+       + '<td class="num">'+(rate!=null?money(rate):'<span class="muted">—</span>')+'</td>'
+       + '<td class="num">'+(owed!=null?money(owed):'<span class="muted">set rate</span>')+'</td>'
+       + '<td>'+(paidCount[t.user_id]?'<span class="pill gn">'+paidCount[t.user_id]+' paid</span>':'<span class="muted">—</span>')+'</td>'
+       + '<td>'+((unpaid&&rate!=null)?'<button class="btn gn sm" onclick="createPayoutBill(\''+esc(t.user_id)+'\')" '+(payBusy?'disabled':'')+'>'+(payBusy?'Working…':'💵 Create QBO bill')+'</button>':'')+'</td></tr>';
+  });
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
 function renderPayments(){
   // distinct weeks present in payouts
   var weeks=[]; payouts.forEach(function(p){ if(weeks.indexOf(p.week_start)<0) weeks.push(p.week_start); });
   weeks.sort().reverse();
   if(!payWeek && weeks.length) payWeek=weeks[0];
 
-  var h='';
-  // Weekly payouts
-  var weekOpts = weeks.length ? weeks.map(function(w){ var p=payouts.find(function(x){return x.week_start===w;}); var end=p?p.week_end:''; return '<option value="'+esc(w)+'"'+(w===payWeek?' selected':'')+'>'+esc(w)+(end?' → '+esc(end):'')+'</option>'; }).join('') : '<option value="">— no payouts yet —</option>';
+  // Computed per-tech pay from completed PMs (the payouts table is only written
+  // when a tech taps "Submit" in the field app — this always reflects reality).
+  var h = renderTechPay();
+  // Weekly payouts (tech-submitted snapshots, if any)
+  var weekOpts = weeks.length ? weeks.map(function(w){ var p=payouts.find(function(x){return x.week_start===w;}); var end=p?p.week_end:''; return '<option value="'+esc(w)+'"'+(w===payWeek?' selected':'')+'>'+esc(w)+(end?' → '+esc(end):'')+'</option>'; }).join('') : '<option value="">— no submitted payouts —</option>';
   var wk = payouts.filter(function(p){ return p.week_start===payWeek; });
   var total = wk.reduce(function(s,p){ return s+Number(p.amount||0); },0);
   var paid = wk.filter(function(p){return p.status==='paid';}).reduce(function(s,p){return s+Number(p.amount||0);},0);
