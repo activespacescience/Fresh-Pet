@@ -175,7 +175,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,store,serial,city,pm_date,tech_name,prev_comp,billed,invoice_doc_number,bill_amount').order('pm_date', { ascending:false })
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,prev_comp,billed,invoice_doc_number,bill_amount').order('pm_date', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
@@ -356,13 +356,15 @@ function renderPayments(){
 
 // ═══ Billing (Freshpet) ═══
 async function billToken(){ var { data:{ session } } = await sb.auth.getSession(); return session && session.access_token; }
+// completed_pms has no city column — derive it from the linked asset.
+function cityOf(p){ var a = assetById(p.asset_id); return (a && a.city) || ''; }
 function billableList(){
   var q = billSearch.trim().toLowerCase();
   return completedPMs.filter(function(p){
     if (p.prev_comp) return false;                 // done elsewhere — never billed
     if (!billShowBilled && p.billed) return false;
     if (!q) return true;
-    return ((p.store||'')+' '+(p.city||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
+    return ((p.store||'')+' '+cityOf(p)+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
   });
 }
 function toggleBill(id){ if(billSel[id]) delete billSel[id]; else billSel[id]=true; billPreview=null; render(); }
@@ -489,7 +491,7 @@ function renderBilling(){
       h += '<tr>'
          + '<td>'+(p.billed?'':'<input type="checkbox" '+(checked?'checked':'')+' onclick="toggleBill('+p.id+')">')+'</td>'
          + '<td>'+esc(p.store||'')+'</td>'
-         + '<td class="hide">'+esc(p.city||'')+'</td>'
+         + '<td class="hide">'+esc(cityOf(p))+'</td>'
          + '<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
          + '<td>'+esc(p.pm_date||'')+'</td>'
          + '<td class="hide">'+esc(p.tech_name||'')+'</td>'
