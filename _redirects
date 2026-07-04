@@ -1,2 +1,4 @@
 # Pretty URL for the back-office console (also reachable at /admin.html)
 /admin   /admin.html   200
+# Pretty URL for the Freshpet customer completed-calls portal (also /portal.html)
+/portal  /portal.html  200
