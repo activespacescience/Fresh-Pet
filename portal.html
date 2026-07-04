@@ -1,0 +1,361 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#0F172A">
+<title>Freshpet · Completed Service Calls</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<style>
+:root{
+  --bg:#0F172A; --sf:#171f33; --sf2:#1f2a44; --bd:#2b3a5c; --bd2:#3a4d75;
+  --tx:#E2E8F0; --tx2:#9fb0c7; --dim:#6b7b96;
+  --ac:#3B82F6; --ac2:#2563EB; --gn:#34D399; --am:#FBBF24; --rd:#F87171;
+  --shadow:0 4px 14px rgba(0,0,0,.35);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'DM Sans',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;-webkit-font-smoothing:antialiased}
+.mono{font-family:'JetBrains Mono',monospace}
+a{color:var(--ac);text-decoration:none}
+button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
+input,select{font-family:inherit;color:inherit}
+.wrap{max-width:1180px;margin:0 auto;padding:18px 22px 70px}
+/* Header */
+.hd{display:flex;align-items:center;gap:14px;padding:14px 0 18px;border-bottom:1px solid var(--bd);flex-wrap:wrap}
+.hd .logo{font-size:1.35rem;font-weight:800;letter-spacing:-.02em}
+.hd .logo .fp{color:var(--ac)}
+.hd .sub{font-size:.7rem;font-weight:700;letter-spacing:.14em;text-transform:uppercase;color:var(--tx2)}
+.hd .right{margin-left:auto;display:flex;align-items:center;gap:10px}
+.who{font-size:.78rem;color:var(--tx2);font-weight:600}
+.btn{display:inline-flex;align-items:center;gap:7px;padding:9px 15px;border-radius:10px;font-size:.84rem;font-weight:700;background:var(--ac);color:#fff;transition:filter .15s}
+.btn:hover{filter:brightness(1.08)}
+.btn.o{background:var(--sf2);color:var(--tx);border:1px solid var(--bd)}
+.btn.o:hover{border-color:var(--bd2);background:var(--sf)}
+.btn.sm{padding:6px 11px;font-size:.78rem;border-radius:8px}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+/* Stats */
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
+.stat{background:var(--sf);border:1px solid var(--bd);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow)}
+.stat .v{font-size:1.7rem;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:-.02em}
+.stat .k{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2);margin-top:2px}
+/* Filters */
+.filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
+.filters .fg{display:flex;flex-direction:column;gap:5px}
+label.f{font-size:.68rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2)}
+select,input[type=search]{padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--sf);color:var(--tx);font-size:.88rem;outline:none;min-width:180px}
+select:focus,input:focus{border-color:var(--ac)}
+/* Group header */
+.grp-h{font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);margin:22px 0 10px;display:flex;align-items:center;gap:10px}
+.grp-h .ct{font-size:.68rem;font-weight:700;color:var(--dim);background:var(--sf2);border:1px solid var(--bd);border-radius:999px;padding:2px 9px}
+/* Call cards */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
+.call{background:var(--sf);border:1px solid var(--bd);border-radius:14px;padding:15px 16px;box-shadow:var(--shadow);cursor:pointer;transition:border-color .15s,transform .1s;text-align:left;width:100%}
+.call:hover{border-color:var(--bd2);transform:translateY(-1px)}
+.call .st{font-weight:700;font-size:.98rem;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.call .ct{font-size:.78rem;color:var(--tx2);margin-top:1px}
+.call .meta{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px}
+.pill{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:700;letter-spacing:.02em;padding:3px 9px;border-radius:999px;border:1px solid var(--bd);color:var(--tx2)}
+.pill.gn{color:var(--gn);border-color:var(--gn);background:rgba(52,211,153,.1)}
+.pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(59,130,246,.1)}
+.pill.dim{color:var(--dim)}
+.call .dt{font-size:.78rem;color:var(--tx2);margin-top:9px;font-family:'JetBrains Mono',monospace}
+.empty{padding:44px 16px;text-align:center;color:var(--tx2);font-size:.95rem}
+/* Modal */
+.ov{position:fixed;inset:0;background:rgba(6,11,22,.72);z-index:800;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto}
+.modal{background:var(--sf);border:1px solid var(--bd);border-radius:18px;max-width:720px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.55);margin:auto}
+.modal .mh{padding:20px 22px;border-bottom:1px solid var(--bd);display:flex;align-items:flex-start;gap:12px}
+.modal .mh .x{margin-left:auto;font-size:1.3rem;color:var(--tx2);line-height:1}
+.modal .mb{padding:20px 22px}
+.modal h2{font-size:1.2rem;font-weight:800}
+.modal .addr{font-size:.85rem;color:var(--tx2);margin-top:3px}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:4px 0 18px}
+.kv .i .k{font-size:.66rem;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2)}
+.kv .i .v{font-size:.9rem;font-weight:600;margin-top:2px}
+.sec-h{font-size:.72rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--ac);margin:18px 0 8px;padding-bottom:6px;border-bottom:1px solid var(--bd)}
+.chks{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:6px 14px}
+.chk{font-size:.85rem;display:flex;align-items:center;gap:8px;color:var(--tx)}
+.chk .b{color:var(--gn);font-weight:800}
+.chk.off{color:var(--dim)}.chk.off .b{color:var(--dim)}
+.notes{background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px 14px;font-size:.88rem;line-height:1.5;color:var(--tx);white-space:pre-wrap}
+.photos{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:10px}
+.photos img{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:10px;border:1px solid var(--bd);cursor:zoom-in;background:var(--bg)}
+/* Lightbox */
+.lb{position:fixed;inset:0;background:rgba(0,0,0,.92);z-index:900;display:flex;align-items:center;justify-content:center;padding:20px}
+.lb img{max-width:100%;max-height:100%;border-radius:8px}
+.lb .x{position:fixed;top:16px;right:20px;font-size:2rem;color:#fff}
+/* Login */
+.login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+.login .box{background:var(--sf);border:1px solid var(--bd);border-radius:22px;padding:38px 32px;max-width:400px;width:100%;text-align:center;box-shadow:var(--shadow)}
+.login .box .logo{font-size:1.7rem;font-weight:800;margin-bottom:6px}
+.login .box .sub{font-size:.85rem;color:var(--tx2);margin-bottom:24px;line-height:1.5}
+.login input{width:100%;margin-bottom:10px;min-width:0}
+.divider{display:flex;align-items:center;gap:10px;color:var(--dim);font-size:.72rem;margin:16px 0;text-transform:uppercase;letter-spacing:.08em}
+.divider::before,.divider::after{content:'';flex:1;height:1px;background:var(--bd)}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);z-index:9999;padding:12px 20px;border-radius:12px;font-weight:700;font-size:.86rem;color:#fff;box-shadow:0 10px 30px rgba(0,0,0,.4);max-width:90vw}
+.toast.ok{background:var(--gn)}.toast.err{background:var(--rd)}.toast.info{background:var(--ac)}
+@media(max-width:680px){ .wrap{padding:14px 14px 70px} .hd .sub{display:none} }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="modal"></div>
+<div id="lb"></div>
+<div id="toast"></div>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// Freshpet — Completed Service Calls portal (customer-facing, read-only)
+// Same Supabase project as the field app + admin console
+// (mmkncrsaijexezmhfmiw). Gated to tech_profiles.role in ('freshpet','admin').
+// A 'freshpet' viewer sees ONLY this page — a clean browser of every
+// completed PM with per-store photos + the signed PDF report as proof.
+// ═══════════════════════════════════════════════════════════════════
+
+var SUPA_URL = 'https://mmkncrsaijexezmhfmiw.supabase.co';
+var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ta25jcnNhaWpleGV6bWhmbWl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3OTkyMjUsImV4cCI6MjA5NjM3NTIyNX0.lx4J-YhlFFrQVJMqjeBXXHNmgZfRe23xYGKZMEL8dPM';
+var sb = supabase.createClient(SUPA_URL, SUPA_KEY, { auth: { flowType: 'implicit' } });
+
+// Checklist label map (mirrors the field app's renderChecklist groups).
+var CHECK_GROUPS = [
+  { h:'Unit Location', keys:[['onFloor','On Floor'],['notOnFloor','Not on Floor'],['petFood','Pet Food Aisle'],['notFound','Not Found'],['backOfStore','Back of Store'],['otherLoc','Other Location']] },
+  { h:'Physical Condition', keys:[['workingArrival','Working on Arrival'],['notWorkingArrival','Not Working on Arrival'],['workingDepart','Working on Departure']] },
+  { h:'Cleanliness of Unit', keys:[['cleanInterior','Interior Cleaned'],['cleanExterior','Exterior Cleaned'],['cleanGrill','Front Grill Cleaned'],['cleanCondPans','Condensate Pans'],['cleanCondenser','Condenser Cleaned'],['headerDamage','Header Damage']] },
+  { h:'Maintenance Checklist', keys:[['physicalDmg','Physical Damage'],['powerCord','Power Cord'],['extCord','Extension Cord'],['backSpacer','Back Spacer'],['cleanCoil','Clean Coil'],['emptyDrain','Empty Drain Pan'],['cleanFans','Clean Fans'],['wickingPads','Wicking Pads'],['cleanCondPansD','Clean Condensate Pans'],['cleanDrainLine','Clean Drain Line'],['ledCheck','LED Check'],['waterLeak','Water Leak']] }
+];
+
+// ── state ──
+var screen = 'loading';   // loading | login | denied | app
+var user = null, profile = null;
+var pms = [], assets = {};
+var fSearch = '', fCity = '', fMonth = '';
+var authBusy = false;
+
+function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
+function toast(msg, type){ var t=document.getElementById('toast'); t.innerHTML='<div class="toast '+(type||'info')+'">'+esc(msg)+'</div>'; setTimeout(function(){ t.innerHTML=''; }, 3500); }
+function photoUrl(p){ return SUPA_URL + '/storage/v1/object/public/fp-photos/' + p; }
+function pdfUrl(p){ return SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + p; }
+function fmtDate(d){ if(!d) return '—'; try{ return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(e){ return d; } }
+function monthKey(d){ return (d||'').slice(0,7); }
+function monthLabel(k){ if(!k) return 'Undated'; try{ return new Date(k+'-01T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'}); }catch(e){ return k; } }
+
+// ── auth ──
+async function init(){
+  var { data:{ session } } = await sb.auth.getSession();
+  if (session){ user = session.user; await afterLogin(); }
+  else { screen='login'; render(); }
+  sb.auth.onAuthStateChange(async function(ev, s){
+    if (ev==='SIGNED_IN' && s){ if (user && user.id===s.user.id) { user=s.user; return; } user=s.user; await afterLogin(); }
+    else if (ev==='SIGNED_OUT'){ user=null; profile=null; screen='login'; render(); }
+  });
+}
+async function afterLogin(){
+  var { data } = await sb.from('tech_profiles').select('*').eq('email', user.email).single();
+  profile = data || null;
+  var role = profile && profile.role;
+  if (role !== 'freshpet' && role !== 'admin'){ screen='denied'; render(); return; }
+  await loadData();
+  screen='app'; render();
+}
+async function signInGoogle(){
+  var { error } = await sb.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: window.location.href.split('#')[0] } });
+  if(error) toast('Login failed: '+error.message,'err');
+}
+async function signInEmail(){
+  if(authBusy) return;
+  var email=(document.getElementById('li_email')||{}).value||'';
+  var pass=(document.getElementById('li_pass')||{}).value||'';
+  if(!email||!pass) return toast('Enter email and password','err');
+  authBusy=true; render();
+  var { error } = await sb.auth.signInWithPassword({ email:email.trim(), password:pass });
+  authBusy=false;
+  if(error){ toast(error.message,'err'); render(); }
+}
+async function signOut(){ await sb.auth.signOut(); }
+
+// ── data ──
+async function loadData(){
+  var r = await Promise.all([
+    sb.from('completed_pms').select('*').order('pm_date', { ascending:false }).order('created_at', { ascending:false }),
+    sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial')
+  ]);
+  pms = (r[0].data || []);
+  assets = {}; (r[1].data || []).forEach(function(a){ assets[a.id]=a; });
+}
+
+// ── filtering ──
+function filtered(){
+  var q = fSearch.trim().toLowerCase();
+  return pms.filter(function(p){
+    if (fCity && (p.city||(assets[p.asset_id]||{}).city||'')!==fCity) return false;
+    if (fMonth && monthKey(p.pm_date)!==fMonth) return false;
+    if (!q) return true;
+    var a = assets[p.asset_id]||{};
+    return ((p.store||'')+' '+(p.city||a.city||'')+' '+(p.serial||'')+' '+(a.address||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
+  });
+}
+function setF(k,v){ if(k==='search')fSearch=v; if(k==='city')fCity=v; if(k==='month')fMonth=v; render(); if(k==='search'){ var el=document.getElementById('f_search'); if(el){ el.focus(); var n=el.value.length; el.setSelectionRange(n,n); } } }
+
+// ═══ render ═══
+function render(){
+  var app = document.getElementById('app');
+  if (screen==='loading'){ app.innerHTML='<div class="empty" style="margin-top:90px">Loading…</div>'; return; }
+  if (screen==='login'){
+    app.innerHTML =
+      '<div class="login"><div class="box">'
+      + '<div class="logo">🐾 <span style="color:var(--ac)">Freshpet</span></div>'
+      + '<div class="sub">Completed service calls — view every preventive-maintenance visit with photos and signed reports.</div>'
+      + '<input type="email" id="li_email" placeholder="Email" autocomplete="email">'
+      + '<input type="password" id="li_pass" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')signInEmail()">'
+      + '<button class="btn" style="width:100%;justify-content:center" onclick="signInEmail()"'+(authBusy?' disabled':'')+'>'+(authBusy?'Signing in…':'Sign in')+'</button>'
+      + '<div class="divider">or</div>'
+      + '<button class="btn o" style="width:100%;justify-content:center" onclick="signInGoogle()">Sign in with Google</button>'
+      + '</div></div>';
+    return;
+  }
+  if (screen==='denied'){
+    app.innerHTML='<div class="login"><div class="box"><div class="logo">🔒 No access</div><div class="sub">'+esc(user?user.email:'')+' isn\'t set up for the Freshpet portal yet. Please contact your Alameda Point Beverage Group representative.</div><button class="btn o" style="width:100%;justify-content:center" onclick="signOut()">Sign out</button></div></div>';
+    return;
+  }
+
+  var list = filtered();
+  var h = '<div class="wrap">';
+  h += '<div class="hd"><div><div class="logo">🐾 <span class="fp">Freshpet</span></div></div><div class="sub">Completed service calls</div>'
+     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
+
+  // stats
+  var thisMonth = monthKey(new Date().toISOString().slice(0,10));
+  var mCount = pms.filter(function(p){ return monthKey(p.pm_date)===thisMonth; }).length;
+  var storeSet = {}; pms.forEach(function(p){ storeSet[p.store||p.asset_id]=1; });
+  h += '<div class="stats">'
+     + '<div class="stat"><div class="v">'+pms.length+'</div><div class="k">Completed visits</div></div>'
+     + '<div class="stat"><div class="v">'+mCount+'</div><div class="k">This month</div></div>'
+     + '<div class="stat"><div class="v">'+Object.keys(storeSet).length+'</div><div class="k">Stores serviced</div></div>'
+     + '</div>';
+
+  // filters
+  var cities = {}; pms.forEach(function(p){ var c=p.city||(assets[p.asset_id]||{}).city; if(c) cities[c]=1; });
+  var cityOpts = '<option value="">All cities</option>'+Object.keys(cities).sort().map(function(c){ return '<option value="'+esc(c)+'"'+(c===fCity?' selected':'')+'>'+esc(c)+'</option>'; }).join('');
+  var months = {}; pms.forEach(function(p){ var m=monthKey(p.pm_date); if(m) months[m]=1; });
+  var monthOpts = '<option value="">All months</option>'+Object.keys(months).sort().reverse().map(function(m){ return '<option value="'+esc(m)+'"'+(m===fMonth?' selected':'')+'>'+esc(monthLabel(m))+'</option>'; }).join('');
+  h += '<div class="filters">'
+     + '<div class="fg" style="flex:1;min-width:220px"><label class="f">Search</label><input type="search" id="f_search" placeholder="Store, city, serial, tech…" value="'+esc(fSearch)+'" oninput="setF(\'search\',this.value)" style="width:100%"></div>'
+     + '<div class="fg"><label class="f">City</label><select onchange="setF(\'city\',this.value)">'+cityOpts+'</select></div>'
+     + '<div class="fg"><label class="f">Month</label><select onchange="setF(\'month\',this.value)">'+monthOpts+'</select></div>'
+     + '</div>';
+
+  if(!list.length){ h += '<div class="empty">No completed calls match your filters.</div>'; }
+  else {
+    // group by month
+    var groups={}, order=[];
+    list.forEach(function(p){ var k=monthKey(p.pm_date); if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(p); });
+    order.forEach(function(k){
+      h += '<div class="grp-h">'+esc(monthLabel(k))+'<span class="ct">'+groups[k].length+'</span></div><div class="grid">';
+      groups[k].forEach(function(p){
+        var a = assets[p.asset_id]||{};
+        var nPhotos = Array.isArray(p.photo_paths)?p.photo_paths.length:0;
+        h += '<button class="call" onclick="openCall('+p.id+')">'
+           + '<div class="st">'+esc(p.store||a.store||('Asset '+p.asset_id))+'</div>'
+           + '<div class="ct">'+esc([p.city||a.city, a.state].filter(Boolean).join(', ')||'')+'</div>'
+           + '<div class="meta">'
+           + '<span class="pill gn">✓ Completed</span>'
+           + (nPhotos?'<span class="pill ac">📷 '+nPhotos+'</span>':'')
+           + (p.pdf_path?'<span class="pill">📄 Report</span>':'')
+           + (p.prev_comp?'<span class="pill dim">Prior</span>':'')
+           + '</div>'
+           + '<div class="dt">'+esc(fmtDate(p.pm_date))+' · S/N '+esc(p.serial||a.serial||'—')+'</div>'
+           + '</button>';
+      });
+      h += '</div>';
+    });
+  }
+  h += '</div>';
+  app.innerHTML = h;
+}
+
+// ── detail modal ──
+function openCall(id){
+  var p = pms.find(function(x){ return x.id===id; });
+  if(!p) return;
+  var a = assets[p.asset_id]||{};
+  var fd = p.form_data || {};
+  var m = document.getElementById('modal');
+
+  var h = '<div class="ov" onclick="if(event.target===this)closeCall()"><div class="modal">';
+  h += '<div class="mh"><div><h2>'+esc(p.store||a.store||('Asset '+p.asset_id))+'</h2>'
+     + '<div class="addr">'+esc([a.address, p.city||a.city, a.state, a.zip].filter(Boolean).join(', '))+'</div></div>'
+     + '<button class="x" onclick="closeCall()">✕</button></div>';
+  h += '<div class="mb">';
+
+  // key facts
+  h += '<div class="kv">'
+     + kv('Service date', fmtDate(p.pm_date))
+     + kv('Equipment', [a.manufacturer,a.model].filter(Boolean).join(' ')||'—')
+     + kv('Serial #', p.serial||a.serial||'—')
+     + kv('Technician', p.tech_name||'—')
+     + kv('Company', p.service_company||'—')
+     + (fd.intTemp?kv('Interior temp', fd.intTemp):'')
+     + '</div>';
+
+  if (p.prev_comp){
+    h += '<div class="notes" style="color:var(--tx2)">This visit was recorded as previously completed — no on-site checklist or report was captured.</div>';
+  } else {
+    // checklist
+    var anyChecklist = CHECK_GROUPS.some(function(g){ return g.keys.some(function(kk){ return fd[kk[0]]; }); });
+    if (anyChecklist){
+      CHECK_GROUPS.forEach(function(g){
+        var done = g.keys.filter(function(kk){ return fd[kk[0]]; });
+        if(!done.length) return;
+        h += '<div class="sec-h">'+esc(g.h)+'</div><div class="chks">';
+        g.keys.forEach(function(kk){
+          var on = !!fd[kk[0]];
+          if(!on) return;
+          var label = kk[1];
+          if(kk[0]==='otherLoc' && fd.otherLocText) label += ' — '+fd.otherLocText;
+          h += '<div class="chk"><span class="b">✓</span>'+esc(label)+'</div>';
+        });
+        h += '</div>';
+      });
+    }
+    if (fd.sp1 || fd.voltage){
+      h += '<div class="sec-h">Readings</div><div class="kv">'
+         + (fd.sp1?kv('Set point 1', fd.sp1):'')
+         + (fd.voltage?kv('Voltage', fd.voltage):'')
+         + '</div>';
+    }
+    if (fd.comments){
+      h += '<div class="sec-h">Comments</div><div class="notes">'+esc(fd.comments)+'</div>';
+    }
+  }
+
+  // photos
+  if (Array.isArray(p.photo_paths) && p.photo_paths.length){
+    h += '<div class="sec-h">Photos ('+p.photo_paths.length+')</div><div class="photos">';
+    p.photo_paths.forEach(function(pp){
+      var u = photoUrl(pp);
+      h += '<img src="'+esc(u)+'" loading="lazy" onclick="openLb(\''+esc(u).replace(/'/g,"\\'")+'\')">';
+    });
+    h += '</div>';
+  }
+
+  // report
+  if (p.pdf_path){
+    h += '<div style="margin-top:20px"><a class="btn" href="'+esc(pdfUrl(p.pdf_path))+'" target="_blank" rel="noopener">📄 View signed report (PDF)</a></div>';
+  }
+
+  h += '</div></div></div>';
+  m.innerHTML = h;
+  document.body.style.overflow='hidden';
+}
+function closeCall(){ document.getElementById('modal').innerHTML=''; document.body.style.overflow=''; }
+function kv(k,v){ return '<div class="i"><div class="k">'+esc(k)+'</div><div class="v">'+esc(v)+'</div></div>'; }
+
+// ── lightbox ──
+function openLb(u){ document.getElementById('lb').innerHTML='<div class="lb" onclick="closeLb()"><span class="x">✕</span><img src="'+esc(u)+'"></div>'; }
+function closeLb(){ document.getElementById('lb').innerHTML=''; }
+
+init();
+</script>
+</body>
+</html>

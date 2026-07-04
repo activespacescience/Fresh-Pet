@@ -123,13 +123,25 @@ window.addEventListener('storage', function(e){ if(e&&e.key==='apbg_theme') appl
 // ── state ──
 var screen = 'loading';     // loading | login | denied | app
 var user = null, profile = null;
-var tab = 'routes';          // routes | payments
+var tab = 'routes';          // routes | payments | billing
 var techs = [], assets = [], assignments = [], payouts = [];
 var routeTech = '';          // selected tech email in Routes
 var routeStops = [];         // working list [{asset_id, asset}] for selected tech
 var addSearch = '';
 var payWeek = '';            // selected week_start
 var saving = false;
+
+// ── Billing ──
+var BILL_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-invoice';
+var completedPMs = [];        // all completed_pms rows
+var billSel = {};             // { id: true } selected for invoicing
+var billRate = 30;            // $ per PM (Freshpet default)
+var billRecipient = '';       // invoice email recipient
+var billSearch = '';
+var billShowBilled = false;
+var billBusy = false;
+var billPreview = null;       // preview result
+var billResult = null;        // create result
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
@@ -162,9 +174,11 @@ async function loadAll(){
     sb.from('tech_profiles').select('*').order('role').order('email'),
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
-    sb.from('payouts').select('*').order('week_start', { ascending:false })
+    sb.from('payouts').select('*').order('week_start', { ascending:false }),
+    sb.from('completed_pms').select('id,store,serial,city,pm_date,tech_name,prev_comp,billed,invoice_doc_number,bill_amount').order('pm_date', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
+  completedPMs = r[4].data || [];
   if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
 }
 function assetById(id){ return assets.find(function(a){ return a.id===id; }); }
@@ -231,8 +245,9 @@ function render(){
   h += '<div class="tabs">'
      + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">🗺️ Routes</button>'
      + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">💰 Payments</button>'
+     + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">🧾 Freshpet Billing</button>'
      + '</div>';
-  h += tab==='routes' ? renderRoutes() : renderPayments();
+  h += tab==='routes' ? renderRoutes() : (tab==='payments' ? renderPayments() : renderBilling());
   h += '</div>';
   app.innerHTML = h;
 }
@@ -336,6 +351,154 @@ function renderPayments(){
        + '<td><button class="btn o sm" onclick="saveRate(\''+esc(t.email)+'\', document.getElementById(\'rate_'+esc(t.email)+'\').value)">Save</button></td></tr>';
   });
   h += '</tbody></table></div></div>';
+  return h;
+}
+
+// ═══ Billing (Freshpet) ═══
+async function billToken(){ var { data:{ session } } = await sb.auth.getSession(); return session && session.access_token; }
+function billableList(){
+  var q = billSearch.trim().toLowerCase();
+  return completedPMs.filter(function(p){
+    if (p.prev_comp) return false;                 // done elsewhere — never billed
+    if (!billShowBilled && p.billed) return false;
+    if (!q) return true;
+    return ((p.store||'')+' '+(p.city||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
+  });
+}
+function toggleBill(id){ if(billSel[id]) delete billSel[id]; else billSel[id]=true; billPreview=null; render(); }
+function selectAllBill(){
+  var list = billableList().filter(function(p){ return !p.billed; });
+  var allSel = list.length && list.every(function(p){ return billSel[p.id]; });
+  if (allSel) { list.forEach(function(p){ delete billSel[p.id]; }); }
+  else { list.forEach(function(p){ billSel[p.id]=true; }); }
+  billPreview=null; render();
+}
+function selectedIds(){ return Object.keys(billSel).filter(function(k){ return billSel[k]; }).map(Number); }
+
+async function grantPortal(){
+  var el = document.getElementById('fp_email');
+  var email = (el && el.value || '').trim().toLowerCase();
+  if(!email || email.indexOf('@')<0) return toast('Enter a valid email','err');
+  var existing = techs.find(function(t){ return (t.email||'').toLowerCase()===email; });
+  var res = existing
+    ? await sb.from('tech_profiles').update({ role:'freshpet' }).eq('email', existing.email)
+    : await sb.from('tech_profiles').insert({ email:email, name:email.split('@')[0], role:'freshpet' });
+  if(res.error) return toast('Failed: '+res.error.message,'err');
+  await loadAll(); toast('Portal access granted to '+email,'ok'); render();
+}
+async function revokePortal(email){
+  if(!confirm('Remove Freshpet portal access for '+email+'?')) return;
+  var { error } = await sb.from('tech_profiles').delete().eq('email', email);
+  if(error) return toast('Failed: '+error.message,'err');
+  await loadAll(); toast('Access removed for '+email,'ok'); render();
+}
+
+async function previewInvoice(){
+  var ids = selectedIds();
+  if(!ids.length) return toast('Select at least one completed PM','err');
+  billBusy=true; billPreview=null; billResult=null; render();
+  try{
+    var token = await billToken();
+    var res = await fetch(BILL_FN, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body: JSON.stringify({ mode:'preview', pmIds:ids, rate:Number(billRate)||30 }) });
+    var j = await res.json();
+    if(!res.ok) throw new Error(j.error || ('HTTP '+res.status));
+    billPreview = j;
+  }catch(e){ toast('Preview failed: '+e.message,'err'); }
+  billBusy=false; render();
+}
+async function createInvoice(){
+  var ids = selectedIds();
+  if(!ids.length) return toast('Select at least one completed PM','err');
+  var n = ids.length, rate = Number(billRate)||30;
+  if(!confirm('Create a QuickBooks invoice to FRESH PET for '+n+' PM'+(n===1?'':'s')+' @ '+money(rate)+' = '+money(n*rate)+'?\n\nThis posts a real invoice in QBO and marks these PMs billed.')) return;
+  billBusy=true; billResult=null; render();
+  try{
+    var token = await billToken();
+    var res = await fetch(BILL_FN, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body: JSON.stringify({ mode:'create', pmIds:ids, rate:rate, recipientEmail:(billRecipient||'').trim() }) });
+    var j = await res.json();
+    if(!res.ok) throw new Error(j.error || ('HTTP '+res.status));
+    billResult = j; billSel = {}; billPreview = null;
+    await loadAll();
+    toast('Invoice #'+(j.invoice&&j.invoice.docNumber)+' created'+(j.emailed?' + emailed':''),'ok');
+  }catch(e){ toast('Create failed: '+e.message,'err'); }
+  billBusy=false; render();
+}
+
+function renderBilling(){
+  var h = '';
+  // ── Portal access ──
+  var viewers = techs.filter(function(t){ return t.role==='freshpet'; });
+  h += '<div class="card"><h3>Freshpet portal access</h3><div class="hint">Grant a Freshpet contact read-only access to the completed-calls portal at <span class="mono">/portal</span>. They sign in (Google or email) and see only completed visits, photos, and signed reports — never routes, pay, or the field app.</div>';
+  h += '<div class="row" style="align-items:flex-end"><div class="col" style="max-width:420px"><label class="f">Email</label><input type="text" id="fp_email" placeholder="name@freshpet.com"></div><div style="flex:none"><button class="btn" onclick="grantPortal()">+ Grant access</button></div></div>';
+  if(viewers.length){
+    h += '<div style="overflow-x:auto;margin-top:14px"><table><thead><tr><th>Portal viewer</th><th></th></tr></thead><tbody>';
+    viewers.forEach(function(t){
+      h += '<tr><td>'+esc(t.name||t.email)+'<div class="muted" style="font-size:.72rem">'+esc(t.email)+'</div></td>'
+         + '<td style="text-align:right"><button class="btn o sm" onclick="revokePortal(\''+esc(t.email)+'\')">Remove</button></td></tr>';
+    });
+    h += '</tbody></table></div>';
+  } else { h += '<div class="empty" style="padding:20px">No portal viewers yet.</div>'; }
+  h += '</div>';
+
+  // ── Invoice Freshpet ──
+  var list = billableList();
+  var sel = selectedIds();
+  var rate = Number(billRate)||30;
+  h += '<div class="card"><h3>Bill completed PMs to Freshpet</h3><div class="hint">Select completed service PMs, then create a QuickBooks invoice to <strong>FRESH PET</strong> (a single summary line, qty × rate) with a per-visit report attached. <span class="mono">PREV COMP</span> visits are excluded (done elsewhere).</div>';
+
+  h += '<div class="row" style="align-items:flex-end">'
+     + '<div style="flex:none"><label class="f">Rate / PM</label><input type="number" step="0.01" min="0" value="'+rate+'" oninput="billRate=this.value;billPreview=null" style="max-width:120px;text-align:right"></div>'
+     + '<div class="col" style="max-width:320px"><label class="f">Invoice email to (optional)</label><input type="text" id="fp_recipient" placeholder="billing@freshpet.com" value="'+esc(billRecipient)+'" oninput="billRecipient=this.value"></div>'
+     + '<div class="col"><label class="f">Search</label><input type="search" placeholder="Store, city, serial, tech…" value="'+esc(billSearch)+'" oninput="billSearch=this.value;render();this.focus()"></div>'
+     + '</div>';
+
+  h += '<div style="display:flex;align-items:center;gap:14px;margin:14px 0 8px;flex-wrap:wrap">'
+     + '<span class="muted">'+sel.length+' selected · '+money(sel.length*rate)+'</span>'
+     + '<label class="muted" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" '+(billShowBilled?'checked':'')+' onchange="billShowBilled=this.checked;render()"> Show already-billed</label>'
+     + '<div style="margin-left:auto;display:flex;gap:8px">'
+     + '<button class="btn o sm" onclick="previewInvoice()" '+(billBusy||!sel.length?'disabled':'')+'>👁 Preview</button>'
+     + '<button class="btn gn sm" onclick="createInvoice()" '+(billBusy||!sel.length?'disabled':'')+'>'+(billBusy?'Working…':'🧾 Create QBO invoice')+'</button>'
+     + '</div></div>';
+
+  if(billResult){
+    var inv = billResult.invoice||{};
+    h += '<div class="card" style="background:var(--sf2);border-color:var(--gn);margin:0 0 14px">'
+       + '<h3 style="color:var(--gn)">✓ Invoice #'+esc(inv.docNumber)+' created</h3>'
+       + '<div class="muted" style="font-size:.85rem">'+billResult.billedCount+' PM(s) · '+money(inv.total)+' · item '+esc(inv.itemUsed)+' · '+(billResult.emailed?'emailed to '+esc(billRecipient):'not emailed')+'</div>'
+       + (inv.invoiceLink?'<div style="margin-top:8px"><a class="btn sm" href="'+esc(inv.invoiceLink)+'" target="_blank">Open in QBO →</a></div>':'')
+       + ((billResult.warnings&&billResult.warnings.length)?'<div style="margin-top:10px;color:var(--am);font-size:.82rem">⚠ '+billResult.warnings.map(esc).join('<br>⚠ ')+'</div>':'')
+       + '</div>';
+  }
+  if(billPreview){
+    h += '<div class="card" style="background:var(--sf2);margin:0 0 14px"><h3>Preview</h3><div class="muted" style="font-size:.85rem">'+billPreview.count+' billable PM(s) @ '+money(billPreview.rate)+' = <strong style="color:var(--tx)">'+money(billPreview.total)+'</strong>'+(billPreview.periodLabel?' · '+esc(billPreview.periodLabel):'')+(billPreview.skipped&&billPreview.skipped.length?' · '+billPreview.skipped.length+' skipped':'')+'</div></div>';
+  }
+
+  if(!list.length){ h += '<div class="empty">No '+(billShowBilled?'':'unbilled ')+'completed PMs'+(billSearch?' match your search':'')+'.</div>'; }
+  else {
+    var selectableCount = list.filter(function(p){ return !p.billed; }).length;
+    h += '<div style="overflow-x:auto"><table><thead><tr>'
+       + '<th style="width:34px"><button class="btn o sm" onclick="selectAllBill()" title="Select all unbilled" style="padding:3px 8px">✓ all</button></th>'
+       + '<th>Store</th><th class="hide">City</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Status</th></tr></thead><tbody>';
+    list.forEach(function(p){
+      var checked = !!billSel[p.id];
+      var statusCell = p.billed
+        ? '<span class="pill gn">Inv #'+esc(p.invoice_doc_number||'—')+'</span>'
+        : '<span class="pill am">Unbilled</span>';
+      h += '<tr>'
+         + '<td>'+(p.billed?'':'<input type="checkbox" '+(checked?'checked':'')+' onclick="toggleBill('+p.id+')">')+'</td>'
+         + '<td>'+esc(p.store||'')+'</td>'
+         + '<td class="hide">'+esc(p.city||'')+'</td>'
+         + '<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
+         + '<td>'+esc(p.pm_date||'')+'</td>'
+         + '<td class="hide">'+esc(p.tech_name||'')+'</td>'
+         + '<td>'+statusCell+'</td></tr>';
+    });
+    h += '</tbody></table></div>';
+    h += '<div class="muted" style="margin-top:8px;font-size:.78rem">'+selectableCount+' unbilled shown.</div>';
+  }
+  h += '</div>';
   return h;
 }
 
