@@ -128,6 +128,7 @@ var techs = [], assets = [], assignments = [], payouts = [];
 var routeTech = '';          // selected tech email in Routes
 var routeStops = [];         // working list [{asset_id, asset}] for selected tech
 var addSearch = '';
+var addSel = {};             // multi-select in the Add-stops list: { asset_id: true }
 var payWeek = '';            // selected week_start
 var saving = false;
 
@@ -186,7 +187,7 @@ function techName(email){ var t=techs.find(function(x){ return x.email===email; 
 
 // ── Routes ──
 function selectRouteTech(email){
-  routeTech = email; addSearch=''; routeStops=[];
+  routeTech = email; addSearch=''; routeStops=[]; addSel={};
   if (email){
     assignments.filter(function(a){ return a.tech_email===email; })
       .sort(function(a,b){ return (a.stop_order||0)-(b.stop_order||0); })
@@ -197,6 +198,29 @@ function selectRouteTech(email){
 function moveStop(i, dir){ var j=i+dir; if(j<0||j>=routeStops.length) return; var t=routeStops[i]; routeStops[i]=routeStops[j]; routeStops[j]=t; render(); }
 function removeStop(i){ routeStops.splice(i,1); render(); }
 function addStop(id){ if(routeStops.some(function(s){return s.asset_id===id;})) return; var as=assetById(id); if(as){ routeStops.push({asset_id:id, asset:as}); render(); } }
+function toggleAddSel(id){ if(addSel[id]) delete addSel[id]; else addSel[id]=true; render(); }
+function toggleAddSelAll(){
+  var q = addSearch.trim().toLowerCase();
+  var avail = assets.filter(function(a){
+    if(routeStops.some(function(s){return s.asset_id===a.id;})) return false;
+    if(!q) return true;
+    return ((a.store||'')+' '+(a.city||'')+' '+(a.address||'')+' '+(a.serial||'')).toLowerCase().indexOf(q)>=0;
+  });
+  var allSel = avail.length>0 && avail.every(function(a){ return addSel[a.id]; });
+  avail.forEach(function(a){ if(allSel) delete addSel[a.id]; else addSel[a.id]=true; });
+  render();
+}
+function addSelectedStops(){
+  var ids = Object.keys(addSel).filter(function(k){ return addSel[k]; }).map(Number);
+  var added = 0;
+  ids.forEach(function(id){
+    if(routeStops.some(function(s){return s.asset_id===id;})) return;
+    var as=assetById(id); if(as){ routeStops.push({asset_id:id, asset:as}); added++; }
+  });
+  addSel = {};
+  toast(added+' stop(s) added — Save route to apply','ok');
+  render();
+}
 async function saveRoute(){
   if(!routeTech) return;
   saving=true; render();
@@ -289,8 +313,16 @@ function renderRoutes(){
     if(!q) return true;
     return ((a.store||'')+' '+(a.city||'')+' '+(a.address||'')+' '+(a.serial||'')).toLowerCase().indexOf(q)>=0;
   });
-  h += '<div class="col"><div class="card"><h3>Add stops</h3><div class="hint">Tap to add. A 🔵 dot means the store is already on another tech\'s route.</div>';
+  var addSelCount = Object.keys(addSel).filter(function(k){ return addSel[k]; }).length;
+  var availIds = avail.map(function(a){ return a.id; });
+  var allAvailSel = availIds.length>0 && availIds.every(function(id){ return addSel[id]; });
+  h += '<div class="col"><div class="card"><h3>Add stops</h3><div class="hint">Tick multiple stores and add them together, or use the row + button for one. A 🔵 dot means the store is already on another tech\'s route.</div>';
   h += '<input type="search" placeholder="Search store, city, address, serial…" value="'+esc(addSearch)+'" oninput="addSearch=this.value;render();this.focus()">';
+  h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 4px">';
+  if(availIds.length){ h += '<button class="btn o sm" onclick="toggleAddSelAll()">'+(allAvailSel?'☑ Deselect shown':'☐ Select all shown')+'</button>'; }
+  h += '<span class="muted" style="font-size:.8rem">'+addSelCount+' selected</span>';
+  if(addSelCount){ h += '<button class="btn sm" style="margin-left:auto" onclick="addSelectedStops()">➕ Add '+addSelCount+' selected</button><button class="btn o sm" onclick="addSel={};render()">Clear</button>'; }
+  h += '</div>';
   h += '<div class="addlist">';
   if(!avail.length){ h += '<div class="empty">No matching stores.</div>'; }
   else {
@@ -299,7 +331,8 @@ function renderRoutes(){
       h += '<div class="grp-h">'+esc(city)+'</div>';
       byCity[city].forEach(function(a){
         var other = assignedIds[a.id] && assignedIds[a.id]!==routeTech;
-        h += '<div class="addrow"><div class="meta"><div class="s" style="font-weight:700;font-size:.86rem">'+(other?'🔵 ':'')+esc(a.store||a.serial)+'</div><div class="a muted" style="font-size:.74rem">'+esc([a.address,a.city].filter(Boolean).join(', '))+(other?' · on '+esc(techName(assignedIds[a.id])):'')+'</div></div><button class="btn sm" onclick="addStop('+a.id+')">+ Add</button></div>';
+        var ck = !!addSel[a.id];
+        h += '<div class="addrow"><input type="checkbox" style="width:18px;height:18px;flex:none" onclick="toggleAddSel('+a.id+')"'+(ck?' checked':'')+'><div class="meta"><div class="s" style="font-weight:700;font-size:.86rem">'+(other?'🔵 ':'')+esc(a.store||a.serial)+'</div><div class="a muted" style="font-size:.74rem">'+esc([a.address,a.city].filter(Boolean).join(', '))+(other?' · on '+esc(techName(assignedIds[a.id])):'')+'</div></div><button class="btn sm" onclick="addStop('+a.id+')">+ Add</button></div>';
       });
     });
   }
