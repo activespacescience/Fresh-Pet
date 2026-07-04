@@ -250,7 +250,15 @@ async function afterLogin(){
   var role = profile && profile.role;
   if (role !== 'freshpet' && role !== 'admin'){ screen='denied'; render(); return; }
   await loadData();
+  applyDeepLink();
   screen='app'; render();
+}
+// Email links land here as /portal?invoice=<doc> — open straight to that invoice.
+function applyDeepLink(){
+  try {
+    var q = new URLSearchParams(window.location.search).get('invoice');
+    if (q){ groupBy='invoice'; fInvoice=q; expanded[q]=true; }
+  } catch(e){}
 }
 async function signInGoogle(){
   var { error } = await sb.auth.signInWithOAuth({ provider:'google', options:{ redirectTo: window.location.href.split('#')[0] } });
