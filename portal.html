@@ -60,6 +60,7 @@ select:focus,input:focus{border-color:var(--ac)}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:700;letter-spacing:.02em;padding:3px 9px;border-radius:999px;border:1px solid var(--bd);color:var(--tx2)}
 .pill.gn{color:var(--gn);border-color:var(--gn);background:rgba(52,211,153,.1)}
 .pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(59,130,246,.1)}
+.pill.iv{color:var(--am);border-color:var(--am);background:rgba(251,191,36,.12)}
 .pill.dim{color:var(--dim)}
 .call .dt{font-size:.78rem;color:var(--tx2);margin-top:9px;font-family:'JetBrains Mono',monospace}
 .empty{padding:44px 16px;text-align:center;color:var(--tx2);font-size:.95rem}
@@ -129,7 +130,7 @@ var CHECK_GROUPS = [
 var screen = 'loading';   // loading | login | denied | app
 var user = null, profile = null;
 var pms = [], assets = {};
-var fSearch = '', fCity = '', fMonth = '';
+var fSearch = '', fCity = '', fMonth = '', fInvoice = '';
 var authBusy = false;
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
@@ -190,12 +191,14 @@ function filtered(){
   return pms.filter(function(p){
     if (fCity && (p.city||(assets[p.asset_id]||{}).city||'')!==fCity) return false;
     if (fMonth && monthKey(p.pm_date)!==fMonth) return false;
+    if (fInvoice==='__none' && p.billed) return false;
+    if (fInvoice && fInvoice!=='__none' && String(p.invoice_doc_number||'')!==fInvoice) return false;
     if (!q) return true;
     var a = assets[p.asset_id]||{};
     return ((p.store||'')+' '+(p.city||a.city||'')+' '+(p.serial||'')+' '+(a.address||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
   });
 }
-function setF(k,v){ if(k==='search')fSearch=v; if(k==='city')fCity=v; if(k==='month')fMonth=v; render(); if(k==='search'){ var el=document.getElementById('f_search'); if(el){ el.focus(); var n=el.value.length; el.setSelectionRange(n,n); } } }
+function setF(k,v){ if(k==='search')fSearch=v; if(k==='city')fCity=v; if(k==='month')fMonth=v; if(k==='invoice')fInvoice=v; render(); if(k==='search'){ var el=document.getElementById('f_search'); if(el){ el.focus(); var n=el.value.length; el.setSelectionRange(n,n); } } }
 
 // ═══ render ═══
 function render(){
@@ -228,10 +231,12 @@ function render(){
   var thisMonth = monthKey(new Date().toISOString().slice(0,10));
   var mCount = pms.filter(function(p){ return monthKey(p.pm_date)===thisMonth; }).length;
   var storeSet = {}; pms.forEach(function(p){ storeSet[p.store||p.asset_id]=1; });
+  var invoicedCount = pms.filter(function(p){ return p.billed; }).length;
   h += '<div class="stats">'
      + '<div class="stat"><div class="v">'+pms.length+'</div><div class="k">Completed visits</div></div>'
      + '<div class="stat"><div class="v">'+mCount+'</div><div class="k">This month</div></div>'
      + '<div class="stat"><div class="v">'+Object.keys(storeSet).length+'</div><div class="k">Stores serviced</div></div>'
+     + '<div class="stat"><div class="v">'+invoicedCount+'</div><div class="k">Invoiced visits</div></div>'
      + '</div>';
 
   // filters
@@ -239,8 +244,13 @@ function render(){
   var cityOpts = '<option value="">All cities</option>'+Object.keys(cities).sort().map(function(c){ return '<option value="'+esc(c)+'"'+(c===fCity?' selected':'')+'>'+esc(c)+'</option>'; }).join('');
   var months = {}; pms.forEach(function(p){ var m=monthKey(p.pm_date); if(m) months[m]=1; });
   var monthOpts = '<option value="">All months</option>'+Object.keys(months).sort().reverse().map(function(m){ return '<option value="'+esc(m)+'"'+(m===fMonth?' selected':'')+'>'+esc(monthLabel(m))+'</option>'; }).join('');
+  var invs = {}; pms.forEach(function(p){ if(p.billed && p.invoice_doc_number) invs[p.invoice_doc_number]=1; });
+  var invOpts = '<option value="">All visits</option>'
+    + Object.keys(invs).sort().map(function(iv){ return '<option value="'+esc(iv)+'"'+(iv===fInvoice?' selected':'')+'>Invoice #'+esc(iv)+'</option>'; }).join('')
+    + '<option value="__none"'+(fInvoice==='__none'?' selected':'')+'>Not yet invoiced</option>';
   h += '<div class="filters">'
-     + '<div class="fg" style="flex:1;min-width:220px"><label class="f">Search</label><input type="search" id="f_search" placeholder="Store, city, serial, tech…" value="'+esc(fSearch)+'" oninput="setF(\'search\',this.value)" style="width:100%"></div>'
+     + '<div class="fg" style="flex:1;min-width:200px"><label class="f">Search</label><input type="search" id="f_search" placeholder="Store, city, serial, tech…" value="'+esc(fSearch)+'" oninput="setF(\'search\',this.value)" style="width:100%"></div>'
+     + '<div class="fg"><label class="f">Invoice</label><select onchange="setF(\'invoice\',this.value)">'+invOpts+'</select></div>'
      + '<div class="fg"><label class="f">City</label><select onchange="setF(\'city\',this.value)">'+cityOpts+'</select></div>'
      + '<div class="fg"><label class="f">Month</label><select onchange="setF(\'month\',this.value)">'+monthOpts+'</select></div>'
      + '</div>';
@@ -260,6 +270,7 @@ function render(){
            + '<div class="ct">'+esc([p.city||a.city, a.state].filter(Boolean).join(', ')||'')+'</div>'
            + '<div class="meta">'
            + '<span class="pill gn">✓ Completed</span>'
+           + (p.billed?'<span class="pill iv">🧾 Invoice #'+esc(p.invoice_doc_number||'—')+'</span>':'')
            + (nPhotos?'<span class="pill ac">📷 '+nPhotos+'</span>':'')
            + (p.pdf_path?'<span class="pill">📄 Report</span>':'')
            + (p.prev_comp?'<span class="pill dim">Prior</span>':'')
@@ -296,6 +307,8 @@ function openCall(id){
      + kv('Technician', p.tech_name||'—')
      + kv('Company', p.service_company||'—')
      + (fd.intTemp?kv('Interior temp', fd.intTemp):'')
+     + (p.billed?kv('Invoice #', p.invoice_doc_number||'—'):'')
+     + (p.billed&&p.invoiced_at?kv('Invoiced', fmtDate((p.invoiced_at||'').slice(0,10))):'')
      + '</div>';
 
   if (p.prev_comp){
