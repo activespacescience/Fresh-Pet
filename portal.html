@@ -50,6 +50,23 @@ select:focus,input:focus{border-color:var(--ac)}
 /* Group header */
 .grp-h{font-size:.8rem;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--tx2);margin:22px 0 10px;display:flex;align-items:center;gap:10px}
 .grp-h .ct{font-size:.68rem;font-weight:700;color:var(--dim);background:var(--sf2);border:1px solid var(--bd);border-radius:999px;padding:2px 9px}
+/* Group-by segmented toggle */
+.seg{display:inline-flex;border:1px solid var(--bd);border-radius:10px;overflow:hidden}
+.seg button{padding:10px 14px;font-size:.84rem;font-weight:700;color:var(--tx2);background:var(--sf)}
+.seg button.on{background:var(--ac);color:#fff}
+.seg button:not(.on):hover{color:var(--tx)}
+/* Collapsible invoice sections */
+.inv{margin:12px 0}
+.inv-h{display:flex;align-items:center;gap:12px;padding:14px 16px;background:var(--sf);border:1px solid var(--bd);border-radius:14px;cursor:pointer;box-shadow:var(--shadow)}
+.inv-h.open{border-color:var(--bd2)}
+.inv-h:hover{border-color:var(--bd2)}
+.inv-h .chev{font-size:.9rem;color:var(--tx2);width:14px;flex:none}
+.inv-h .inv-t{flex:1;min-width:0}
+.inv-h .ttl{font-weight:800;font-size:1rem}
+.inv-h .sub{font-size:.78rem;color:var(--tx2);margin-top:1px;font-family:'JetBrains Mono',monospace}
+.inv-pdf{flex:none;font-size:.78rem;font-weight:700;color:var(--ac);border:1px solid var(--ac);border-radius:9px;padding:7px 11px;background:rgba(59,130,246,.08)}
+.inv-pdf:hover{background:rgba(59,130,246,.16)}
+.inv-nopdf{flex:none;font-size:.72rem;color:var(--dim)}
 /* Call cards */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
 .call{background:var(--sf);border:1px solid var(--bd);border-radius:14px;padding:15px 16px;box-shadow:var(--shadow);cursor:pointer;transition:border-color .15s,transform .1s;text-align:left;width:100%}
@@ -131,12 +148,88 @@ var screen = 'loading';   // loading | login | denied | app
 var user = null, profile = null;
 var pms = [], assets = {};
 var fSearch = '', fCity = '', fMonth = '', fInvoice = '';
+var groupBy = 'invoice';   // 'invoice' | 'month'
+var expanded = {};         // { sectionKey: true } — invoice sections start collapsed
 var authBusy = false;
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function toast(msg, type){ var t=document.getElementById('toast'); t.innerHTML='<div class="toast '+(type||'info')+'">'+esc(msg)+'</div>'; setTimeout(function(){ t.innerHTML=''; }, 3500); }
 function photoUrl(p){ return SUPA_URL + '/storage/v1/object/public/fp-photos/' + p; }
 function pdfUrl(p){ return SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + p; }
+function invoicePdfUrl(p){ return p && p.invoice_pdf_path ? SUPA_URL + '/storage/v1/object/public/fp-invoices/' + p.invoice_pdf_path : ''; }
+function money(n){ return '$' + Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2, maximumFractionDigits:2}); }
+function setGroupBy(g){ groupBy = g; render(); }
+function toggleSection(k){ if(expanded[k]) delete expanded[k]; else expanded[k]=true; render(); }
+
+function renderByMonth(list){
+  var groups={}, order=[];
+  list.forEach(function(p){ var k=monthKey(p.pm_date); if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(p); });
+  var h='';
+  order.forEach(function(k){
+    h += '<div class="grp-h">'+esc(monthLabel(k))+'<span class="ct">'+groups[k].length+'</span></div><div class="grid">';
+    groups[k].forEach(function(p){ h += callCard(p); });
+    h += '</div>';
+  });
+  return h;
+}
+
+function renderByInvoice(list){
+  var groups={}, keys=[];
+  list.forEach(function(p){
+    var k = (p.billed && p.invoice_doc_number) ? p.invoice_doc_number : '__none';
+    if(!groups[k]){ groups[k]=[]; keys.push(k); }
+    groups[k].push(p);
+  });
+  // Invoices first (numeric-desc), then "Not yet invoiced" last.
+  keys.sort(function(a,b){
+    if(a==='__none') return 1; if(b==='__none') return -1;
+    var na=Number(a), nb=Number(b);
+    if(!isNaN(na)&&!isNaN(nb)) return nb-na;
+    return String(b).localeCompare(String(a));
+  });
+  var touched = Object.keys(expanded).length>0;
+  var h='';
+  keys.forEach(function(k, idx){
+    var rows = groups[k];
+    var isNone = k==='__none';
+    var total = rows.reduce(function(s,p){ return s + Number(p.bill_amount||0); }, 0);
+    var dates = rows.map(function(p){ return p.invoiced_at||p.pm_date; }).filter(Boolean).sort();
+    var when = dates.length ? fmtDate((dates[dates.length-1]||'').slice(0,10)) : '';
+    var pdf = ''; for(var i=0;i<rows.length;i++){ if(rows[i].invoice_pdf_path){ pdf = invoicePdfUrl(rows[i]); break; } }
+    var open = expanded[k] || (!touched && idx===0);
+    var title = isNone ? 'Not yet invoiced' : ('Invoice #'+esc(k));
+    var meta = rows.length+' visit'+(rows.length===1?'':'s') + (isNone?'':' · '+money(total)) + (when&&!isNone?' · '+when:'');
+
+    h += '<div class="inv">';
+    h += '<div class="inv-h'+(open?' open':'')+'" onclick="toggleSection(\''+esc(String(k)).replace(/'/g,"\\'")+'\')">'
+       + '<span class="chev">'+(open?'▾':'▸')+'</span>'
+       + '<div class="inv-t"><div class="ttl">'+title+'</div><div class="sub">'+meta+'</div></div>'
+       + (pdf ? '<a class="inv-pdf" href="'+esc(pdf)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📄 Invoice PDF</a>' : (isNone?'':'<span class="inv-nopdf">PDF pending</span>'))
+       + '</div>';
+    if(open){ h += '<div class="grid" style="margin-top:10px">'; rows.forEach(function(p){ h += callCard(p); }); h += '</div>'; }
+    h += '</div>';
+  });
+  return h;
+}
+
+// Reusable completed-call card.
+function callCard(p){
+  var a = assets[p.asset_id]||{};
+  var nPhotos = Array.isArray(p.photo_paths)?p.photo_paths.length:0;
+  return '<button class="call" onclick="openCall('+p.id+')">'
+    + '<div class="st">'+esc(p.store||a.store||('Asset '+p.asset_id))+'</div>'
+    + '<div class="ct">'+esc([p.city||a.city, a.state].filter(Boolean).join(', ')||'')+'</div>'
+    + '<div class="meta">'
+    + '<span class="pill gn">✓ Completed</span>'
+    + (p.billed?'<span class="pill iv">🧾 Invoice #'+esc(p.invoice_doc_number||'—')+'</span>':'')
+    + ((p.form_data&&p.form_data.legacy)?'<span class="pill dim">🗄 Legacy</span>':'')
+    + (nPhotos?'<span class="pill ac">📷 '+nPhotos+'</span>':'')
+    + (p.pdf_path?'<span class="pill">📄 Report</span>':'')
+    + (p.prev_comp?'<span class="pill dim">Prior</span>':'')
+    + '</div>'
+    + '<div class="dt">'+esc(fmtDate(p.pm_date))+' · S/N '+esc(p.serial||a.serial||'—')+'</div>'
+    + '</button>';
+}
 function fmtDate(d){ if(!d) return '—'; try{ return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(e){ return d; } }
 function monthKey(d){ return (d||'').slice(0,7); }
 function monthLabel(k){ if(!k) return 'Undated'; try{ return new Date(k+'-01T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'}); }catch(e){ return k; } }
@@ -253,35 +346,15 @@ function render(){
      + '<div class="fg"><label class="f">Invoice</label><select onchange="setF(\'invoice\',this.value)">'+invOpts+'</select></div>'
      + '<div class="fg"><label class="f">City</label><select onchange="setF(\'city\',this.value)">'+cityOpts+'</select></div>'
      + '<div class="fg"><label class="f">Month</label><select onchange="setF(\'month\',this.value)">'+monthOpts+'</select></div>'
+     + '<div class="fg"><label class="f">Group by</label><div class="seg">'
+       + '<button class="'+(groupBy==='invoice'?'on':'')+'" onclick="setGroupBy(\'invoice\')">Invoice</button>'
+       + '<button class="'+(groupBy==='month'?'on':'')+'" onclick="setGroupBy(\'month\')">Month</button>'
+       + '</div></div>'
      + '</div>';
 
   if(!list.length){ h += '<div class="empty">No completed calls match your filters.</div>'; }
-  else {
-    // group by month
-    var groups={}, order=[];
-    list.forEach(function(p){ var k=monthKey(p.pm_date); if(!groups[k]){ groups[k]=[]; order.push(k); } groups[k].push(p); });
-    order.forEach(function(k){
-      h += '<div class="grp-h">'+esc(monthLabel(k))+'<span class="ct">'+groups[k].length+'</span></div><div class="grid">';
-      groups[k].forEach(function(p){
-        var a = assets[p.asset_id]||{};
-        var nPhotos = Array.isArray(p.photo_paths)?p.photo_paths.length:0;
-        h += '<button class="call" onclick="openCall('+p.id+')">'
-           + '<div class="st">'+esc(p.store||a.store||('Asset '+p.asset_id))+'</div>'
-           + '<div class="ct">'+esc([p.city||a.city, a.state].filter(Boolean).join(', ')||'')+'</div>'
-           + '<div class="meta">'
-           + '<span class="pill gn">✓ Completed</span>'
-           + (p.billed?'<span class="pill iv">🧾 Invoice #'+esc(p.invoice_doc_number||'—')+'</span>':'')
-           + ((p.form_data&&p.form_data.legacy)?'<span class="pill dim">🗄 Legacy</span>':'')
-           + (nPhotos?'<span class="pill ac">📷 '+nPhotos+'</span>':'')
-           + (p.pdf_path?'<span class="pill">📄 Report</span>':'')
-           + (p.prev_comp?'<span class="pill dim">Prior</span>':'')
-           + '</div>'
-           + '<div class="dt">'+esc(fmtDate(p.pm_date))+' · S/N '+esc(p.serial||a.serial||'—')+'</div>'
-           + '</button>';
-      });
-      h += '</div>';
-    });
-  }
+  else if(groupBy==='invoice'){ h += renderByInvoice(list); }
+  else { h += renderByMonth(list); }
   h += '</div>';
   app.innerHTML = h;
 }
