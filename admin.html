@@ -89,6 +89,20 @@ th{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--tx
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace}
 tr.tot td{border-top:2px solid var(--bd);font-weight:800;border-bottom:none}
 .empty{padding:34px 16px;text-align:center;color:var(--tx2);font-size:.9rem}
+/* Overview tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:6px}
+.tile{background:var(--bg);border:1px solid var(--bd);border-radius:14px;padding:14px 16px}
+.tile .lb{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2)}
+.tile .v{font-size:1.6rem;font-weight:800;letter-spacing:-.02em;margin-top:5px;font-variant-numeric:tabular-nums}
+.tile .v.gn{color:var(--gn)}.tile .v.am{color:var(--am)}.tile .v.ac{color:var(--ac)}
+.tile .sub{font-size:.72rem;color:var(--tx2);margin-top:3px}
+.seg{display:inline-flex;border:1px solid var(--bd);border-radius:10px;overflow:hidden}
+.seg button{padding:7px 13px;font-size:.8rem;font-weight:700;color:var(--tx2);background:transparent}
+.seg button.on{background:var(--ac);color:#fff}
+.bar{height:7px;border-radius:999px;background:var(--sf2);overflow:hidden;min-width:70px}
+.bar>i{display:block;height:100%;background:var(--gn);border-radius:999px}
+.pill.rd{color:var(--rd);border-color:var(--rd);background:rgba(248,113,113,.1)}
+.pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(59,130,246,.1)}
 /* Login */
 .login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
 .login .box{background:var(--sf);border:1px solid var(--bd);border-radius:22px;padding:38px 32px;max-width:380px;width:100%;text-align:center;box-shadow:var(--shadow)}
@@ -123,13 +137,16 @@ window.addEventListener('storage', function(e){ if(e&&e.key==='apbg_theme') appl
 // ── state ──
 var screen = 'loading';     // loading | login | denied | app
 var user = null, profile = null;
-var tab = 'routes';          // routes | payments | billing
+var tab = 'overview';        // overview | routes | payments | billing
+var ovPeriod = 'all';        // Overview stop-completion window: all | month | prev
+var routePeriod = 'month';   // Routes done/pending window: month | prev | all
 var techs = [], assets = [], assignments = [], payouts = [];
 var routeTech = '';          // selected tech email in Routes
 var routeStops = [];         // working list [{asset_id, asset}] for selected tech
 var addSearch = '';
 var addSel = {};             // multi-select in the Add-stops list: { asset_id: true }
 var payWeek = '';            // selected week_start
+var payFrom = null, payTo = null; // Pay report date range (ISO 'YYYY-MM-DD'; '' = unbounded; null = uninitialised → defaults to this month)
 var saving = false;
 
 // ── Billing ──
@@ -179,7 +196,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_bill_ref').order('pm_date', { ascending:false })
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at').order('pm_date', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
@@ -289,15 +306,142 @@ function render(){
   }
   var h = '<div class="wrap">';
   h += '<div class="hd"><div><div class="logo">🐾 <span class="fp">Freshpet</span> Admin</div></div><div class="sub">Back office</div>'
-     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><a class="btn o sm" href="./">📱 Field app</a><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
+     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><a class="btn o sm" href="./portal" target="_blank" title="Open the Freshpet customer portal (view as they see it)">👁 Freshpet portal</a><a class="btn o sm" href="./">📱 Field app</a><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
   h += '<div class="tabs">'
+     + '<button class="tab '+(tab==='overview'?'on':'')+'" onclick="tab=\'overview\';render()">📊 Overview</button>'
      + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">🗺️ Routes</button>'
      + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">💰 Payments</button>'
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">🧾 Freshpet Billing</button>'
      + '</div>';
-  h += tab==='routes' ? renderRoutes() : (tab==='payments' ? renderPayments() : renderBilling());
+  h += tab==='overview' ? renderOverview()
+     : tab==='routes' ? renderRoutes()
+     : tab==='payments' ? renderPayments()
+     : renderBilling();
   h += '</div>';
   app.innerHTML = h;
+}
+
+// ═══ Overview (company-wide + per-contractor) ═══
+// Stops: "completed" / "remaining" are scoped to the selected period. Pay:
+// "paid out" / "owed" are cumulative — they reflect the full completed_pms
+// ledger, not a single period. Everything is attributed to the ROUTE OWNER of
+// each asset (not the login that recorded the PM): some contractors (e.g. Bill
+// Pace) have no field login of their own, so their stops are logged under
+// another account — but the work, completion and pay are still theirs.
+// Techs are paid a flat rate per completed PM; when a paid row has no stored
+// payout_amount and the tech has no per-PM rate, fall back to DEFAULT_PM_RATE.
+var DEFAULT_PM_RATE = 30;
+var MONTHS=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+function isoDate(d){ var p=function(n){ return (n<10?'0':'')+n; }; return d.getFullYear()+'-'+p(d.getMonth()+1)+'-'+p(d.getDate()); }
+function fmtDate(iso){ if(!iso) return ''; var p=String(iso).slice(0,10).split('-'); return MONTHS[(+p[1])-1]+' '+(+p[2]); }
+function periodBoundsOf(which){
+  if(which==='all') return { start:null, end:null, label:'All time' };
+  var now=new Date(), y=now.getFullYear(), m=now.getMonth();
+  if(which==='prev'){ m-=1; if(m<0){ m=11; y-=1; } }
+  var start=new Date(y,m,1), end=new Date(y,m+1,0);
+  return { start:isoDate(start), end:isoDate(end), label:MONTHS[m]+' '+y };
+}
+function periodBounds(){ return periodBoundsOf(ovPeriod); }
+function inPeriod(dateStr, b){ if(!b.start) return true; if(!dateStr) return false; var d=String(dateStr).slice(0,10); return d>=b.start && d<=b.end; }
+
+function computeOverview(){
+  var b = periodBounds();
+  var rateByEmail={}, hasLoginByEmail={};
+  techs.forEach(function(t){ rateByEmail[t.email]=t.pm_rate!=null?Number(t.pm_rate):null; hasLoginByEmail[t.email]=!!t.user_id; });
+  var rateFor=function(email){ return (email && rateByEmail[email]!=null) ? rateByEmail[email] : DEFAULT_PM_RATE; };
+  // owner (active route) of each asset — the attribution key for everything below
+  var ownerOf={}; assignments.forEach(function(a){ ownerOf[a.asset_id]=a.tech_email; });
+  // assets serviced within the period (exclude PREV COMP — done elsewhere)
+  var doneInPeriod={};
+  completedPMs.forEach(function(p){ if(p.prev_comp) return; if(!inPeriod(p.pm_date,b)) return; if(p.asset_id!=null) doneInPeriod[p.asset_id]=true; });
+
+  var rows={};
+  function bucket(email){ return rows[email]||(rows[email]={email:email, assigned:0, completed:0, paidOut:0, paidPMs:0, unpaid:0, rate:rateByEmail[email]!=null?rateByEmail[email]:null}); }
+  // stops: attribute to the route owner so remaining = assigned − completed is always coherent
+  assignments.forEach(function(a){ var t=bucket(a.tech_email); t.assigned++; if(doneInPeriod[a.asset_id]) t.completed++; });
+
+  // pay & owed: attribute each completed PM to its asset's ROUTE OWNER (not the
+  // login that recorded it). Paid value = stored payout_amount, else the tech's
+  // rate, else DEFAULT_PM_RATE. Cumulative (not period-scoped).
+  var offRoutePaid=0, offRouteUnpaid=0;
+  completedPMs.forEach(function(p){
+    if(p.prev_comp) return;
+    var owner = p.asset_id!=null ? ownerOf[p.asset_id] : null;
+    var val = p.payout_amount!=null ? Number(p.payout_amount) : rateFor(owner);
+    if(p.paid_out){
+      if(owner){ var t=bucket(owner); t.paidOut+=val; t.paidPMs++; }
+      else offRoutePaid+=val;
+    } else {
+      if(owner) bucket(owner).unpaid++;
+      else offRouteUnpaid++;
+    }
+  });
+
+  var list=Object.keys(rows).map(function(e){
+    var r=rows[e]; r.name=techName(e); r.remaining=Math.max(0,r.assigned-r.completed);
+    r.owed = r.unpaid * (r.rate!=null?r.rate:DEFAULT_PM_RATE);
+    r.noLogin = hasLoginByEmail[e]===false && r.assigned>0; // owns a route but has no field login (PMs logged elsewhere)
+    return r;
+  }).sort(function(a,b){ return b.assigned-a.assigned || (b.paidOut-a.paidOut); });
+
+  // company totals (assigned/completed/remaining = route stops; pay incl. off-route)
+  var assignedAssets=Object.keys(ownerOf).length;
+  var completedAssigned=0; Object.keys(ownerOf).forEach(function(id){ if(doneInPeriod[id]) completedAssigned++; });
+  var offRoute=0; Object.keys(doneInPeriod).forEach(function(id){ if(!ownerOf[id]) offRoute++; });
+  var contribPaid=0, contribOwed=0, contribUnpaid=0;
+  list.forEach(function(r){ contribPaid+=r.paidOut; contribOwed+=r.owed; contribUnpaid+=r.unpaid; });
+
+  return { b:b, list:list, offRoutePaid:offRoutePaid, offRouteUnpaid:offRouteUnpaid, contribPaid:contribPaid, contribOwed:contribOwed, company:{
+    assigned:assignedAssets, completed:completedAssigned, remaining:Math.max(0,assignedAssets-completedAssigned),
+    offRoute:offRoute,
+    paidOut:contribPaid+offRoutePaid,
+    owed:contribOwed+offRouteUnpaid*DEFAULT_PM_RATE,
+    unpaid:contribUnpaid+offRouteUnpaid,
+    activeAssets:assets.length, unassigned:Math.max(0,assets.length-assignedAssets)
+  }};
+}
+
+function renderOverview(){
+  var o=computeOverview(), c=o.company;
+  var pct=function(done,tot){ return tot>0?Math.round(done/tot*100):0; };
+  var cp=pct(c.completed,c.assigned);
+
+  var periodStops = ovPeriod==='all' ? 'all time' : esc(o.b.label);
+  var h='<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h3>Company overview</h3>'
+    + '<div class="hint">Stops completed &amp; remaining ('+periodStops+') across every route. Each completed stop earns the tech '+money(DEFAULT_PM_RATE)+'/PM; paid-out &amp; owed are cumulative from the PM ledger. A stop can only be on one tech\'s route — enforced in the database.</div></div>'
+    + '<div class="seg" style="flex:none">'
+    + '<button class="'+(ovPeriod==='all'?'on':'')+'" onclick="ovPeriod=\'all\';render()">All time</button>'
+    + '<button class="'+(ovPeriod==='month'?'on':'')+'" onclick="ovPeriod=\'month\';render()">This month</button>'
+    + '<button class="'+(ovPeriod==='prev'?'on':'')+'" onclick="ovPeriod=\'prev\';render()">Last month</button>'
+    + '</div></div>';
+
+  h+='<div class="tiles">'
+    + '<div class="tile"><div class="lb">Assigned stops</div><div class="v ac">'+c.assigned+'</div><div class="sub">'+c.unassigned+' unassigned · '+c.activeAssets+' active assets</div></div>'
+    + '<div class="tile"><div class="lb">Completed</div><div class="v gn">'+c.completed+'</div><div class="bar" style="margin-top:8px"><i style="width:'+cp+'%"></i></div><div class="sub">'+cp+'% of assigned'+(c.offRoute?' · +'+c.offRoute+' off-route':'')+'</div></div>'
+    + '<div class="tile"><div class="lb">Remaining</div><div class="v am">'+c.remaining+'</div><div class="sub">'+(ovPeriod==='all'?'never serviced':'still to service this period')+'</div></div>'
+    + '<div class="tile"><div class="lb">Paid out</div><div class="v gn">'+money(c.paidOut)+'</div><div class="sub">cumulative to contractors'+(o.offRoutePaid?' · incl '+money(o.offRoutePaid)+' off-route':'')+'</div></div>'
+    + '<div class="tile"><div class="lb">Owed (unpaid)</div><div class="v '+(c.owed?'am':'')+'">'+money(c.owed)+'</div><div class="sub">'+c.unpaid+' unpaid PM'+(c.unpaid===1?'':'s')+'</div></div>'
+    + '</div></div>';
+
+  h+='<div class="card"><h3>By contractor</h3><div class="hint">Stops completed &amp; remaining ('+periodStops+') per contractor; paid-out &amp; owed are cumulative. Everything is credited to whoever\'s route the stop is on, even if the PM was logged under a different field login.</div>';
+  if(!o.list.length){ h+='<div class="empty">No routes or completed PMs yet.</div></div>'; return h; }
+  h+='<div style="overflow-x:auto"><table><thead><tr><th>Contractor</th><th class="num">Assigned</th><th class="num">Completed</th><th class="num">Remaining</th><th style="width:120px">Progress</th><th class="num">Paid out</th><th class="num">Owed</th></tr></thead><tbody>';
+  o.list.forEach(function(r){
+    var p=pct(r.completed,r.assigned);
+    h+='<tr><td>'+esc(r.name)+(r.noLogin?' <span class="pill dim" title="No field login of their own — their PMs are recorded under another account. Stops and pay are still credited to them here.">no app login</span>':'')+'<div class="muted" style="font-size:.72rem">'+esc(r.email)+'</div></td>'
+      + '<td class="num">'+r.assigned+'</td>'
+      + '<td class="num">'+r.completed+'</td>'
+      + '<td class="num">'+(r.remaining>0?'<span class="pill am">'+r.remaining+'</span>':'<span class="pill gn">0</span>')+'</td>'
+      + '<td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="flex:1"><i style="width:'+p+'%"></i></div><span class="muted" style="font-size:.72rem;flex:none">'+p+'%</span></div></td>'
+      + '<td class="num">'+money(r.paidOut)+(r.paidPMs?'<div class="muted" style="font-size:.68rem">'+r.paidPMs+' PMs</div>':'')+'</td>'
+      + '<td class="num">'+(r.owed>0?money(r.owed):'<span class="muted">'+money(0)+'</span>')+'</td></tr>';
+  });
+  h+='<tr class="tot"><td>Total</td><td class="num">'+c.assigned+'</td><td class="num">'+c.completed+'</td><td class="num">'+c.remaining+'</td><td></td><td class="num">'+money(o.contribPaid)+'</td><td class="num">'+money(o.contribOwed)+'</td></tr>';
+  h+='</tbody></table></div>';
+  if(o.offRoutePaid||o.company.offRoute){ h+='<div class="muted" style="margin-top:8px;font-size:.76rem">'+(o.company.offRoute||0)+' off-route stop(s) serviced (not on any tech\'s route)'+(o.offRoutePaid?' · '+money(o.offRoutePaid)+' paid':'')+' — included in the company totals above, not the per-contractor rows.</div>'; }
+  h+='<div class="muted" style="margin-top:6px;font-size:.78rem">Need to bill Freshpet or pay a contractor? Use the 🧾 Billing and 💰 Payments tabs.</div>';
+  h+='</div>';
+  return h;
 }
 
 function renderRoutes(){
@@ -312,14 +456,37 @@ function renderRoutes(){
 
   if(!routeTech) return h + '<div class="card"><div class="empty">Select a technician to view and edit their route.</div></div>';
 
+  // Completion status per stop, from the completed_pms ledger.
+  var rb = periodBoundsOf(routePeriod);
+  var lastPm = {}, doneP = {};
+  completedPMs.forEach(function(p){
+    if(p.prev_comp || p.asset_id==null) return;
+    var d = String(p.pm_date||'').slice(0,10);
+    if(!lastPm[p.asset_id] || d>lastPm[p.asset_id]) lastPm[p.asset_id]=d;
+    if(inPeriod(d, rb)) doneP[p.asset_id]=true;
+  });
+  var doneCount = routeStops.filter(function(s){ return doneP[s.asset_id]; }).length;
+  var pendCount = routeStops.length - doneCount;
+
   // Current route
   h += '<div class="row">';
-  h += '<div class="col"><div class="card"><h3>'+esc(techName(routeTech))+' · route <span class="muted">('+routeStops.length+' stops)</span></h3>';
+  h += '<div class="col"><div class="card"><div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap"><div style="flex:1;min-width:180px"><h3>'+esc(techName(routeTech))+' · route <span class="muted">('+routeStops.length+' stops)</span></h3>'
+     + '<div class="hint" style="margin:2px 0 0">Done / pending is for <strong>'+esc(rb.label)+'</strong>: <span style="color:var(--gn);font-weight:700">'+doneCount+' done</span> · <span style="color:var(--am);font-weight:700">'+pendCount+' pending</span>. PMs recur, so a stop shows ✓ once it\'s serviced in the selected window.</div></div>'
+     + '<div class="seg" style="flex:none">'
+     + '<button class="'+(routePeriod==='month'?'on':'')+'" onclick="routePeriod=\'month\';render()">This month</button>'
+     + '<button class="'+(routePeriod==='prev'?'on':'')+'" onclick="routePeriod=\'prev\';render()">Last month</button>'
+     + '<button class="'+(routePeriod==='all'?'on':'')+'" onclick="routePeriod=\'all\';render()">Ever</button>'
+     + '</div></div>';
   if(!routeStops.length){ h += '<div class="empty">No stops yet. Add stores from the right.</div>'; }
   else {
     routeStops.forEach(function(s,i){
       var a=s.asset;
+      var done=doneP[s.asset_id], last=lastPm[s.asset_id];
+      var status = done
+        ? '<span class="pill gn" style="flex:none">✓ '+(last?esc(fmtDate(last)):'done')+'</span>'
+        : '<span class="pill am" style="flex:none">pending'+(last?' · last '+esc(fmtDate(last)):'')+'</span>';
       h += '<div class="stop"><div class="n">'+(i+1)+'</div><div class="meta"><div class="s">'+esc(a.store||a.serial||('Asset '+a.id))+'</div><div class="a">'+esc([a.address,a.city,a.state].filter(Boolean).join(', '))+'</div></div>'
+        + status
         + '<div class="acts">'
         + '<button class="ic" onclick="moveStop('+i+',-1)" '+(i===0?'disabled':'')+' title="Up">▲</button>'
         + '<button class="ic" onclick="moveStop('+i+',1)" '+(i===routeStops.length-1?'disabled':'')+' title="Down">▼</button>'
@@ -431,15 +598,73 @@ function renderTechPay(){
   return h;
 }
 
+// ── Pay report (date range, by contractor) ──
+function setPayFrom(v){ payFrom=v; render(); }
+function setPayTo(v){ payTo=v; render(); }
+function payPreset(which){
+  var now=new Date(), y=now.getFullYear(), m=now.getMonth();
+  if(which==='this'){ payFrom=isoDate(new Date(y,m,1)); payTo=isoDate(new Date(y,m+1,0)); }
+  else if(which==='last'){ payFrom=isoDate(new Date(y,m-1,1)); payTo=isoDate(new Date(y,m,0)); }
+  else { payFrom=''; payTo=''; } // all time
+  render();
+}
+function payInRange(dateStr){ var d=String(dateStr||'').slice(0,10); if(payFrom && d<payFrom) return false; if(payTo && d>payTo) return false; return true; }
+function renderPayReport(){
+  // Lazy default → current month (so history is one click away via presets).
+  if(payFrom===null){ var n=new Date(); payFrom=isoDate(new Date(n.getFullYear(),n.getMonth(),1)); payTo=isoDate(new Date(n.getFullYear(),n.getMonth()+1,0)); }
+  var rateByEmail={}; techs.forEach(function(t){ rateByEmail[t.email]=t.pm_rate!=null?Number(t.pm_rate):null; });
+  var rateFor=function(e){ return (e && rateByEmail[e]!=null) ? rateByEmail[e] : DEFAULT_PM_RATE; };
+  var ownerOf={}; assignments.forEach(function(a){ ownerOf[a.asset_id]=a.tech_email; });
+  var rows={}; function bk(e){ return rows[e]||(rows[e]={email:e, pms:0, paidPMs:0, unpaidPMs:0, paid:0, owed:0}); }
+  var off={email:'(off-route)', pms:0, paidPMs:0, unpaidPMs:0, paid:0, owed:0};
+  completedPMs.forEach(function(p){
+    if(p.prev_comp) return; if(!payInRange(p.pm_date)) return;
+    var owner = p.asset_id!=null ? ownerOf[p.asset_id] : null;
+    var rate = rateFor(owner);
+    var val = p.payout_amount!=null ? Number(p.payout_amount) : rate;
+    var t = owner ? bk(owner) : off;
+    t.pms++;
+    if(p.paid_out){ t.paidPMs++; t.paid+=val; } else { t.unpaidPMs++; t.owed+=rate; }
+  });
+  var list = Object.keys(rows).map(function(e){ var r=rows[e]; r.name=techName(e); return r; }).sort(function(a,b){ return b.pms-a.pms; });
+  if(off.pms) list.push(off);
+
+  var rangeLbl = (!payFrom && !payTo) ? 'All time' : ((payFrom?fmtDate(payFrom):'…')+' – '+(payTo?fmtDate(payTo):'…'));
+  var h = '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:200px"><h3>Pay report <span class="muted" style="font-weight:600">· '+esc(rangeLbl)+'</span></h3>'
+    + '<div class="hint">Per-contractor pay for any date range, from the full completed-PM history. Each completed PM earns '+money(DEFAULT_PM_RATE)+' (or the tech\'s set rate). Credited to whoever\'s route the stop is on. Pick a range to see past periods.</div></div>'
+    + '<div class="seg" style="flex:none">'
+    + '<button onclick="payPreset(\'this\')">This month</button><button onclick="payPreset(\'last\')">Last month</button><button onclick="payPreset(\'all\')">All time</button>'
+    + '</div></div>';
+  h += '<div class="row" style="align-items:flex-end;margin-bottom:8px">'
+    + '<div style="flex:none"><label class="f">From</label><input type="date" value="'+esc(payFrom||'')+'" onchange="setPayFrom(this.value)" style="max-width:180px"></div>'
+    + '<div style="flex:none"><label class="f">To</label><input type="date" value="'+esc(payTo||'')+'" onchange="setPayTo(this.value)" style="max-width:180px"></div>'
+    + '</div>';
+  if(!list.length){ h += '<div class="empty">No completed PMs in this range.</div></div>'; return h; }
+  h += '<div style="overflow-x:auto"><table><thead><tr><th>Contractor</th><th class="num">PMs done</th><th class="num">Paid</th><th class="num">$ paid</th><th class="num">Unpaid</th><th class="num">$ owed</th></tr></thead><tbody>';
+  var tP=0,tPaidN=0,tPd=0,tU=0,tO=0;
+  list.forEach(function(r){
+    tP+=r.pms; tPaidN+=r.paidPMs; tPd+=r.paid; tU+=r.unpaidPMs; tO+=r.owed;
+    h += '<tr><td>'+esc(r.name)+(r.email!=='(off-route)'?'<div class="muted" style="font-size:.72rem">'+esc(r.email)+'</div>':'')+'</td>'
+      + '<td class="num">'+r.pms+'</td>'
+      + '<td class="num">'+r.paidPMs+'</td>'
+      + '<td class="num">'+money(r.paid)+'</td>'
+      + '<td class="num">'+(r.unpaidPMs?'<span class="pill am">'+r.unpaidPMs+'</span>':'0')+'</td>'
+      + '<td class="num">'+(r.owed>0?money(r.owed):money(0))+'</td></tr>';
+  });
+  h += '<tr class="tot"><td>Total</td><td class="num">'+tP+'</td><td class="num">'+tPaidN+'</td><td class="num">'+money(tPd)+'</td><td class="num">'+tU+'</td><td class="num">'+money(tO)+'</td></tr>';
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
 function renderPayments(){
   // distinct weeks present in payouts
   var weeks=[]; payouts.forEach(function(p){ if(weeks.indexOf(p.week_start)<0) weeks.push(p.week_start); });
   weeks.sort().reverse();
   if(!payWeek && weeks.length) payWeek=weeks[0];
 
-  // Computed per-tech pay from completed PMs (the payouts table is only written
-  // when a tech taps "Submit" in the field app — this always reflects reality).
-  var h = renderTechPay();
+  // Date-range pay report (history), then the actionable per-tech bill tool.
+  var h = renderPayReport();
+  h += renderTechPay();
   // Weekly payouts (tech-submitted snapshots, if any)
   var weekOpts = weeks.length ? weeks.map(function(w){ var p=payouts.find(function(x){return x.week_start===w;}); var end=p?p.week_end:''; return '<option value="'+esc(w)+'"'+(w===payWeek?' selected':'')+'>'+esc(w)+(end?' → '+esc(end):'')+'</option>'; }).join('') : '<option value="">— no submitted payouts —</option>';
   var wk = payouts.filter(function(p){ return p.week_start===payWeek; });
