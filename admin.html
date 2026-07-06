@@ -89,6 +89,20 @@ th{font-size:.68rem;text-transform:uppercase;letter-spacing:.06em;color:var(--tx
 td.num,th.num{text-align:right;font-variant-numeric:tabular-nums;font-family:'JetBrains Mono',monospace}
 tr.tot td{border-top:2px solid var(--bd);font-weight:800;border-bottom:none}
 .empty{padding:34px 16px;text-align:center;color:var(--tx2);font-size:.9rem}
+/* Overview tiles */
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin-top:6px}
+.tile{background:var(--bg);border:1px solid var(--bd);border-radius:14px;padding:14px 16px}
+.tile .lb{font-size:.68rem;font-weight:800;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2)}
+.tile .v{font-size:1.6rem;font-weight:800;letter-spacing:-.02em;margin-top:5px;font-variant-numeric:tabular-nums}
+.tile .v.gn{color:var(--gn)}.tile .v.am{color:var(--am)}.tile .v.ac{color:var(--ac)}
+.tile .sub{font-size:.72rem;color:var(--tx2);margin-top:3px}
+.seg{display:inline-flex;border:1px solid var(--bd);border-radius:10px;overflow:hidden}
+.seg button{padding:7px 13px;font-size:.8rem;font-weight:700;color:var(--tx2);background:transparent}
+.seg button.on{background:var(--ac);color:#fff}
+.bar{height:7px;border-radius:999px;background:var(--sf2);overflow:hidden;min-width:70px}
+.bar>i{display:block;height:100%;background:var(--gn);border-radius:999px}
+.pill.rd{color:var(--rd);border-color:var(--rd);background:rgba(248,113,113,.1)}
+.pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(59,130,246,.1)}
 /* Login */
 .login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
 .login .box{background:var(--sf);border:1px solid var(--bd);border-radius:22px;padding:38px 32px;max-width:380px;width:100%;text-align:center;box-shadow:var(--shadow)}
@@ -123,7 +137,8 @@ window.addEventListener('storage', function(e){ if(e&&e.key==='apbg_theme') appl
 // ── state ──
 var screen = 'loading';     // loading | login | denied | app
 var user = null, profile = null;
-var tab = 'routes';          // routes | payments | billing
+var tab = 'overview';        // overview | routes | payments | billing
+var ovPeriod = 'month';      // Overview stop-completion window: month | prev | all
 var techs = [], assets = [], assignments = [], payouts = [];
 var routeTech = '';          // selected tech email in Routes
 var routeStops = [];         // working list [{asset_id, asset}] for selected tech
@@ -179,7 +194,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_bill_ref').order('pm_date', { ascending:false })
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at').order('pm_date', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
@@ -291,13 +306,118 @@ function render(){
   h += '<div class="hd"><div><div class="logo">🐾 <span class="fp">Freshpet</span> Admin</div></div><div class="sub">Back office</div>'
      + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><a class="btn o sm" href="./">📱 Field app</a><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
   h += '<div class="tabs">'
+     + '<button class="tab '+(tab==='overview'?'on':'')+'" onclick="tab=\'overview\';render()">📊 Overview</button>'
      + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">🗺️ Routes</button>'
      + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">💰 Payments</button>'
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">🧾 Freshpet Billing</button>'
      + '</div>';
-  h += tab==='routes' ? renderRoutes() : (tab==='payments' ? renderPayments() : renderBilling());
+  h += tab==='overview' ? renderOverview()
+     : tab==='routes' ? renderRoutes()
+     : tab==='payments' ? renderPayments()
+     : renderBilling();
   h += '</div>';
   app.innerHTML = h;
+}
+
+// ═══ Overview (company-wide + per-contractor) ═══
+// Stops: "completed" / "remaining" are scoped to the selected period (a PM
+// cycle is roughly monthly). Pay: "paid out" / "owed" are cumulative — they
+// reflect the full ledger on completed_pms, not a single period.
+function periodBounds(){
+  var pad=function(n){ return (n<10?'0':'')+n; };
+  var iso=function(d){ return d.getFullYear()+'-'+pad(d.getMonth()+1)+'-'+pad(d.getDate()); };
+  var mon=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  if(ovPeriod==='all') return { start:null, end:null, label:'All time' };
+  var now=new Date(), y=now.getFullYear(), m=now.getMonth();
+  if(ovPeriod==='prev'){ m-=1; if(m<0){ m=11; y-=1; } }
+  var start=new Date(y,m,1), end=new Date(y,m+1,0);
+  return { start:iso(start), end:iso(end), label:mon[m]+' '+y };
+}
+function inPeriod(dateStr, b){ if(!b.start) return true; if(!dateStr) return false; var d=String(dateStr).slice(0,10); return d>=b.start && d<=b.end; }
+
+function computeOverview(){
+  var b = periodBounds();
+  var emailByUser={}, rateByEmail={}, hasLoginByEmail={};
+  techs.forEach(function(t){ if(t.user_id) emailByUser[t.user_id]=t.email; rateByEmail[t.email]=t.pm_rate!=null?Number(t.pm_rate):null; hasLoginByEmail[t.email]=!!t.user_id; });
+  // owner (active route) of each asset
+  var ownerOf={}; assignments.forEach(function(a){ ownerOf[a.asset_id]=a.tech_email; });
+  // assets completed within the period (exclude PREV COMP — done elsewhere)
+  var doneInPeriod={};
+  completedPMs.forEach(function(p){ if(p.prev_comp) return; if(!inPeriod(p.pm_date,b)) return; if(p.asset_id!=null) doneInPeriod[p.asset_id]=true; });
+
+  var rows={};
+  function bucket(email){ return rows[email]||(rows[email]={email:email, assigned:0, completed:0, paidOut:0, unpaid:0, rate:rateByEmail[email]!=null?rateByEmail[email]:null}); }
+  // stops: attribute to the ASSIGNED tech (route owner) so remaining = assigned − completed is always coherent
+  assignments.forEach(function(a){ var t=bucket(a.tech_email); t.assigned++; if(doneInPeriod[a.asset_id]) t.completed++; });
+  // pay: attribute to the tech who DID the PM (cumulative, all-time)
+  completedPMs.forEach(function(p){
+    var email=emailByUser[p.tech_user_id]; if(!email) return;
+    var t=bucket(email);
+    if(p.paid_out){ t.paidOut += (p.payout_amount!=null?Number(p.payout_amount):(t.rate||0)); }
+    else if(!p.prev_comp){ t.unpaid++; }
+  });
+  var list=Object.keys(rows).map(function(e){
+    var r=rows[e]; r.name=techName(e); r.remaining=Math.max(0,r.assigned-r.completed);
+    r.owed = r.rate!=null ? r.unpaid*r.rate : null;
+    r.noLogin = hasLoginByEmail[e]===false && r.assigned>0; // assigned a route but can't log completions
+    return r;
+  }).sort(function(a,b){ return b.assigned-a.assigned || (b.paidOut-a.paidOut); });
+
+  // company totals
+  var assignedAssets=Object.keys(ownerOf).length;
+  var completedAssigned=0; Object.keys(ownerOf).forEach(function(id){ if(doneInPeriod[id]) completedAssigned++; });
+  var offRoute=0; Object.keys(doneInPeriod).forEach(function(id){ if(!ownerOf[id]) offRoute++; });
+  var totPaid=0, totOwed=0, totUnpaid=0, anyRate=false;
+  list.forEach(function(r){ totPaid+=r.paidOut; totUnpaid+=r.unpaid; if(r.owed!=null){ totOwed+=r.owed; anyRate=true; } });
+
+  return { b:b, list:list, company:{
+    assigned:assignedAssets, completed:completedAssigned, remaining:Math.max(0,assignedAssets-completedAssigned),
+    offRoute:offRoute, paidOut:totPaid, owed:anyRate?totOwed:null, unpaid:totUnpaid,
+    activeAssets:assets.length, unassigned:Math.max(0,assets.length-assignedAssets)
+  }};
+}
+
+function renderOverview(){
+  var o=computeOverview(), c=o.company;
+  var pct=function(done,tot){ return tot>0?Math.round(done/tot*100):0; };
+  var cp=pct(c.completed,c.assigned);
+
+  var h='<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h3>Company overview</h3>'
+    + '<div class="hint">Stops completed &amp; remaining for <strong>'+esc(o.b.label)+'</strong> across every route. Paid-out &amp; owed are cumulative from the PM ledger. A stop can only be on one tech\'s route — enforced in the database.</div></div>'
+    + '<div class="seg" style="flex:none">'
+    + '<button class="'+(ovPeriod==='month'?'on':'')+'" onclick="ovPeriod=\'month\';render()">This month</button>'
+    + '<button class="'+(ovPeriod==='prev'?'on':'')+'" onclick="ovPeriod=\'prev\';render()">Last month</button>'
+    + '<button class="'+(ovPeriod==='all'?'on':'')+'" onclick="ovPeriod=\'all\';render()">All time</button>'
+    + '</div></div>';
+
+  h+='<div class="tiles">'
+    + '<div class="tile"><div class="lb">Assigned stops</div><div class="v ac">'+c.assigned+'</div><div class="sub">'+c.unassigned+' unassigned · '+c.activeAssets+' active assets</div></div>'
+    + '<div class="tile"><div class="lb">Completed</div><div class="v gn">'+c.completed+'</div><div class="bar" style="margin-top:8px"><i style="width:'+cp+'%"></i></div><div class="sub">'+cp+'% of assigned'+(c.offRoute?' · +'+c.offRoute+' off-route':'')+'</div></div>'
+    + '<div class="tile"><div class="lb">Remaining</div><div class="v am">'+c.remaining+'</div><div class="sub">still to service this period</div></div>'
+    + '<div class="tile"><div class="lb">Paid out</div><div class="v">'+money(c.paidOut)+'</div><div class="sub">cumulative to contractors</div></div>'
+    + '<div class="tile"><div class="lb">Owed (unpaid)</div><div class="v '+(c.owed?'am':'')+'">'+(c.owed!=null?money(c.owed):'—')+'</div><div class="sub">'+c.unpaid+' unpaid PM'+(c.unpaid===1?'':'s')+(c.owed==null?' · set rates':'')+'</div></div>'
+    + '</div></div>';
+
+  h+='<div class="card"><h3>By contractor</h3><div class="hint">Per-tech breakdown for <strong>'+esc(o.b.label)+'</strong>. Stops are counted against each tech\'s assigned route; pay is cumulative.</div>';
+  if(!o.list.length){ h+='<div class="empty">No routes or completed PMs yet.</div></div>'; return h; }
+  h+='<div style="overflow-x:auto"><table><thead><tr><th>Contractor</th><th class="num">Assigned</th><th class="num">Completed</th><th class="num">Remaining</th><th style="width:120px">Progress</th><th class="num">Paid out</th><th class="num">Owed</th></tr></thead><tbody>';
+  o.list.forEach(function(r){
+    var p=pct(r.completed,r.assigned);
+    h+='<tr><td>'+esc(r.name)+(r.noLogin?' <span class="pill rd" title="No field login — PMs on this route get logged under another account, so completed/pay may show under a different tech">⚠ no login</span>':'')+'<div class="muted" style="font-size:.72rem">'+esc(r.email)+'</div></td>'
+      + '<td class="num">'+r.assigned+'</td>'
+      + '<td class="num">'+r.completed+'</td>'
+      + '<td class="num">'+(r.remaining>0?'<span class="pill am">'+r.remaining+'</span>':'<span class="pill gn">0</span>')+'</td>'
+      + '<td><div style="display:flex;align-items:center;gap:8px"><div class="bar" style="flex:1"><i style="width:'+p+'%"></i></div><span class="muted" style="font-size:.72rem;flex:none">'+p+'%</span></div></td>'
+      + '<td class="num">'+money(r.paidOut)+'</td>'
+      + '<td class="num">'+(r.owed!=null?money(r.owed):'<span class="muted">set rate</span>')+'</td></tr>';
+  });
+  var tPaid=o.list.reduce(function(s,r){return s+r.paidOut;},0);
+  var tOwed=o.company.owed;
+  h+='<tr class="tot"><td>Total</td><td class="num">'+c.assigned+'</td><td class="num">'+c.completed+'</td><td class="num">'+c.remaining+'</td><td></td><td class="num">'+money(tPaid)+'</td><td class="num">'+(tOwed!=null?money(tOwed):'—')+'</td></tr>';
+  h+='</tbody></table></div>';
+  h+='<div class="muted" style="margin-top:10px;font-size:.78rem">Need to bill Freshpet or pay a contractor? Use the 🧾 Billing and 💰 Payments tabs.</div>';
+  h+='</div>';
+  return h;
 }
 
 function renderRoutes(){
