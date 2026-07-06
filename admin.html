@@ -139,7 +139,6 @@ var screen = 'loading';     // loading | login | denied | app
 var user = null, profile = null;
 var tab = 'overview';        // overview | routes | payments | billing
 var ovPeriod = 'all';        // Overview stop-completion window: all | month | prev
-var routePeriod = 'month';   // Routes done/pending window: month | prev | all
 var techs = [], assets = [], assignments = [], payouts = [];
 var routeTech = '';          // selected tech email in Routes
 var routeStops = [];         // working list [{asset_id, asset}] for selected tech
@@ -215,8 +214,10 @@ function selectRouteTech(email){
   }
   render();
 }
-function moveStop(i, dir){ var j=i+dir; if(j<0||j>=routeStops.length) return; var t=routeStops[i]; routeStops[i]=routeStops[j]; routeStops[j]=t; render(); }
-function removeStop(i){ routeStops.splice(i,1); render(); }
+// A serviced stop is COMPLETED and locked — it can't be moved or removed.
+function stopCompleted(id){ return completedPMs.some(function(p){ return !p.prev_comp && p.asset_id===id; }); }
+function moveStop(i, dir){ var j=i+dir; if(j<0||j>=routeStops.length) return; if(stopCompleted(routeStops[i].asset_id)||stopCompleted(routeStops[j].asset_id)){ toast('Completed stops are locked','info'); return; } var t=routeStops[i]; routeStops[i]=routeStops[j]; routeStops[j]=t; render(); }
+function removeStop(i){ if(stopCompleted(routeStops[i].asset_id)){ toast('Completed stops are locked — can\'t remove','info'); return; } routeStops.splice(i,1); render(); }
 function addStop(id){ if(routeStops.some(function(s){return s.asset_id===id;})) return; if(assetLockedElsewhere(id)){ toast('That store is on another tech\'s route','err'); return; } var as=assetById(id); if(as){ routeStops.push({asset_id:id, asset:as}); render(); } }
 // An asset is claimable by the current tech only if no OTHER tech holds it.
 function assetLockedElsewhere(id){
@@ -456,42 +457,38 @@ function renderRoutes(){
 
   if(!routeTech) return h + '<div class="card"><div class="empty">Select a technician to view and edit their route.</div></div>';
 
-  // Completion status per stop, from the completed_pms ledger.
-  var rb = periodBoundsOf(routePeriod);
-  var lastPm = {}, doneP = {};
+  // Completion (PMs are ANNUAL): a stop is COMPLETED once it has any serviced
+  // completed_pms row. Completed stops are LOCKED — they stay on the route and
+  // can't be reordered, removed, or paid again until a fresh list is loaded.
+  var done = {};
   completedPMs.forEach(function(p){
     if(p.prev_comp || p.asset_id==null) return;
     var d = String(p.pm_date||'').slice(0,10);
-    if(!lastPm[p.asset_id] || d>lastPm[p.asset_id]) lastPm[p.asset_id]=d;
-    if(inPeriod(d, rb)) doneP[p.asset_id]=true;
+    if(!done[p.asset_id] || d>done[p.asset_id]) done[p.asset_id]=d;
   });
-  var doneCount = routeStops.filter(function(s){ return doneP[s.asset_id]; }).length;
-  var pendCount = routeStops.length - doneCount;
+  var doneCount = routeStops.filter(function(s){ return done[s.asset_id]; }).length;
+  var openCount = routeStops.length - doneCount;
 
   // Current route
   h += '<div class="row">';
-  h += '<div class="col"><div class="card"><div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap"><div style="flex:1;min-width:180px"><h3>'+esc(techName(routeTech))+' · route <span class="muted">('+routeStops.length+' stops)</span></h3>'
-     + '<div class="hint" style="margin:2px 0 0">Done / pending is for <strong>'+esc(rb.label)+'</strong>: <span style="color:var(--gn);font-weight:700">'+doneCount+' done</span> · <span style="color:var(--am);font-weight:700">'+pendCount+' pending</span>. PMs recur, so a stop shows ✓ once it\'s serviced in the selected window.</div></div>'
-     + '<div class="seg" style="flex:none">'
-     + '<button class="'+(routePeriod==='month'?'on':'')+'" onclick="routePeriod=\'month\';render()">This month</button>'
-     + '<button class="'+(routePeriod==='prev'?'on':'')+'" onclick="routePeriod=\'prev\';render()">Last month</button>'
-     + '<button class="'+(routePeriod==='all'?'on':'')+'" onclick="routePeriod=\'all\';render()">Ever</button>'
-     + '</div></div>';
+  h += '<div class="col"><div class="card"><h3>'+esc(techName(routeTech))+' · route <span class="muted">('+routeStops.length+' stops)</span></h3>'
+     + '<div class="hint">PMs are annual. Once a stop is serviced it shows <span style="color:var(--gn);font-weight:800">COMPLETED</span> and locks — it can\'t be reordered, removed, or paid again. <span style="color:var(--gn);font-weight:700">'+doneCount+' completed</span> · <span style="color:var(--am);font-weight:700">'+openCount+' open</span>.</div>';
   if(!routeStops.length){ h += '<div class="empty">No stops yet. Add stores from the right.</div>'; }
   else {
     routeStops.forEach(function(s,i){
       var a=s.asset;
-      var done=doneP[s.asset_id], last=lastPm[s.asset_id];
-      var status = done
-        ? '<span class="pill gn" style="flex:none">✓ '+(last?esc(fmtDate(last)):'done')+'</span>'
-        : '<span class="pill am" style="flex:none">pending'+(last?' · last '+esc(fmtDate(last)):'')+'</span>';
-      h += '<div class="stop"><div class="n">'+(i+1)+'</div><div class="meta"><div class="s">'+esc(a.store||a.serial||('Asset '+a.id))+'</div><div class="a">'+esc([a.address,a.city,a.state].filter(Boolean).join(', '))+'</div></div>'
+      var d=done[s.asset_id];
+      var status = d
+        ? '<span class="pill gn" style="flex:none;font-weight:800">✓ COMPLETED</span>'
+        : '<span class="pill dim" style="flex:none">open</span>';
+      var acts = d
+        ? '<span class="ic" title="Completed — locked" style="opacity:.55;cursor:default">🔒</span>'
+        : '<button class="ic" onclick="moveStop('+i+',-1)" '+(i===0?'disabled':'')+' title="Up">▲</button>'
+          + '<button class="ic" onclick="moveStop('+i+',1)" '+(i===routeStops.length-1?'disabled':'')+' title="Down">▼</button>'
+          + '<button class="ic" onclick="removeStop('+i+')" title="Remove">✕</button>';
+      h += '<div class="stop"'+(d?' style="border-color:var(--gn)"':'')+'><div class="n"'+(d?' style="background:var(--gn)"':'')+'>'+(i+1)+'</div><div class="meta"><div class="s">'+esc(a.store||a.serial||('Asset '+a.id))+'</div><div class="a">'+esc([a.address,a.city,a.state].filter(Boolean).join(', '))+(d?' · completed '+esc(fmtDate(d)):'')+'</div></div>'
         + status
-        + '<div class="acts">'
-        + '<button class="ic" onclick="moveStop('+i+',-1)" '+(i===0?'disabled':'')+' title="Up">▲</button>'
-        + '<button class="ic" onclick="moveStop('+i+',1)" '+(i===routeStops.length-1?'disabled':'')+' title="Down">▼</button>'
-        + '<button class="ic" onclick="removeStop('+i+')" title="Remove">✕</button>'
-        + '</div></div>';
+        + '<div class="acts">'+acts+'</div></div>';
     });
   }
   h += '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn gn" onclick="saveRoute()" '+(saving?'disabled':'')+'>'+(saving?'Saving…':'💾 Save route')+'</button><button class="btn o" onclick="selectRouteTech(routeTech)">↺ Reset</button></div>';
