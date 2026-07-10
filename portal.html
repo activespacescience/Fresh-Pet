@@ -151,6 +151,9 @@ var fSearch = '', fCity = '', fMonth = '', fInvoice = '';
 var groupBy = 'invoice';   // 'invoice' | 'month'
 var expanded = {};         // { sectionKey: true } — invoice sections start collapsed
 var authBusy = false;
+var section = 'pm';        // 'pm' | 'reactive' — separate billing types
+var reBatches = [];        // reactive_batches (invoiced)
+var reAssets = {};         // { batch_id: [assets] }
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function toast(msg, type){ var t=document.getElementById('toast'); t.innerHTML='<div class="toast '+(type||'info')+'">'+esc(msg)+'</div>'; setTimeout(function(){ t.innerHTML=''; }, 3500); }
@@ -280,10 +283,56 @@ async function signOut(){ await sb.auth.signOut(); }
 async function loadData(){
   var r = await Promise.all([
     sb.from('completed_pms').select('*').order('pm_date', { ascending:false }).order('created_at', { ascending:false }),
-    sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial')
+    sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial'),
+    sb.from('reactive_batches').select('*').eq('status','invoiced').order('created_at', { ascending:false }),
+    sb.from('reactive_assets').select('*').order('store')
   ]);
   pms = (r[0].data || []);
   assets = {}; (r[1].data || []).forEach(function(a){ assets[a.id]=a; });
+  reBatches = (r[2].data || []);
+  reAssets = {}; (r[3].data || []).forEach(function(a){ (reAssets[a.batch_id]=reAssets[a.batch_id]||[]).push(a); });
+}
+function setSection(s){ section = s; render(); }
+function reactivePdfUrl(b){ return b && b.invoice_pdf_path ? SUPA_URL + '/storage/v1/object/public/fp-invoices/' + b.invoice_pdf_path : ''; }
+
+function renderReactive(){
+  var h = '';
+  if(!reBatches.length){ return '<div class="empty">No quarterly reactive invoices yet.</div>'; }
+  var touched = Object.keys(expanded).length>0;
+  reBatches.forEach(function(b, idx){
+    var key = 'qrb:'+b.id;
+    var open = expanded[key] || (!touched && idx===0);
+    var list = reAssets[b.id] || [];
+    var oow = list.filter(function(a){ return !a.under_warranty; }).length;
+    var pdf = reactivePdfUrl(b);
+    var meta = (b.quarter_label?esc(b.quarter_label)+' · ':'') + (b.location?esc(b.location)+' · ':'')
+      + list.length + ' assets · ' + oow + ' out-of-warranty billed · ' + money(b.total);
+    h += '<div class="inv">';
+    h += '<div class="inv-h'+(open?' open':'')+'" onclick="toggleSection(\''+key+'\')">'
+       + '<span class="chev">'+(open?'▾':'▸')+'</span>'
+       + '<div class="inv-t"><div class="ttl">'+esc(b.invoice_ref)+'</div><div class="sub">'+meta+'</div></div>'
+       + (pdf ? '<a class="inv-pdf" href="'+esc(pdf)+'" target="_blank" rel="noopener" onclick="event.stopPropagation()">📄 Invoice PDF</a>' : '<span class="inv-nopdf">PDF pending</span>')
+       + '</div>';
+    if(open){
+      h += '<div style="overflow-x:auto;margin-top:10px"><table style="width:100%;border-collapse:collapse;font-size:.84rem">'
+         + '<thead><tr><th style="text-align:left;padding:7px 9px;border-bottom:1px solid var(--bd);color:var(--tx2)">Store</th>'
+         + '<th style="text-align:left;padding:7px 9px;border-bottom:1px solid var(--bd);color:var(--tx2)">City</th>'
+         + '<th style="text-align:left;padding:7px 9px;border-bottom:1px solid var(--bd);color:var(--tx2)">Serial</th>'
+         + '<th style="text-align:left;padding:7px 9px;border-bottom:1px solid var(--bd);color:var(--tx2)">Warranty</th></tr></thead><tbody>';
+      list.forEach(function(a){
+        h += '<tr><td style="padding:7px 9px;border-bottom:1px solid var(--bd)">'+esc(a.store||'')+'</td>'
+           + '<td style="padding:7px 9px;border-bottom:1px solid var(--bd)">'+esc(a.city||'')+'</td>'
+           + '<td class="mono" style="padding:7px 9px;border-bottom:1px solid var(--bd);font-size:.8rem">'+esc(a.serial||'')+'</td>'
+           + '<td style="padding:7px 9px;border-bottom:1px solid var(--bd)">'
+           + (a.under_warranty ? '<span class="pill" style="color:var(--ac);border-color:var(--ac)">🛡 Under warranty</span>'
+                               : '<span class="pill iv">💲 Out of warranty · billed</span>')
+           + '</td></tr>';
+      });
+      h += '</tbody></table></div>';
+    }
+    h += '</div>';
+  });
+  return h;
 }
 
 // ── filtering ──
@@ -325,8 +374,16 @@ function render(){
 
   var list = filtered();
   var h = '<div class="wrap">';
-  h += '<div class="hd"><div><div class="logo">🐾 <span class="fp">Freshpet</span></div></div><div class="sub">Completed service calls</div>'
+  h += '<div class="hd"><div><div class="logo">🐾 <span class="fp">Freshpet</span></div></div><div class="sub">Service &amp; billing</div>'
      + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
+
+  // Billing-type switch
+  h += '<div class="filters" style="margin:16px 0 4px"><div class="fg"><label class="f">View</label><div class="seg">'
+     + '<button class="'+(section==='pm'?'on':'')+'" onclick="setSection(\'pm\')">PM service calls</button>'
+     + '<button class="'+(section==='reactive'?'on':'')+'" onclick="setSection(\'reactive\')">Quarterly Reactive'+(reBatches.length?' ('+reBatches.length+')':'')+'</button>'
+     + '</div></div></div>';
+
+  if (section === 'reactive') { h += renderReactive(); h += '</div>'; app.innerHTML = h; return; }
 
   // stats
   var thisMonth = monthKey(new Date().toISOString().slice(0,10));
