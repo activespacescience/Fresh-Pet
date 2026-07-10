@@ -163,6 +163,21 @@ var billBusy = false;
 var billPreview = null;       // preview result
 var billResult = null;        // create result
 
+// ── Reactive / CSV upload ──
+var QUARTERLY_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-quarterly-invoice';
+var rvBatches = [];           // existing reactive_batches
+var rvFileName = '';
+var rvMode = '';              // '' | 'pm' | 'reactive'
+var rvRows = null;            // parsed asset records from the CSV
+var rvReview = null;          // [{...row, under_warranty, approved}] for reactive
+var rvQuarter = '';           // e.g. "2026 Q3"
+var rvLocation = '';          // free-text location label
+var rvRate = 30;
+var rvRecipient = '';
+var rvBusy = false;
+var rvResult = null;
+var rvPMPreview = null;       // {newCount, updateCount, deactivate[], completedDrop}
+
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
 function toast(msg, type){ var t=document.getElementById('toast'); t.innerHTML='<div class="toast '+(type||'info')+'">'+esc(msg)+'</div>'; setTimeout(function(){ t.innerHTML=''; }, 3500); }
@@ -195,10 +210,12 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at').order('pm_date', { ascending:false })
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at').order('pm_date', { ascending:false }),
+    sb.from('reactive_batches').select('*').order('created_at', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
+  rvBatches = r[5].data || [];
   if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
 }
 function assetById(id){ return assets.find(function(a){ return a.id===id; }); }
@@ -313,10 +330,12 @@ function render(){
      + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">🗺️ Routes</button>'
      + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">💰 Payments</button>'
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">🧾 Freshpet Billing</button>'
+     + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">📥 Upload / Reactive</button>'
      + '</div>';
   h += tab==='overview' ? renderOverview()
      : tab==='routes' ? renderRoutes()
      : tab==='payments' ? renderPayments()
+     : tab==='reactive' ? renderReactive()
      : renderBilling();
   h += '</div>';
   app.innerHTML = h;
@@ -846,6 +865,222 @@ function renderBilling(){
     });
     h += '</tbody></table></div>';
     h += '<div class="muted" style="margin-top:8px;font-size:.78rem">'+selectableCount+' unbilled shown.</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// ═══ Reactive / CSV upload ═══
+function parseCSV(text){
+  var rows=[], row=[], cur='', inQ=false;
+  for(var i=0;i<text.length;i++){ var c=text[i];
+    if(inQ){ if(c==='"'){ if(text[i+1]==='"'){ cur+='"'; i++; } else { inQ=false; } } else { cur+=c; } }
+    else if(c==='"'){ inQ=true; }
+    else if(c===','){ row.push(cur); cur=''; }
+    else if(c==='\n'){ row.push(cur); cur=''; if(row.some(function(x){return x.trim()!=='';})) rows.push(row); row=[]; }
+    else if(c!=='\r'){ cur+=c; }
+  }
+  row.push(cur); if(row.some(function(x){return x.trim()!=='';})) rows.push(row);
+  return rows;
+}
+var CSV_COLMAP = {
+  store:['account name','store','store name'],
+  address:['shipping address line 1','address','shipping street'],
+  city:['city'], state:['shipping state/province','state','state/province'],
+  zip:['shipping zip/postal code','zip','zip/postal code','zip code','postal code'],
+  phone:['phone'], manufacturer:['manufacturer'], model:['model'],
+  serial:['asset: serial number','serial number','serial'], warranty:['warranty']
+};
+function mapCSVHeader(headerRow){
+  var idx={}; headerRow.forEach(function(cell,i){ var n=cell.trim().toLowerCase().replace(/^location:\s*/,'');
+    for(var f in CSV_COLMAP){ if(idx[f]===undefined && CSV_COLMAP[f].indexOf(n)>-1) idx[f]=i; } });
+  return idx;
+}
+// Heuristic: warranty column empty / says out/expired/no → out of warranty (billable).
+// A future-dated warranty (or explicit yes/active) → under warranty. Admin can flip per row.
+function isOutOfWarranty(w){
+  var s=(w||'').trim().toLowerCase();
+  if(!s) return true;
+  if(/(out|expired|none|no\b|n\/a|na)/.test(s)) return true;
+  if(/(active|yes|in warranty|under|covered)/.test(s)) return false;
+  var d=Date.parse(s); if(!isNaN(d)) return d < Date.now();   // past date = expired
+  return true;
+}
+function onReactiveCSV(input){
+  var file=input.files&&input.files[0]; if(!file) return;
+  rvFileName=file.name; rvMode=''; rvRows=null; rvReview=null; rvPMPreview=null; rvResult=null;
+  var reader=new FileReader();
+  reader.onload=function(e){
+    var raw=parseCSV(e.target.result);
+    if(raw.length<2){ toast('CSV appears empty','err'); return; }
+    var idx=mapCSVHeader(raw[0]);
+    var need=['store','city','serial']; var miss=need.filter(function(f){ return idx[f]===undefined; });
+    if(miss.length){ toast('CSV missing columns: '+miss.join(', '),'err'); return; }
+    var out=[];
+    for(var i=1;i<raw.length;i++){ var r=raw[i]; var g=function(f){ return idx[f]!==undefined && r[idx[f]]!==undefined ? r[idx[f]].trim() : ''; };
+      var serial=g('serial'); if(!serial) continue;
+      out.push({ store:g('store'), address:g('address'), city:g('city'), state:g('state')||'CA', zip:g('zip'),
+        phone:g('phone'), manufacturer:g('manufacturer'), model:g('model'), serial:serial, warranty:g('warranty') });
+    }
+    rvRows=out; render();
+  };
+  reader.readAsText(file);
+}
+function pickMode(m){ rvMode=m; rvResult=null;
+  if(m==='reactive'){ rvReview = rvRows.map(function(x){ var oow=isOutOfWarranty(x.warranty); return Object.assign({}, x, { under_warranty:!oow, approved:true }); }); }
+  if(m==='pm'){ buildPMPreview(); }
+  render();
+}
+function toggleRvApprove(i){ rvReview[i].approved=!rvReview[i].approved; render(); }
+function toggleRvWarranty(i){ rvReview[i].under_warranty=!rvReview[i].under_warranty; render(); }
+
+// ── PM reset ──
+function buildPMPreview(){
+  var bySerial={}; assets.forEach(function(a){ bySerial[a.serial]=a; });
+  var fileSerials={}; rvRows.forEach(function(x){ fileSerials[x.serial]=1; });
+  var completedSerials={}; completedPMs.forEach(function(p){ completedSerials[p.serial]=1; });
+  var newCount=0, updateCount=0;
+  rvRows.forEach(function(x){ if(bySerial[x.serial]) updateCount++; else newCount++; });
+  var deactivate=assets.filter(function(a){ return !fileSerials[a.serial]; });
+  // assignments dropped = those whose asset is completed; kept = uncompleted
+  var completedAssignments = assignments.filter(function(a){ var as=assetById(a.asset_id); return as && completedSerials[as.serial]; });
+  rvPMPreview={ newCount:newCount, updateCount:updateCount, deactivate:deactivate, dropAssign:completedAssignments.length, keepAssign:assignments.length-completedAssignments.length };
+  render();
+}
+async function applyPMReset(){
+  if(!rvRows) return;
+  var p=rvPMPreview||{};
+  if(!confirm('This resets the PM routes loaded as of '+new Date().toLocaleDateString()+'.\n\n• '+p.newCount+' new locations added (unassigned)\n• '+p.updateCount+' existing updated\n• '+(p.deactivate?p.deactivate.length:0)+' removed (deactivated)\n• '+p.dropAssign+' completed stops unassigned; '+p.keepAssign+' pending assignments kept\n\nAll completed PM history is preserved. Continue?')) return;
+  rvBusy=true; render();
+  try{
+    // Upsert assets by serial
+    var bySerial={}; assets.forEach(function(a){ bySerial[a.serial]=a; });
+    var completedSerials={}; completedPMs.forEach(function(x){ completedSerials[x.serial]=1; });
+    for(var i=0;i<rvRows.length;i++){ var x=rvRows[i]; var ex=bySerial[x.serial];
+      var rec={ store:x.store, address:x.address, city:x.city, state:x.state, zip:x.zip, phone:x.phone,
+        manufacturer:x.manufacturer, model:x.model, serial:x.serial, warranty:x.warranty, active:true };
+      if(ex){ await sb.from('assets').update(rec).eq('id', ex.id); }
+      else { await sb.from('assets').insert(rec); }
+    }
+    // Deactivate assets not in the file
+    var fileSerials={}; rvRows.forEach(function(x){ fileSerials[x.serial]=1; });
+    var deact=assets.filter(function(a){ return !fileSerials[a.serial]; }).map(function(a){ return a.id; });
+    if(deact.length){ await sb.from('assets').update({ active:false }).in('id', deact); }
+    // Drop route assignments for COMPLETED assets; keep pending ones
+    var dropIds=assignments.filter(function(a){ var as=assetById(a.asset_id); return as && completedSerials[as.serial]; }).map(function(a){ return a.asset_id; });
+    if(dropIds.length){ await sb.from('route_assignments').delete().in('asset_id', dropIds); }
+    await loadAll();
+    rvRows=null; rvMode=''; rvPMPreview=null; rvBusy=false;
+    toast('PM routes reset — new locations loaded, pending assignments kept','ok'); render();
+  }catch(e){ rvBusy=false; toast('Reset failed: '+e.message,'err'); render(); }
+}
+
+// ── Reactive quarterly ──
+function composeDenyEmail(){
+  var denied=(rvReview||[]).filter(function(x){ return !x.approved; });
+  if(!denied.length){ toast('No denied accounts to report','info'); return; }
+  var body='Please remove the following accounts from the Freshpet quarterly reactive list'+(rvQuarter?' ('+rvQuarter+')':'')+':\n\n'
+    + denied.map(function(x){ return '• '+x.store+' — '+(x.city||'')+' — S/N '+x.serial; }).join('\n')
+    + '\n\nThank you.';
+  window.location.href='mailto:?subject='+encodeURIComponent('Freshpet reactive list — accounts to remove'+(rvQuarter?' ('+rvQuarter+')':''))+'&body='+encodeURIComponent(body);
+}
+async function createReactiveInvoice(){
+  var approved=(rvReview||[]).filter(function(x){ return x.approved; });
+  if(!approved.length) return toast('No approved assets to invoice','err');
+  var billable=approved.filter(function(x){ return !x.under_warranty; });
+  var rate=Number(rvRate)||30;
+  if(!confirm('Create a Quarterly Reactive invoice?\n\n'+approved.length+' assets imported ('+billable.length+' out-of-warranty billed @ '+money(rate)+' = '+money(billable.length*rate)+').\nDenied: '+((rvReview.length)-approved.length)+'.\n\nThis posts a real QBO invoice (FP-QRB) and adds it to the portal.')) return;
+  rvBusy=true; rvResult=null; render();
+  try{
+    var token=(await sb.auth.getSession()).data.session.access_token;
+    // 1) allocate FP-QRB ref
+    var refRes=await sb.rpc('fp_next_qrb_ref'); if(refRes.error) throw new Error(refRes.error.message);
+    var ref=refRes.data;
+    // 2) create batch
+    var bIns=await sb.from('reactive_batches').insert({ invoice_ref:ref, quarter_label:rvQuarter||null, location:rvLocation||null,
+      rate:rate, asset_count:approved.length, billable_count:billable.length, total:billable.length*rate, status:'draft', created_by:user.email }).select('id').single();
+    if(bIns.error) throw new Error(bIns.error.message);
+    var batchId=bIns.data.id;
+    // 3) insert approved assets
+    var rows=approved.map(function(x){ return { batch_id:batchId, store:x.store, address:x.address, city:x.city, state:x.state, zip:x.zip,
+      serial:x.serial, model:x.model, manufacturer:x.manufacturer, under_warranty:!!x.under_warranty, billable:!x.under_warranty, approved:true }; });
+    var aIns=await sb.from('reactive_assets').insert(rows); if(aIns.error) throw new Error(aIns.error.message);
+    // 4) create the QBO invoice + PDF via the backend
+    var res=await fetch(QUARTERLY_FN,{ method:'POST', headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+token },
+      body:JSON.stringify({ mode:'create', batchId:batchId, rate:rate, recipientEmail:(rvRecipient||'').trim() }) });
+    var j=await res.json(); if(!res.ok) throw new Error(j.error||('HTTP '+res.status));
+    rvResult=j; rvRows=null; rvMode=''; rvReview=null;
+    await loadAll();
+    toast('Invoice '+(j.invoice&&j.invoice.ref)+' created','ok');
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+  rvBusy=false; render();
+}
+
+function renderReactive(){
+  var h='<div class="card"><h3>Upload asset spreadsheet</h3><div class="hint">Upload the Freshpet CSV, then choose what to do with it. Matched by serial. Same file works for a PM route reset or a Quarterly Reactive invoice.</div>';
+  h += '<input type="file" accept=".csv,text/csv" onchange="onReactiveCSV(this)" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--bd);border-radius:10px;color:var(--tx)">';
+  if(rvRows){
+    h += '<div class="muted" style="margin-top:10px">📄 '+esc(rvFileName)+' — '+rvRows.length+' assets parsed.</div>';
+    h += '<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">'
+       + '<button class="btn '+(rvMode==='pm'?'':'o')+'" onclick="pickMode(\'pm\')">🗺️ Update PM routes</button>'
+       + '<button class="btn '+(rvMode==='reactive'?'':'o')+'" onclick="pickMode(\'reactive\')">🧾 Create Quarterly Reactive Invoice</button>'
+       + '</div>';
+  }
+  h += '</div>';
+
+  // PM reset
+  if(rvMode==='pm' && rvPMPreview){
+    var p=rvPMPreview;
+    h += '<div class="card"><h3>Update PM routes</h3><div class="hint">Reloads locations from the file. Completed PM history is kept. Completed stops are unassigned; <strong>pending (uncompleted) assignments are kept</strong>; new locations come in unassigned and need routing.</div>';
+    h += '<div style="line-height:2">➕ <strong>'+p.newCount+'</strong> new locations · 🔄 <strong>'+p.updateCount+'</strong> updated · 🗑️ <strong>'+p.deactivate.length+'</strong> removed<br>'
+       + '🧹 <strong>'+p.dropAssign+'</strong> completed stops unassigned · ✅ <strong>'+p.keepAssign+'</strong> pending assignments kept</div>';
+    h += '<button class="btn rd" style="margin-top:12px" onclick="applyPMReset()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Working…':'⚠ Reset PM routes')+'</button>';
+    h += '</div>';
+  }
+
+  // Reactive review
+  if(rvMode==='reactive' && rvReview){
+    var appr=rvReview.filter(function(x){return x.approved;}); var bill=appr.filter(function(x){return !x.under_warranty;});
+    var rate=Number(rvRate)||30;
+    h += '<div class="card"><h3>Quarterly Reactive — review</h3><div class="hint">Approve/deny each account. Denied accounts can be emailed back to Freshpet to remove. Approved accounts import; only <strong>out-of-warranty</strong> ones are billed @ rate. All approved appear on the invoice report; billing counts OOW only.</div>';
+    h += '<div class="row" style="align-items:flex-end">'
+       + '<div style="flex:none"><label class="f">Quarter</label><input type="text" placeholder="2026 Q3" value="'+esc(rvQuarter)+'" oninput="rvQuarter=this.value" style="max-width:140px"></div>'
+       + '<div class="col" style="max-width:240px"><label class="f">Location label</label><input type="text" placeholder="NorCal" value="'+esc(rvLocation)+'" oninput="rvLocation=this.value"></div>'
+       + '<div style="flex:none"><label class="f">Rate / cooler</label><input type="number" step="0.01" min="0" value="'+rate+'" oninput="rvRate=this.value" style="max-width:110px;text-align:right"></div>'
+       + '<div class="col" style="max-width:260px"><label class="f">Invoice email (optional)</label><input type="text" placeholder="billing@freshpet.com" value="'+esc(rvRecipient)+'" oninput="rvRecipient=this.value"></div>'
+       + '</div>';
+    h += '<div style="display:flex;align-items:center;gap:14px;margin:12px 0;flex-wrap:wrap"><span class="muted">'+appr.length+' approved · '+bill.length+' out-of-warranty (billed) · '+money(bill.length*rate)+'</span>'
+       + '<div style="margin-left:auto;display:flex;gap:8px"><button class="btn o sm" onclick="composeDenyEmail()">✉ Email denied to Freshpet</button>'
+       + '<button class="btn gn sm" onclick="createReactiveInvoice()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Working…':'🧾 Create FP-QRB invoice')+'</button></div></div>';
+    h += '<div style="overflow-x:auto;max-height:460px;overflow-y:auto"><table><thead><tr><th>Store</th><th class="hide">City</th><th>Serial</th><th>Warranty</th><th>Approve</th></tr></thead><tbody>';
+    rvReview.forEach(function(x,i){
+      h += '<tr'+(!x.approved?' style="opacity:.5"':'')+'>'
+        + '<td>'+esc(x.store||'')+'</td><td class="hide">'+esc(x.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(x.serial||'')+'</td>'
+        + '<td><button class="btn o sm" onclick="toggleRvWarranty('+i+')" title="Toggle warranty">'+(x.under_warranty?'🛡 Under warranty':'💲 Out of warranty')+'</button></td>'
+        + '<td><button class="btn '+(x.approved?'gn':'o')+' sm" onclick="toggleRvApprove('+i+')">'+(x.approved?'✓ Approved':'✕ Denied')+'</button></td></tr>';
+    });
+    h += '</tbody></table></div></div>';
+  }
+
+  if(rvResult){
+    var inv=rvResult.invoice||{};
+    h += '<div class="card" style="background:var(--sf2);border-color:var(--gn)"><h3 style="color:var(--gn)">✓ '+esc(inv.ref)+' created</h3>'
+       + '<div class="muted" style="font-size:.85rem">'+inv.billableCount+' out-of-warranty billed of '+inv.assetCount+' assets · '+money(inv.total)+' · item '+esc(inv.itemUsed)+(rvResult.emailed?' · emailed':'')+(inv.pdfStored?' · PDF stored':'')+'</div>'
+       + ((rvResult.warnings&&rvResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">⚠ '+rvResult.warnings.map(esc).join('<br>⚠ ')+'</div>':'')
+       + '</div>';
+  }
+
+  // Existing reactive batches
+  h += '<div class="card"><h3>Quarterly Reactive invoices</h3>';
+  if(!rvBatches.length){ h += '<div class="empty" style="padding:16px">None yet.</div>'; }
+  else {
+    h += '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Quarter</th><th>Location</th><th class="num">OOW billed</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>';
+    rvBatches.forEach(function(b){
+      h += '<tr><td class="mono">'+esc(b.invoice_ref)+'</td><td>'+esc(b.quarter_label||'')+'</td><td>'+esc(b.location||'')+'</td>'
+         + '<td class="num">'+(b.billable_count||0)+'</td><td class="num">'+money(b.total)+'</td>'
+         + '<td>'+(b.status==='invoiced'?'<span class="pill gn">Invoiced</span>':'<span class="pill am">Draft</span>')+'</td></tr>';
+    });
+    h += '</tbody></table></div>';
   }
   h += '</div>';
   return h;
