@@ -9,6 +9,8 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
+<!-- Excel (.xls/.xlsx) parsing for the asset uploads. -->
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <!-- Pre-paint: follow the shared APBG theme (same origin as the gateway). -->
 <script>
   (function(){ try { var t = localStorage.getItem('apbg_theme')==='light'?'light':'dark'; document.documentElement.setAttribute('data-apbg-theme', t); } catch(e){} })();
@@ -906,25 +908,42 @@ function isOutOfWarranty(w){
   var d=Date.parse(s); if(!isNaN(d)) return d < Date.now();   // past date = expired
   return true;
 }
+// Turn a raw grid (array of arrays; row 0 = headers) into asset records.
+function rowsToAssetRecords(raw){
+  if(!raw || raw.length<2){ toast('File appears empty','err'); return null; }
+  var idx=mapCSVHeader(raw[0].map(function(c){ return c==null?'':String(c); }));
+  var need=['store','city','serial']; var miss=need.filter(function(f){ return idx[f]===undefined; });
+  if(miss.length){ toast('File missing columns: '+miss.join(', '),'err'); return null; }
+  var out=[];
+  for(var i=1;i<raw.length;i++){ var r=raw[i]||[];
+    var g=function(f){ var v=idx[f]!==undefined ? r[idx[f]] : ''; return v==null?'':String(v).trim(); };
+    var serial=g('serial'); if(!serial) continue;
+    out.push({ store:g('store'), address:g('address'), city:g('city'), state:g('state')||'CA', zip:g('zip'),
+      phone:g('phone'), manufacturer:g('manufacturer'), model:g('model'), serial:serial, warranty:g('warranty') });
+  }
+  return out;
+}
 function onReactiveCSV(input){
   var file=input.files&&input.files[0]; if(!file) return;
   rvFileName=file.name; rvMode=''; rvRows=null; rvReview=null; rvPMPreview=null; rvResult=null;
+  var isXls=/\.xlsx?$/i.test(file.name);
+  if(isXls && typeof XLSX==='undefined'){ toast('Excel reader not loaded — try a CSV, or reload','err'); return; }
   var reader=new FileReader();
   reader.onload=function(e){
-    var raw=parseCSV(e.target.result);
-    if(raw.length<2){ toast('CSV appears empty','err'); return; }
-    var idx=mapCSVHeader(raw[0]);
-    var need=['store','city','serial']; var miss=need.filter(function(f){ return idx[f]===undefined; });
-    if(miss.length){ toast('CSV missing columns: '+miss.join(', '),'err'); return; }
-    var out=[];
-    for(var i=1;i<raw.length;i++){ var r=raw[i]; var g=function(f){ return idx[f]!==undefined && r[idx[f]]!==undefined ? r[idx[f]].trim() : ''; };
-      var serial=g('serial'); if(!serial) continue;
-      out.push({ store:g('store'), address:g('address'), city:g('city'), state:g('state')||'CA', zip:g('zip'),
-        phone:g('phone'), manufacturer:g('manufacturer'), model:g('model'), serial:serial, warranty:g('warranty') });
-    }
+    var raw;
+    try{
+      if(isXls){
+        var wb=XLSX.read(new Uint8Array(e.target.result), { type:'array' });
+        var ws=wb.Sheets[wb.SheetNames[0]];
+        raw=XLSX.utils.sheet_to_json(ws, { header:1, blankrows:false, defval:'' });
+      } else {
+        raw=parseCSV(e.target.result);
+      }
+    }catch(err){ toast('Could not read file: '+err.message,'err'); return; }
+    var out=rowsToAssetRecords(raw); if(!out) return;
     rvRows=out; render();
   };
-  reader.readAsText(file);
+  if(isXls) reader.readAsArrayBuffer(file); else reader.readAsText(file);
 }
 function pickMode(m){ rvMode=m; rvResult=null;
   if(m==='reactive'){ rvReview = rvRows.map(function(x){ var oow=isOutOfWarranty(x.warranty); return Object.assign({}, x, { under_warranty:!oow, approved:true }); }); }
@@ -1017,8 +1036,8 @@ async function createReactiveInvoice(){
 }
 
 function renderReactive(){
-  var h='<div class="card"><h3>Upload asset spreadsheet</h3><div class="hint">Upload the Freshpet CSV, then choose what to do with it. Matched by serial. Same file works for a PM route reset or a Quarterly Reactive invoice.</div>';
-  h += '<input type="file" accept=".csv,text/csv" onchange="onReactiveCSV(this)" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--bd);border-radius:10px;color:var(--tx)">';
+  var h='<div class="card"><h3>Upload asset spreadsheet</h3><div class="hint">Upload the Freshpet asset list as <strong>CSV or Excel (.xls/.xlsx)</strong>, then choose what to do with it. Matched by serial. Same file works for a PM route reset or a Quarterly Reactive invoice.</div>';
+  h += '<input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="onReactiveCSV(this)" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--bd);border-radius:10px;color:var(--tx)">';
   if(rvRows){
     h += '<div class="muted" style="margin-top:10px">📄 '+esc(rvFileName)+' — '+rvRows.length+' assets parsed.</div>';
     h += '<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">'
