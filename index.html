@@ -2340,6 +2340,20 @@ async function removeStopFromRoute(assetIds) {
 }
 
 // ===== Submit =====
+// Best-effort GPS at sign time. Resolves to {lat,lng,accuracy} or null within
+// ~8s — never blocks the PM submit if permission is denied/unavailable.
+function getGps() {
+  return new Promise(function(resolve) {
+    if (!navigator.geolocation) { resolve(null); return; }
+    var done = false;
+    var t = setTimeout(function(){ if(!done){ done=true; resolve(null); } }, 8000);
+    navigator.geolocation.getCurrentPosition(
+      function(pos){ if(done) return; done=true; clearTimeout(t); resolve({ lat:pos.coords.latitude, lng:pos.coords.longitude, accuracy:pos.coords.accuracy }); },
+      function(){ if(done) return; done=true; clearTimeout(t); resolve(null); },
+      { enableHighAccuracy:true, timeout:7000, maximumAge:60000 }
+    );
+  });
+}
 async function submitForm() {
   if (submitting) return;
   if (!form.techName) { showStatus('Please enter tech name', 'err'); return; }
@@ -2359,6 +2373,9 @@ async function submitForm() {
 
     var a = selectedAsset;
     var timestamp = Date.now();
+    // Capture the sign time + GPS at submit (best-effort; never blocks).
+    var signedAt = new Date().toISOString();
+    var gps = await getGps();
     var safeStore = a.store.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
     var baseName = safeStore + '_' + a.serial + '_' + (form.date || '').replace(/-/g, '');
 
@@ -2398,6 +2415,10 @@ async function submitForm() {
       photo_paths: photoPaths,
       store: a.store,
       serial: a.serial,
+      signed_at: signedAt,
+      gps_lat: gps ? gps.lat : null,
+      gps_lng: gps ? gps.lng : null,
+      gps_accuracy: gps ? gps.accuracy : null,
       needs_review: ticketFlag || !!(prevPm && prevPm.needs_review)
     };
     var dbErr;

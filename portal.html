@@ -231,10 +231,12 @@ function callCard(p){
     + (p.pdf_path?'<span class="pill">📄 Report</span>':'')
     + (p.prev_comp?'<span class="pill dim">Prior</span>':'')
     + '</div>'
-    + '<div class="dt">'+esc(fmtDate(p.pm_date))+' · S/N '+esc(p.serial||a.serial||'—')+'</div>'
+    + '<div class="dt">'+(p.signed_at?'🕒 '+esc(fmtDateTime(p.signed_at)):esc(fmtDate(p.pm_date)))+' · S/N '+esc(p.serial||a.serial||'—')+'</div>'
     + '</button>';
 }
 function fmtDate(d){ if(!d) return '—'; try{ return new Date(d+'T00:00:00').toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }catch(e){ return d; } }
+// Full date + time from a timestamptz (the moment the PM was signed/completed).
+function fmtDateTime(iso){ if(!iso) return ''; try{ return new Date(iso).toLocaleString('en-US',{month:'short',day:'numeric',year:'numeric',hour:'numeric',minute:'2-digit'}); }catch(e){ return String(iso); } }
 function monthKey(d){ return (d||'').slice(0,7); }
 function monthLabel(k){ if(!k) return 'Undated'; try{ return new Date(k+'-01T00:00:00').toLocaleDateString('en-US',{month:'long',year:'numeric'}); }catch(e){ return k; } }
 
@@ -445,6 +447,7 @@ function openCall(id){
   // key facts
   h += '<div class="kv">'
      + kv('Service date', fmtDate(p.pm_date))
+     + (p.signed_at?kv('Completed', fmtDateTime(p.signed_at)):'')
      + kv('Equipment', [a.manufacturer,a.model].filter(Boolean).join(' ')||'—')
      + kv('Serial #', p.serial||a.serial||'—')
      + kv('Technician', p.tech_name||'—')
@@ -453,6 +456,18 @@ function openCall(id){
      + (p.billed?kv('Invoice #', p.invoice_doc_number||'—'):'')
      + (p.billed&&p.invoiced_at?kv('Invoiced', fmtDate((p.invoiced_at||'').slice(0,10))):'')
      + '</div>';
+
+  // GPS captured when the tech signed — link out to the map.
+  if (p.gps_lat!=null && p.gps_lng!=null){
+    var gLat=Number(p.gps_lat), gLng=Number(p.gps_lng);
+    if(!isNaN(gLat)&&!isNaN(gLng)){
+      var acc = p.gps_accuracy!=null ? ' (±'+Math.round(Number(p.gps_accuracy))+' m)' : '';
+      h += '<div class="notes" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+         + '<span>📍 <strong>Signed at</strong> '+esc(gLat.toFixed(5))+', '+esc(gLng.toFixed(5))+esc(acc)+'</span>'
+         + '<a class="btn sm" href="https://maps.google.com/?q='+gLat+','+gLng+'" target="_blank" rel="noopener" style="margin-left:auto">🗺 View on map</a>'
+         + '</div>';
+    }
+  }
 
   if (fd.legacy){
     var link = fd.legacy_link || '';
