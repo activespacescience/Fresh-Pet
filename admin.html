@@ -179,6 +179,8 @@ var rvRecipient = '';
 var rvBusy = false;
 var rvResult = null;
 var rvPMPreview = null;       // {newCount, updateCount, deactivate[], completedDrop}
+var rvFilter = 'all';         // review filter: all | out | under
+var rvSearch = '';            // review search text
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
@@ -961,6 +963,20 @@ function pickMode(m){ rvMode=m; rvResult=null;
 }
 function toggleRvApprove(i){ rvReview[i].approved=!rvReview[i].approved; render(); }
 function toggleRvWarranty(i){ rvReview[i].under_warranty=!rvReview[i].under_warranty; render(); }
+// Indices of review rows matching the current warranty filter + search.
+function rvShown(){
+  var q=rvSearch.trim().toLowerCase();
+  var out=[];
+  (rvReview||[]).forEach(function(x,i){
+    if(rvFilter==='out' && x.under_warranty) return;
+    if(rvFilter==='under' && !x.under_warranty) return;
+    if(q && ((x.store||'')+' '+(x.city||'')+' '+(x.serial||'')).toLowerCase().indexOf(q)<0) return;
+    out.push(i);
+  });
+  return out;
+}
+function setRvFilter(f){ rvFilter=f; render(); }
+function rvApproveShown(v){ rvShown().forEach(function(i){ rvReview[i].approved=v; }); render(); }
 
 // ── PM reset ──
 function buildPMPreview(){
@@ -1077,11 +1093,27 @@ function renderReactive(){
        + '<div style="flex:none"><label class="f">Rate / cooler</label><input type="number" step="0.01" min="0" value="'+rate+'" oninput="rvRate=this.value" style="max-width:110px;text-align:right"></div>'
        + '<div class="col" style="max-width:260px"><label class="f">Invoice email (optional)</label><input type="text" placeholder="billing@freshpet.com" value="'+esc(rvRecipient)+'" oninput="rvRecipient=this.value"></div>'
        + '</div>';
+    var outN=rvReview.filter(function(x){return !x.under_warranty;}).length;
+    var underN=rvReview.length-outN;
     h += '<div style="display:flex;align-items:center;gap:14px;margin:12px 0;flex-wrap:wrap"><span class="muted">'+appr.length+' approved · '+bill.length+' out-of-warranty (billed) · '+money(bill.length*rate)+'</span>'
        + '<div style="margin-left:auto;display:flex;gap:8px"><button class="btn o sm" onclick="composeDenyEmail()">✉ Email denied to Freshpet</button>'
        + '<button class="btn gn sm" onclick="createReactiveInvoice()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Working…':'🧾 Create FP-QRB invoice')+'</button></div></div>';
+    // Filter + bulk approve/deny (speeds up review: e.g. filter Under → Deny all, or Out → Approve all)
+    var shown=rvShown();
+    h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
+       + '<div class="seg">'
+         + '<button class="'+(rvFilter==='all'?'on':'')+'" onclick="setRvFilter(\'all\')">All ('+rvReview.length+')</button>'
+         + '<button class="'+(rvFilter==='out'?'on':'')+'" onclick="setRvFilter(\'out\')">💲 Out ('+outN+')</button>'
+         + '<button class="'+(rvFilter==='under'?'on':'')+'" onclick="setRvFilter(\'under\')">🛡 Under ('+underN+')</button>'
+       + '</div>'
+       + '<input type="search" placeholder="Search store, city, serial…" value="'+esc(rvSearch)+'" oninput="rvSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
+       + '<span class="muted" style="font-size:.8rem">'+shown.length+' shown</span>'
+       + '<button class="btn gn sm" onclick="rvApproveShown(true)">✓ Approve shown</button>'
+       + '<button class="btn o sm" onclick="rvApproveShown(false)">✕ Deny shown</button>'
+       + '</div>';
     h += '<div style="overflow-x:auto;max-height:460px;overflow-y:auto"><table><thead><tr><th>Store</th><th class="hide">City</th><th>Serial</th><th>Warranty</th><th>Approve</th></tr></thead><tbody>';
-    rvReview.forEach(function(x,i){
+    if(!shown.length){ h += '<tr><td colspan="5" class="empty">No rows match.</td></tr>'; }
+    shown.forEach(function(i){ var x=rvReview[i];
       h += '<tr'+(!x.approved?' style="opacity:.5"':'')+'>'
         + '<td>'+esc(x.store||'')+'</td><td class="hide">'+esc(x.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(x.serial||'')+'</td>'
         + '<td><button class="btn o sm" onclick="toggleRvWarranty('+i+')" title="Toggle warranty">'+(x.under_warranty?'🛡 Under warranty':'💲 Out of warranty')+'</button></td>'
