@@ -187,7 +187,14 @@ var rvSavedSearch = '';       // saved-account lookup search text
 var SEND_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-send-invoice';
 var siType = 'reactive';      // 'reactive' | 'pm'
 var siRef = '';               // selected invoice ref
-var siRecipients = '';        // comma-separated recipient emails
+// Quick-pick recipients. accountspayable@freshpet.com is pre-selected.
+var SEND_RECIPIENTS = [
+  'accountspayable@freshpet.com', 'roparaku@Freshpet.com',
+  'service@brixbev.com', 'invoicing@brixbev.com', 'skypace@brixbev.com', 'marco@brixbev.com',
+  'sky@freeflowbev.com', 'sam@freeflowbev.com', 'daniel@freeflowbev.com'
+];
+var siPicked = { 'accountspayable@freshpet.com': true };  // pre-checked default
+var siRecipients = '';        // additional ad-hoc emails (comma-separated)
 var siAttach = true;          // attach the invoice PDF
 var siBusy = false;
 var siResult = null;
@@ -1165,10 +1172,14 @@ function pmInvoiceList(){
   return Object.keys(map).map(function(k){ return map[k]; }).sort(function(a,b){ return a.ref<b.ref?1:-1; });
 }
 function setSiType(t){ siType=t; siRef=''; siResult=null; render(); }
+function toggleSiRecip(e){ siPicked[e]=!siPicked[e]; siResult=null; render(); }
 async function sendInvoiceEmail(){
   var ref=(siRef||'').trim(); if(!ref) return toast('Pick an invoice first','err');
-  var recips=(siRecipients||'').split(/[,;\s]+/).map(function(s){return s.trim();}).filter(Boolean);
-  if(!recips.length) return toast('Enter at least one recipient email','err');
+  var picked=SEND_RECIPIENTS.filter(function(e){ return siPicked[e]; });
+  var typed=(siRecipients||'').split(/[,;\s]+/).map(function(s){return s.trim();}).filter(Boolean);
+  var seen={}, recips=[];
+  picked.concat(typed).forEach(function(e){ var k=e.toLowerCase(); if(!seen[k]){ seen[k]=1; recips.push(e); } });
+  if(!recips.length) return toast('Select or enter at least one recipient','err');
   var bad=recips.filter(function(e){ return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); });
   if(bad.length) return toast('Invalid email: '+bad[0],'err');
   siBusy=true; siResult=null; render();
@@ -1195,8 +1206,15 @@ function renderSendInvoice(){
      + '<option value="">'+(list.length?'— pick an invoice —':'(none billed yet)')+'</option>'
      + list.map(function(o){ return '<option value="'+esc(o.ref)+'"'+(siRef===o.ref?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')
      + '</select></div>'
-     + '<div class="col" style="max-width:440px"><label class="f">Send to (comma-separated)</label><input type="text" placeholder="accounting@freshpet.com, ap@freshpet.com" value="'+esc(siRecipients)+'" oninput="siRecipients=this.value"></div>'
      + '</div>';
+  // Quick-pick recipients (accountspayable@freshpet.com pre-checked) + ad-hoc box.
+  var pickedN=SEND_RECIPIENTS.filter(function(e){return siPicked[e];}).length;
+  h += '<label class="f" style="margin-top:14px">Send to <span class="muted" style="text-transform:none;letter-spacing:0">('+pickedN+' selected)</span></label>';
+  h += '<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:12px">'
+     + SEND_RECIPIENTS.map(function(e){ return '<label style="display:flex;align-items:center;gap:7px;font-size:.83rem;color:var(--tx);cursor:pointer">'
+         + '<input type="checkbox" '+(siPicked[e]?'checked':'')+' onchange="toggleSiRecip(\''+e+'\')" style="width:auto;accent-color:var(--ac)"> '+esc(e)+'</label>'; }).join('')
+     + '</div>';
+  h += '<div class="col" style="max-width:440px"><label class="f">Additional emails (optional, comma-separated)</label><input type="text" placeholder="someone@example.com" value="'+esc(siRecipients)+'" oninput="siRecipients=this.value"></div>';
   h += '<div style="display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap">'
      + '<label style="display:flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:var(--tx2);cursor:pointer"><input type="checkbox" '+(siAttach?'checked':'')+' onchange="siAttach=this.checked" style="width:auto;accent-color:var(--ac)"> Attach invoice PDF</label>'
      + (siType==='pm'?'<span class="muted" style="font-size:.78rem">Portal backup link is always included for PM invoices.</span>':'')
