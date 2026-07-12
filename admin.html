@@ -900,18 +900,21 @@ function mapCSVHeader(headerRow){
     for(var f in CSV_COLMAP){ if(idx[f]===undefined && CSV_COLMAP[f].indexOf(n)>-1) idx[f]=i; } });
   return idx;
 }
-// Decide out-of-warranty (billable) from the Freshpet "Warranty Status" +
-// "Unit Warranty End Date" columns. End date wins when present (past = expired
-// = billable); else fall back to the status text. Admin can flip per row.
+// Decide out-of-warranty (billable) from the Freshpet "Warranty Status" column.
+// Live values are literally "OUT" (out of warranty → BILLED) and "UNDER" (under
+// warranty → imported so we can verify coverage, but NOT billed). The status is
+// authoritative; the "Unit Warranty End Date" is only a fallback when the
+// status is blank/ambiguous. Admin can still flip any row in the review.
+// Returns true = out of warranty (billable).
 function isOutOfWarranty(status, end){
-  var e=(end||'').trim();
-  if(e){ var d=Date.parse(e); if(!isNaN(d)) return d < Date.now(); }
   var s=(status||'').trim().toLowerCase();
-  if(!s) return true;
-  if(/(out|expired|none|no\b|n\/a|na)/.test(s)) return true;
-  if(/(active|yes|in warranty|under|covered)/.test(s)) return false;
-  var d2=Date.parse(s); if(!isNaN(d2)) return d2 < Date.now();
-  return true;
+  // Under warranty → not billed
+  if(/\bunder\b|in[\s-]?warranty|\bactive\b|\bcovered\b|\bvalid\b|\byes\b/.test(s)) return false;
+  // Out of warranty / expired → billed
+  if(/\bout\b|out[\s-]?of[\s-]?warranty|\bexpired\b|\bno\b|\bnone\b|n\/a/.test(s)) return true;
+  // Blank/ambiguous status → use the warranty end date (past = expired = billed)
+  var e=(end||'').trim(); if(e){ var d=Date.parse(e); if(!isNaN(d)) return d < Date.now(); }
+  return true; // default to billable when nothing is known
 }
 // Turn a raw grid (array of arrays; row 0 = headers) into asset records.
 function rowsToAssetRecords(raw){
