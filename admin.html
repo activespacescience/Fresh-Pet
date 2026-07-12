@@ -927,14 +927,17 @@ function rowsToAssetRecords(raw){
   var idx=mapCSVHeader(raw[0].map(function(c){ return c==null?'':String(c); }));
   var need=['store','city','serial']; var miss=need.filter(function(f){ return idx[f]===undefined; });
   if(miss.length){ toast('File missing columns: '+miss.join(', '),'err'); return null; }
-  var out=[];
+  var out=[], noSerial=0;
   for(var i=1;i<raw.length;i++){ var r=raw[i]||[];
     var g=function(f){ var v=idx[f]!==undefined ? r[idx[f]] : ''; return v==null?'':String(v).trim(); };
-    var serial=g('serial'); if(!serial) continue;
-    out.push({ store:g('store'), address:g('address'), city:g('city'), state:g('state')||'CA', zip:g('zip'),
+    var serial=g('serial'), store=g('store');
+    if(!serial && !store) continue;   // truly empty row — skip
+    if(!serial) noSerial++;            // keep it (serial can be filled in later); just count it
+    out.push({ store:store, address:g('address'), city:g('city'), state:g('state')||'CA', zip:g('zip'),
       phone:g('phone'), manufacturer:g('manufacturer'), model:g('model'), serial:serial,
       warranty:g('warranty'), warranty_end:g('warranty_end') });
   }
+  if(noSerial) toast(out.length+' assets loaded · '+noSerial+' have no serial number (still included)','info');
   return out;
 }
 function onReactiveCSV(input){
@@ -1055,9 +1058,10 @@ async function saveApprovedToQuarter(){
       if(bIns.error) throw new Error(bIns.error.message);
       batchId=bIns.data.id;
     }
-    // dedup by serial against what's already saved in this batch
-    var existing={}; rvSaved.forEach(function(a){ if(a.batch_id===batchId) existing[(a.serial||'').toUpperCase()]=1; });
-    var toSave=idxs.map(function(i){ return rvReview[i]; }).filter(function(x){ return !existing[(x.serial||'').toUpperCase()]; });
+    // dedup by serial against what's already saved in this batch (only for
+    // rows that actually have a serial — blank serials are never collapsed)
+    var existing={}; rvSaved.forEach(function(a){ if(a.batch_id===batchId && a.serial) existing[a.serial.toUpperCase()]=1; });
+    var toSave=idxs.map(function(i){ return rvReview[i]; }).filter(function(x){ return !(x.serial && existing[x.serial.toUpperCase()]); });
     if(toSave.length){
       var rows=toSave.map(function(x){ return { batch_id:batchId, store:x.store, address:x.address, city:x.city, state:x.state, zip:x.zip,
         serial:x.serial, model:x.model, manufacturer:x.manufacturer, under_warranty:!!x.under_warranty, billable:!x.under_warranty, approved:true }; });
