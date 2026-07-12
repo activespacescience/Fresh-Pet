@@ -1736,14 +1736,14 @@ function parseCSV(text) {
 var CSV_COLMAP = {
   store: ['account name', 'store', 'store name'],
   address: ['shipping address line 1', 'address', 'shipping street'],
-  city: ['city'],
+  city: ['shipping city', 'city'],
   state: ['shipping state/province', 'state', 'state/province'],
   zip: ['shipping zip/postal code', 'zip', 'zip/postal code', 'zip code', 'postal code'],
   phone: ['phone'],
   manufacturer: ['manufacturer'],
   model: ['model'],
   serial: ['asset: serial number', 'serial number', 'serial'],
-  warranty: ['warranty']
+  warranty: ['warranty status', 'warranty']
 };
 
 function mapCSVHeader(headerRow) {

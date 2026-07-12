@@ -888,24 +888,29 @@ function parseCSV(text){
 var CSV_COLMAP = {
   store:['account name','store','store name'],
   address:['shipping address line 1','address','shipping street'],
-  city:['city'], state:['shipping state/province','state','state/province'],
+  city:['shipping city','city'], state:['shipping state/province','state','state/province'],
   zip:['shipping zip/postal code','zip','zip/postal code','zip code','postal code'],
   phone:['phone'], manufacturer:['manufacturer'], model:['model'],
-  serial:['asset: serial number','serial number','serial'], warranty:['warranty']
+  serial:['asset: serial number','serial number','serial'],
+  warranty:['warranty status','warranty'],
+  warranty_end:['unit warranty end date','warranty end date','warranty end']
 };
 function mapCSVHeader(headerRow){
   var idx={}; headerRow.forEach(function(cell,i){ var n=cell.trim().toLowerCase().replace(/^location:\s*/,'');
     for(var f in CSV_COLMAP){ if(idx[f]===undefined && CSV_COLMAP[f].indexOf(n)>-1) idx[f]=i; } });
   return idx;
 }
-// Heuristic: warranty column empty / says out/expired/no → out of warranty (billable).
-// A future-dated warranty (or explicit yes/active) → under warranty. Admin can flip per row.
-function isOutOfWarranty(w){
-  var s=(w||'').trim().toLowerCase();
+// Decide out-of-warranty (billable) from the Freshpet "Warranty Status" +
+// "Unit Warranty End Date" columns. End date wins when present (past = expired
+// = billable); else fall back to the status text. Admin can flip per row.
+function isOutOfWarranty(status, end){
+  var e=(end||'').trim();
+  if(e){ var d=Date.parse(e); if(!isNaN(d)) return d < Date.now(); }
+  var s=(status||'').trim().toLowerCase();
   if(!s) return true;
   if(/(out|expired|none|no\b|n\/a|na)/.test(s)) return true;
   if(/(active|yes|in warranty|under|covered)/.test(s)) return false;
-  var d=Date.parse(s); if(!isNaN(d)) return d < Date.now();   // past date = expired
+  var d2=Date.parse(s); if(!isNaN(d2)) return d2 < Date.now();
   return true;
 }
 // Turn a raw grid (array of arrays; row 0 = headers) into asset records.
@@ -919,7 +924,8 @@ function rowsToAssetRecords(raw){
     var g=function(f){ var v=idx[f]!==undefined ? r[idx[f]] : ''; return v==null?'':String(v).trim(); };
     var serial=g('serial'); if(!serial) continue;
     out.push({ store:g('store'), address:g('address'), city:g('city'), state:g('state')||'CA', zip:g('zip'),
-      phone:g('phone'), manufacturer:g('manufacturer'), model:g('model'), serial:serial, warranty:g('warranty') });
+      phone:g('phone'), manufacturer:g('manufacturer'), model:g('model'), serial:serial,
+      warranty:g('warranty'), warranty_end:g('warranty_end') });
   }
   return out;
 }
@@ -946,7 +952,7 @@ function onReactiveCSV(input){
   if(isXls) reader.readAsArrayBuffer(file); else reader.readAsText(file);
 }
 function pickMode(m){ rvMode=m; rvResult=null;
-  if(m==='reactive'){ rvReview = rvRows.map(function(x){ var oow=isOutOfWarranty(x.warranty); return Object.assign({}, x, { under_warranty:!oow, approved:true }); }); }
+  if(m==='reactive'){ rvReview = rvRows.map(function(x){ var oow=isOutOfWarranty(x.warranty, x.warranty_end); return Object.assign({}, x, { under_warranty:!oow, approved:true }); }); }
   if(m==='pm'){ buildPMPreview(); }
   render();
 }
