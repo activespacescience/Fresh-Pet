@@ -185,6 +185,9 @@ var rvSavedSearch = '';       // saved-account lookup search text
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
+// Public URL for a stored reactive-invoice PDF (fp-invoices bucket is public).
+function fpInvoicePdfUrl(path){ return path ? (SUPA_URL+'/storage/v1/object/public/fp-invoices/'+encodeURIComponent(path)) : ''; }
+function fpPortalUrl(ref){ return 'https://alamedapointbg.com/freshpet/portal'+(ref?('?invoice='+encodeURIComponent(ref)):''); }
 function toast(msg, type){ var t=document.getElementById('toast'); t.innerHTML='<div class="toast '+(type||'info')+'">'+esc(msg)+'</div>'; setTimeout(function(){ t.innerHTML=''; }, 3500); }
 
 // ── auth ──
@@ -1203,8 +1206,15 @@ function renderReactive(){
 
   if(rvResult){
     var inv=rvResult.invoice||{};
+    var pdfUrl=inv.pdfUrl || fpInvoicePdfUrl('Invoice-'+String(inv.ref||'').replace(/[^A-Za-z0-9._-]/g,'_')+'.pdf');
+    var portalUrl=inv.portalUrl || fpPortalUrl(inv.ref);
     h += '<div class="card" style="background:var(--sf2);border-color:var(--gn)"><h3 style="color:var(--gn)">✓ '+esc(inv.ref)+' created</h3>'
        + '<div class="muted" style="font-size:.85rem">'+inv.billableCount+' out-of-warranty billed of '+inv.assetCount+' assets · '+money(inv.total)+' · item '+esc(inv.itemUsed)+(rvResult.emailed?' · emailed':'')+(inv.pdfStored?' · PDF stored':'')+'</div>'
+       + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
+       + (inv.pdfStored?('<a class="btn gn sm" href="'+esc(pdfUrl)+'" target="_blank" rel="noopener">📄 View invoice PDF</a>'):'')
+       + '<a class="btn o sm" href="'+esc(portalUrl)+'" target="_blank" rel="noopener">🔗 Open in portal</a>'
+       + (inv.qboInvoiceUrl?('<a class="btn o sm" href="'+esc(inv.qboInvoiceUrl)+'" target="_blank" rel="noopener">💵 Open in QuickBooks</a>'):'')
+       + '</div>'
        + ((rvResult.warnings&&rvResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">⚠ '+rvResult.warnings.map(esc).join('<br>⚠ ')+'</div>':'')
        + '</div>';
   }
@@ -1219,7 +1229,9 @@ function renderReactive(){
       h += '<tr><td class="mono">'+esc(b.invoice_ref||'—')+'</td><td>'+esc(b.quarter_label||'')+'</td><td>'+esc(b.location||'')+'</td>'
          + '<td class="num">'+savedN+'</td><td class="num">'+(b.billable_count||0)+'</td><td class="num">'+money(b.total)+'</td>'
          + '<td>'+(b.status==='invoiced'?'<span class="pill gn">Invoiced</span>':'<span class="pill am">Draft</span>')+'</td>'
-         + '<td style="white-space:nowrap">'+(b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>🧾 Invoice OOW</button> ':'')
+         + '<td style="white-space:nowrap">'
+           + (b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>🧾 Invoice OOW</button> ':'')
+           + (b.status==='invoiced'?('<a class="btn o sm" href="'+esc(fpInvoicePdfUrl(b.invoice_pdf_path||('Invoice-'+String(b.invoice_ref||'').replace(/[^A-Za-z0-9._-]/g,"_")+'.pdf')))+'" target="_blank" rel="noopener" title="View invoice PDF">📄 Invoice</a> '):'')
            + '<button class="btn o sm" onclick="deleteBatch('+b.id+')" '+(rvBusy?'disabled':'')+' title="Delete this saved dataset">🗑</button></td></tr>';
     });
     h += '</tbody></table></div>';
