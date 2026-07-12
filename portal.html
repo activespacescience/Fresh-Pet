@@ -3,22 +3,23 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0F172A">
+<meta name="theme-color" content="#FFF8F0">
 <title>Freshpet · Completed Service Calls</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 <style>
+/* Freshpet color system — light only (matches the admin console). Apple system
+   rounded font like the handheld field app; SF Mono for aligned numerics. */
 :root{
-  --bg:#0F172A; --sf:#171f33; --sf2:#1f2a44; --bd:#2b3a5c; --bd2:#3a4d75;
-  --tx:#E2E8F0; --tx2:#9fb0c7; --dim:#6b7b96;
-  --ac:#3B82F6; --ac2:#2563EB; --gn:#34D399; --am:#FBBF24; --rd:#F87171;
-  --shadow:0 4px 14px rgba(0,0,0,.35);
+  --bg:#FFF8F0; --sf:#FFFFFF; --sf2:#F6EEE3; --bd:#EEE0CF; --bd2:#DCC8AC;
+  --tx:#2A2521; --tx2:#786B5E; --dim:#A2937F;
+  --ac:#E56A15; --ac2:#C85A0E; --gn:#2FA24C; --am:#CF8A17; --rd:#DB4A44;
+  --shadow:0 4px 16px rgba(191,120,58,.13);
+  --font:'SF Pro Rounded',-apple-system,BlinkMacSystemFont,'Arial Rounded MT Bold','Segoe UI',Roboto,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:'DM Sans',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;-webkit-font-smoothing:antialiased}
-.mono{font-family:'JetBrains Mono',monospace}
+body{font-family:var(--font);background:var(--bg);color:var(--tx);min-height:100vh;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
 a{color:var(--ac);text-decoration:none}
 button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input,select{font-family:inherit;color:inherit}
@@ -39,7 +40,7 @@ input,select{font-family:inherit;color:inherit}
 /* Stats */
 .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px;margin:18px 0}
 .stat{background:var(--sf);border:1px solid var(--bd);border-radius:14px;padding:15px 17px;box-shadow:var(--shadow)}
-.stat .v{font-size:1.7rem;font-weight:800;font-family:'JetBrains Mono',monospace;letter-spacing:-.02em}
+.stat .v{font-size:1.7rem;font-weight:800;font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.02em}
 .stat .k{font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--tx2);margin-top:2px}
 /* Filters */
 .filters{display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:16px}
@@ -63,9 +64,9 @@ select:focus,input:focus{border-color:var(--ac)}
 .inv-h .chev{font-size:.9rem;color:var(--tx2);width:14px;flex:none}
 .inv-h .inv-t{flex:1;min-width:0}
 .inv-h .ttl{font-weight:800;font-size:1rem}
-.inv-h .sub{font-size:.78rem;color:var(--tx2);margin-top:1px;font-family:'JetBrains Mono',monospace}
-.inv-pdf{flex:none;font-size:.78rem;font-weight:700;color:var(--ac);border:1px solid var(--ac);border-radius:9px;padding:7px 11px;background:rgba(59,130,246,.08)}
-.inv-pdf:hover{background:rgba(59,130,246,.16)}
+.inv-h .sub{font-size:.78rem;color:var(--tx2);margin-top:1px;font-family:var(--mono);font-variant-numeric:tabular-nums}
+.inv-pdf{flex:none;font-size:.78rem;font-weight:700;color:var(--ac);border:1px solid var(--ac);border-radius:9px;padding:7px 11px;background:rgba(229,106,21,.10)}
+.inv-pdf:hover{background:rgba(229,106,21,.18)}
 .inv-nopdf{flex:none;font-size:.72rem;color:var(--dim)}
 /* Call cards */
 .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:12px}
@@ -75,11 +76,11 @@ select:focus,input:focus{border-color:var(--ac)}
 .call .ct{font-size:.78rem;color:var(--tx2);margin-top:1px}
 .call .meta{margin-top:10px;display:flex;flex-wrap:wrap;gap:6px}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:700;letter-spacing:.02em;padding:3px 9px;border-radius:999px;border:1px solid var(--bd);color:var(--tx2)}
-.pill.gn{color:var(--gn);border-color:var(--gn);background:rgba(52,211,153,.1)}
-.pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(59,130,246,.1)}
-.pill.iv{color:var(--am);border-color:var(--am);background:rgba(251,191,36,.12)}
+.pill.gn{color:var(--gn);border-color:var(--gn);background:rgba(47,162,76,.12)}
+.pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(229,106,21,.12)}
+.pill.iv{color:var(--am);border-color:var(--am);background:rgba(207,138,23,.14)}
 .pill.dim{color:var(--dim)}
-.call .dt{font-size:.78rem;color:var(--tx2);margin-top:9px;font-family:'JetBrains Mono',monospace}
+.call .dt{font-size:.78rem;color:var(--tx2);margin-top:9px;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .empty{padding:44px 16px;text-align:center;color:var(--tx2);font-size:.95rem}
 /* Modal */
 .ov{position:fixed;inset:0;background:rgba(6,11,22,.72);z-index:800;display:flex;align-items:flex-start;justify-content:center;padding:24px 14px;overflow-y:auto}
@@ -292,7 +293,10 @@ async function loadData(){
   reBatches = (r[2].data || []);
   reAssets = {}; (r[3].data || []).forEach(function(a){ (reAssets[a.batch_id]=reAssets[a.batch_id]||[]).push(a); });
 }
-function setSection(s){ section = s; render(); }
+// Switching billing type resets the expanded set + invoice filter so the newest
+// invoice for the selected section opens automatically (lists are already
+// most-recent-first; render uses `!touched && idx===0` to open the top one).
+function setSection(s){ section = s; expanded = {}; fInvoice = ''; render(); }
 function reactivePdfUrl(b){ return b && b.invoice_pdf_path ? SUPA_URL + '/storage/v1/object/public/fp-invoices/' + b.invoice_pdf_path : ''; }
 
 function renderReactive(){
@@ -452,7 +456,7 @@ function openCall(id){
 
   if (fd.legacy){
     var link = fd.legacy_link || '';
-    h += '<div class="notes" style="border-color:var(--am);background:rgba(251,191,36,.08)">'
+    h += '<div class="notes" style="border-color:var(--am);background:rgba(207,138,23,.10)">'
        + '<div style="font-weight:700;color:var(--am);margin-bottom:6px">🗄 Completed on the previous system</div>'
        + esc(fd.legacy_note || 'This visit was completed and paid on the previous system. The backup paperwork — photos and the signed service form — lives on the legacy system, so it is not attached here.')
        + (link ? '<div style="margin-top:12px"><a class="btn" href="'+esc(link)+'" target="_blank" rel="noopener">📁 View photos &amp; paperwork (legacy)</a></div>' : '')
