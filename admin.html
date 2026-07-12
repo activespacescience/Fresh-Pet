@@ -1047,8 +1047,25 @@ async function saveApprovedToQuarter(){
   if(!q) return toast('Enter a Quarter label first (e.g. 2026 Q3)','err');
   var loc=(rvLocation||'').trim();
   var rate=Number(rvRate)||30;
+  // New reactive data ALWAYS purges old: any dataset from a different quarter is
+  // replaced when we start saving this one, so the saved set + warranty lookup
+  // only ever reflect the current reactive billing data.
+  var stale=rvBatches.filter(function(b){ return (b.quarter_label||'')!==q; });
+  if(stale.length){
+    var staleN=rvSaved.filter(function(a){ return stale.some(function(b){ return b.id===a.batch_id; }); }).length;
+    var staleInv=stale.filter(function(b){ return b.status==='invoiced'; }).length;
+    if(!confirm('Saving to "'+q+'" will PURGE '+stale.length+' older reactive dataset'+(stale.length===1?'':'s')+' ('+staleN+' saved account'+(staleN===1?'':'s')+(staleInv?', incl. '+staleInv+' already invoiced':'')+') so the new data fully replaces the old.\n\nThe QBO invoices themselves are NOT deleted — only our saved records + portal listings. Continue?')) return;
+  }
   rvBusy=true; render();
   try{
+    // purge the stale (other-quarter) datasets first
+    if(stale.length){
+      var staleIds=stale.map(function(b){ return b.id; });
+      var dpa=await sb.from('reactive_assets').delete().in('batch_id', staleIds); if(dpa.error) throw new Error(dpa.error.message);
+      var dpb=await sb.from('reactive_batches').delete().in('id', staleIds); if(dpb.error) throw new Error(dpb.error.message);
+      rvBatches=rvBatches.filter(function(b){ return staleIds.indexOf(b.id)<0; });
+      rvSaved=rvSaved.filter(function(a){ return staleIds.indexOf(a.batch_id)<0; });
+    }
     // find or create the draft batch for this quarter + location
     var batch=rvBatches.find(function(b){ return b.status==='draft' && (b.quarter_label||'')===q && (b.location||'')===loc; });
     var batchId;
@@ -1105,6 +1122,21 @@ async function invoiceBatch(id){
     toast('Invoice '+(j.invoice&&j.invoice.ref)+' created','ok');
   }catch(e){ toast('Failed: '+e.message,'err'); }
   rvBusy=false; render();
+}
+// Delete an old saved reactive dataset (batch + its saved accounts). The QBO
+// invoice, if any, is not touched — only our saved record + portal listing.
+async function deleteBatch(id){
+  var b=rvBatches.find(function(x){ return x.id===id; }); if(!b) return;
+  var n=rvSaved.filter(function(a){ return a.batch_id===id; }).length;
+  if(!confirm('Delete this saved reactive dataset?\n\n'+(b.quarter_label||'(no quarter)')+(b.location?(' · '+b.location):'')+'\n'+n+' saved account'+(n===1?'':'s')
+    +(b.status==='invoiced'?('\nInvoice '+(b.invoice_ref||'')+' — the QBO invoice is NOT deleted, only this saved record + portal listing.'):'')
+    +'\n\nThis cannot be undone.')) return;
+  rvBusy=true; render();
+  try{
+    var da=await sb.from('reactive_assets').delete().eq('batch_id', id); if(da.error) throw new Error(da.error.message);
+    var db=await sb.from('reactive_batches').delete().eq('id', id); if(db.error) throw new Error(db.error.message);
+    await loadAll(); rvBusy=false; toast('Deleted','ok'); render();
+  }catch(e){ rvBusy=false; toast('Delete failed: '+e.message,'err'); render(); }
 }
 
 function renderReactive(){
@@ -1178,7 +1210,7 @@ function renderReactive(){
   }
 
   // Quarterly batches — saved accounts accumulate here; bill each quarter's OOW when ready
-  h += '<div class="card"><h3>Quarterly Reactive invoices</h3><div class="hint">Approved accounts save into a draft quarter. Bill the out-of-warranty accounts when the quarter is ready — completion/saving and billing are independent.</div>';
+  h += '<div class="card"><h3>Quarterly Reactive invoices</h3><div class="hint">Approved accounts save into a draft quarter. Bill the out-of-warranty accounts when the quarter is ready. <strong>Saving a new quarter purges older reactive datasets</strong> — the newest import always replaces the old. Delete (🗑) removes a saved dataset (the QBO invoice, if any, is not touched).</div>';
   if(!rvBatches.length){ h += '<div class="empty" style="padding:16px">None yet.</div>'; }
   else {
     h += '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Quarter</th><th>Location</th><th class="num">Saved</th><th class="num">OOW billed</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody>';
@@ -1187,14 +1219,15 @@ function renderReactive(){
       h += '<tr><td class="mono">'+esc(b.invoice_ref||'—')+'</td><td>'+esc(b.quarter_label||'')+'</td><td>'+esc(b.location||'')+'</td>'
          + '<td class="num">'+savedN+'</td><td class="num">'+(b.billable_count||0)+'</td><td class="num">'+money(b.total)+'</td>'
          + '<td>'+(b.status==='invoiced'?'<span class="pill gn">Invoiced</span>':'<span class="pill am">Draft</span>')+'</td>'
-         + '<td>'+(b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>🧾 Invoice OOW</button>':'')+'</td></tr>';
+         + '<td style="white-space:nowrap">'+(b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>🧾 Invoice OOW</button> ':'')
+           + '<button class="btn o sm" onclick="deleteBatch('+b.id+')" '+(rvBusy?'disabled':'')+' title="Delete this saved dataset">🗑</button></td></tr>';
     });
     h += '</tbody></table></div>';
   }
   h += '</div>';
 
-  // Saved reactive accounts — warranty coverage lookup (kept across all quarters)
-  h += '<div class="card"><h3>Saved accounts · warranty lookup</h3><div class="hint">Every account approved into a quarter is kept here. Search to check whether a store or serial is <strong>under warranty</strong> (kept for coverage, not billed) or <strong>out of warranty</strong> (billed).</div>';
+  // Saved reactive accounts — warranty coverage lookup (current reactive dataset)
+  h += '<div class="card"><h3>Saved accounts · warranty lookup</h3><div class="hint">The current reactive dataset (older quarters are purged when a new one is saved). Search to check whether a store or serial is <strong>under warranty</strong> (kept for coverage, not billed) or <strong>out of warranty</strong> (billed).</div>';
   var byBatch={}; rvBatches.forEach(function(b){ byBatch[b.id]=b; });
   var sq=(rvSavedSearch||'').trim().toLowerCase();
   var savedShown=rvSaved.filter(function(a){
