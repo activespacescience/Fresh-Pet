@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<meta name="theme-color" content="#0F172A">
+<meta name="theme-color" content="#FFF8F0">
 <title>Freshpet · Admin Console</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -18,17 +18,15 @@
 <!-- APBG cross-app waffle launcher + shared light/dark toggle. -->
 <script src="https://alamedapointbg.com/appswitcher.js" defer></script>
 <style>
+/* Freshpet color system — light only. Warm cream canvas, Freshpet orange
+   primary, fresh green for success. Intentionally does NOT follow the shared
+   APBG dark toggle: nothing keys off [data-apbg-theme], so the site stays
+   light regardless of the gateway theme switch. */
 :root{
-  --bg:#0F172A; --sf:#171f33; --sf2:#1f2a44; --bd:#2b3a5c; --bd2:#3a4d75;
-  --tx:#E2E8F0; --tx2:#9fb0c7; --dim:#6b7b96;
-  --ac:#3B82F6; --ac2:#2563EB; --gn:#34D399; --am:#FBBF24; --rd:#F87171;
-  --shadow:0 4px 14px rgba(0,0,0,.35);
-}
-html[data-apbg-theme="light"]{
-  --bg:#EEF2F7; --sf:#FFFFFF; --sf2:#F1F5FA; --bd:#D7DEE9; --bd2:#C2CDDC;
-  --tx:#0F1B2D; --tx2:#46566e; --dim:#7387a0;
-  --ac:#2563EB; --ac2:#1D4ED8; --gn:#1E9E5F; --am:#C9920C; --rd:#E0454A;
-  --shadow:0 4px 14px rgba(15,23,42,.10);
+  --bg:#FFF8F0; --sf:#FFFFFF; --sf2:#F6EEE3; --bd:#EEE0CF; --bd2:#DCC8AC;
+  --tx:#2A2521; --tx2:#786B5E; --dim:#A2937F;
+  --ac:#E56A15; --ac2:#C85A0E; --gn:#2FA24C; --am:#CF8A17; --rd:#DB4A44;
+  --shadow:0 4px 16px rgba(191,120,58,.13);
 }
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:'DM Sans',system-ui,-apple-system,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;-webkit-font-smoothing:antialiased;transition:background .25s,color .25s}
@@ -67,8 +65,8 @@ select,input[type=text],input[type=number],input[type=search]{width:100%;padding
 select:focus,input:focus{border-color:var(--ac)}
 .muted{color:var(--tx2);font-size:.82rem}
 .pill{display:inline-flex;align-items:center;gap:5px;font-size:.68rem;font-weight:800;letter-spacing:.04em;text-transform:uppercase;padding:3px 9px;border-radius:999px;border:1px solid var(--bd)}
-.pill.gn{color:var(--gn);border-color:var(--gn);background:rgba(52,211,153,.1)}
-.pill.am{color:var(--am);border-color:var(--am);background:rgba(251,191,36,.1)}
+.pill.gn{color:var(--gn);border-color:var(--gn);background:rgba(47,162,76,.12)}
+.pill.am{color:var(--am);border-color:var(--am);background:rgba(207,138,23,.13)}
 .pill.dim{color:var(--tx2)}
 /* Route list */
 .stop{display:flex;align-items:center;gap:12px;padding:11px 13px;border:1px solid var(--bd);border-radius:12px;background:var(--bg);margin-bottom:8px}
@@ -103,8 +101,8 @@ tr.tot td{border-top:2px solid var(--bd);font-weight:800;border-bottom:none}
 .seg button.on{background:var(--ac);color:#fff}
 .bar{height:7px;border-radius:999px;background:var(--sf2);overflow:hidden;min-width:70px}
 .bar>i{display:block;height:100%;background:var(--gn);border-radius:999px}
-.pill.rd{color:var(--rd);border-color:var(--rd);background:rgba(248,113,113,.1)}
-.pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(59,130,246,.1)}
+.pill.rd{color:var(--rd);border-color:var(--rd);background:rgba(219,74,68,.11)}
+.pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(229,106,21,.12)}
 /* Login */
 .login{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
 .login .box{background:var(--sf);border:1px solid var(--bd);border-radius:22px;padding:38px 32px;max-width:380px;width:100%;text-align:center;box-shadow:var(--shadow)}
