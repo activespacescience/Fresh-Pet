@@ -7,3 +7,15 @@ alter table public.completed_pms
   add column if not exists gps_lat double precision,
   add column if not exists gps_lng double precision,
   add column if not exists gps_accuracy double precision;
+
+-- Backfill completion time for existing real field completions from the row's
+-- insert time (created_at) — a faithful proxy for when the PM was signed.
+-- Legacy / previously-completed (imported) rows are left null so the UI keeps
+-- showing their service date (created_at there is the import time, not the
+-- real service moment). GPS is NOT backfilled: past on-site location is
+-- unknown and must not be fabricated.
+update public.completed_pms
+set signed_at = created_at
+where signed_at is null
+  and coalesce(prev_comp, false) = false
+  and coalesce((form_data->>'legacy')::boolean, false) = false;
