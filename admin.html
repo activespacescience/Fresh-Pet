@@ -183,6 +183,15 @@ var rvSaved = [];             // saved reactive_assets across all quarters (cove
 var rvSavedFilter = 'under';  // saved-account lookup filter: all | out | under
 var rvSavedSearch = '';       // saved-account lookup search text
 
+// ── Send Invoice (email to Freshpet accounting) ──
+var SEND_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-send-invoice';
+var siType = 'reactive';      // 'reactive' | 'pm'
+var siRef = '';               // selected invoice ref
+var siRecipients = '';        // comma-separated recipient emails
+var siAttach = true;          // attach the invoice PDF
+var siBusy = false;
+var siResult = null;
+
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
 // Public URL for a stored reactive-invoice PDF (fp-invoices bucket is public).
@@ -341,11 +350,13 @@ function render(){
      + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">💰 Payments</button>'
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">🧾 Freshpet Billing</button>'
      + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">📥 Upload / Reactive</button>'
+     + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">📧 Send Invoice</button>'
      + '</div>';
   h += tab==='overview' ? renderOverview()
      : tab==='routes' ? renderRoutes()
      : tab==='payments' ? renderPayments()
      : tab==='reactive' ? renderReactive()
+     : tab==='send' ? renderSendInvoice()
      : renderBilling();
   h += '</div>';
   app.innerHTML = h;
@@ -1140,6 +1151,64 @@ async function deleteBatch(id){
     var db=await sb.from('reactive_batches').delete().eq('id', id); if(db.error) throw new Error(db.error.message);
     await loadAll(); rvBusy=false; toast('Deleted','ok'); render();
   }catch(e){ rvBusy=false; toast('Delete failed: '+e.message,'err'); render(); }
+}
+
+// ═══ Send Invoice (email to Freshpet accounting) ═══
+function reactiveInvoiceList(){ return (rvBatches||[]).filter(function(b){ return b.status==='invoiced' && b.invoice_ref; }); }
+function pmInvoiceList(){
+  var map={};
+  (completedPMs||[]).forEach(function(p){ if(!p.invoice_doc_number) return; var k=String(p.invoice_doc_number);
+    if(!map[k]) map[k]={ ref:k, count:0, total:0, min:null, max:null };
+    var g=map[k]; g.count++; g.total+=Number(p.bill_amount||0);
+    if(p.pm_date){ if(!g.min||p.pm_date<g.min) g.min=p.pm_date; if(!g.max||p.pm_date>g.max) g.max=p.pm_date; }
+  });
+  return Object.keys(map).map(function(k){ return map[k]; }).sort(function(a,b){ return a.ref<b.ref?1:-1; });
+}
+function setSiType(t){ siType=t; siRef=''; siResult=null; render(); }
+async function sendInvoiceEmail(){
+  var ref=(siRef||'').trim(); if(!ref) return toast('Pick an invoice first','err');
+  var recips=(siRecipients||'').split(/[,;\s]+/).map(function(s){return s.trim();}).filter(Boolean);
+  if(!recips.length) return toast('Enter at least one recipient email','err');
+  var bad=recips.filter(function(e){ return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); });
+  if(bad.length) return toast('Invalid email: '+bad[0],'err');
+  siBusy=true; siResult=null; render();
+  try{
+    var token=(await sb.auth.getSession()).data.session.access_token;
+    var res=await fetch(SEND_FN,{ method:'POST', headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+token },
+      body:JSON.stringify({ type:siType, ref:ref, recipients:recips, attachPdf:!!siAttach }) });
+    var j=await res.json(); if(!res.ok) throw new Error(j.error||('HTTP '+res.status));
+    siResult=j; toast('Sent to '+recips.length+' recipient'+(recips.length===1?'':'s'),'ok');
+  }catch(e){ toast('Send failed: '+e.message,'err'); }
+  siBusy=false; render();
+}
+function renderSendInvoice(){
+  var list = siType==='reactive'
+    ? reactiveInvoiceList().map(function(b){ return { ref:b.invoice_ref, label:b.invoice_ref+' · '+[b.quarter_label,b.location].filter(Boolean).join(' · ')+' · '+money(b.total) }; })
+    : pmInvoiceList().map(function(g){ return { ref:g.ref, label:'#'+g.ref+' · '+g.count+' visit'+(g.count===1?'':'s')+' · '+money(g.total) }; });
+  var h='<div class="card"><h3>📧 Send invoice to Freshpet accounting</h3><div class="hint">Pick an invoice, enter the recipient email(s), and send a clean branded email. <strong>Reactive</strong> attaches the invoice PDF. <strong>PM</strong> includes a link to the portal so they can view the service backup (photos + signed reports). The PDF attachment toggle applies to either.</div>';
+  h += '<div class="seg" style="margin-bottom:14px">'
+     + '<button class="'+(siType==='reactive'?'on':'')+'" onclick="setSiType(\'reactive\')">🧾 Reactive invoice</button>'
+     + '<button class="'+(siType==='pm'?'on':'')+'" onclick="setSiType(\'pm\')">🛠 PM invoice</button>'
+     + '</div>';
+  h += '<div class="row" style="align-items:flex-end">'
+     + '<div class="col" style="max-width:380px"><label class="f">Invoice</label><select onchange="siRef=this.value;siResult=null;render()">'
+     + '<option value="">'+(list.length?'— pick an invoice —':'(none billed yet)')+'</option>'
+     + list.map(function(o){ return '<option value="'+esc(o.ref)+'"'+(siRef===o.ref?' selected':'')+'>'+esc(o.label)+'</option>'; }).join('')
+     + '</select></div>'
+     + '<div class="col" style="max-width:440px"><label class="f">Send to (comma-separated)</label><input type="text" placeholder="accounting@freshpet.com, ap@freshpet.com" value="'+esc(siRecipients)+'" oninput="siRecipients=this.value"></div>'
+     + '</div>';
+  h += '<div style="display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap">'
+     + '<label style="display:flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:var(--tx2);cursor:pointer"><input type="checkbox" '+(siAttach?'checked':'')+' onchange="siAttach=this.checked" style="width:auto;accent-color:var(--ac)"> Attach invoice PDF</label>'
+     + (siType==='pm'?'<span class="muted" style="font-size:.78rem">Portal backup link is always included for PM invoices.</span>':'')
+     + '<button class="btn gn" style="margin-left:auto" onclick="sendInvoiceEmail()" '+((siBusy||!siRef)?'disabled':'')+'>'+(siBusy?'Sending…':'📧 Send email')+'</button>'
+     + '</div>';
+  if(!list.length){ h += '<div class="empty" style="padding:16px;margin-top:8px">No '+(siType==='reactive'?'reactive':'PM')+' invoices billed yet. Create one first, then send it here.</div>'; }
+  if(siResult){
+    h += '<div class="card" style="background:var(--sf2);border-color:var(--gn);margin:14px 0 0"><h3 style="color:var(--gn)">✓ Sent</h3>'
+       + '<div class="muted" style="font-size:.85rem">Invoice '+esc(siResult.ref||siRef)+' emailed to '+esc((siResult.recipients||[]).join(', '))+(siResult.attached?' · PDF attached':(siAttach?' · PDF not found (link only)':''))+' · portal link included</div></div>';
+  }
+  h += '</div>';
+  return h;
 }
 
 function renderReactive(){
