@@ -2392,7 +2392,7 @@ async function submitForm() {
     }
 
     var pdfDoc = await new Promise(function(resolve) {
-      generatePDF(a, form, photos, sigs, function(doc) { resolve(doc); });
+      generatePDF(a, form, photos, sigs, { signedAt: signedAt, gps: gps }, function(doc) { resolve(doc); });
     });
 
     var pdfBlob = pdfDoc.output('blob');
@@ -2556,7 +2556,7 @@ function dataURLtoBlob(dataURL) {
 }
 
 // ===== PDF Generation =====
-function generatePDF(a, f, ph, sg, cb) {
+function generatePDF(a, f, ph, sg, meta, cb) {
   var jsPDF = window.jspdf.jsPDF;
   var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
   var W = 612, LM = 40, RM = W - 40, COL2 = 326;
@@ -2627,6 +2627,14 @@ function generatePDF(a, f, ph, sg, cb) {
   doc.setFont('helvetica','normal');doc.setFontSize(8);
   doc.text('Store Contact: '+(f.storeContact||''),LM,y);
   doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=16;
+
+  // Signed timestamp + GPS captured at completion.
+  if (meta && (meta.signedAt || meta.gps)) {
+    var stamp = [];
+    if (meta.signedAt) { try { stamp.push('Signed: '+new Date(meta.signedAt).toLocaleString()); } catch(e) { stamp.push('Signed: '+meta.signedAt); } }
+    if (meta.gps) stamp.push('GPS: '+meta.gps.lat.toFixed(5)+', '+meta.gps.lng.toFixed(5)+(meta.gps.accuracy?' (±'+Math.round(meta.gps.accuracy)+'m)':''));
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);doc.text(stamp.join('     '),LM,y);y+=14;
+  }
 
   doc.setFont('helvetica','bold');doc.setFontSize(7);
   doc.text('AHT: 800-905-4768 | MTL: 888-685-8324 | TRUE: 800-325-6152 | MINUS FORTY: 800.800.5706',LM,y);
