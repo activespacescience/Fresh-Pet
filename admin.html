@@ -181,6 +181,9 @@ var rvResult = null;
 var rvPMPreview = null;       // {newCount, updateCount, deactivate[], completedDrop}
 var rvFilter = 'all';         // review filter: all | out | under
 var rvSearch = '';            // review search text
+var rvSaved = [];             // saved reactive_assets across all quarters (coverage lookup)
+var rvSavedFilter = 'under';  // saved-account lookup filter: all | out | under
+var rvSavedSearch = '';       // saved-account lookup search text
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
@@ -215,11 +218,13 @@ async function loadAll(){
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
     sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at').order('pm_date', { ascending:false }),
-    sb.from('reactive_batches').select('*').order('created_at', { ascending:false })
+    sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
+    sb.from('reactive_assets').select('*').order('store')
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
   rvBatches = r[5].data || [];
+  rvSaved = r[6].data || [];
   if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
 }
 function assetById(id){ return assets.find(function(a){ return a.id===id; }); }
@@ -1028,33 +1033,73 @@ function composeDenyEmail(){
     + '\n\nThank you.';
   window.location.href='mailto:?subject='+encodeURIComponent('Freshpet reactive list — accounts to remove'+(rvQuarter?' ('+rvQuarter+')':''))+'&body='+encodeURIComponent(body);
 }
-async function createReactiveInvoice(){
-  var approved=(rvReview||[]).filter(function(x){ return x.approved; });
-  if(!approved.length) return toast('No approved assets to invoice','err');
-  var billable=approved.filter(function(x){ return !x.under_warranty; });
+// Approve = SAVE the shown+approved accounts to this quarter's (draft) batch, then
+// clear them out of the review list. Under-warranty accounts are saved too
+// (billable=false) so they're kept on record for coverage lookups; only
+// out-of-warranty accounts count toward billing. Invoicing is a separate step
+// (per-batch, below) so completion/saving is independent of billing.
+async function saveApprovedToQuarter(){
+  if(!rvReview) return;
+  var idxs=rvShown().filter(function(i){ return rvReview[i].approved; });
+  if(!idxs.length) return toast('No approved rows shown to save (denied rows stay for the removal email)','err');
+  var q=(rvQuarter||'').trim();
+  if(!q) return toast('Enter a Quarter label first (e.g. 2026 Q3)','err');
+  var loc=(rvLocation||'').trim();
   var rate=Number(rvRate)||30;
-  if(!confirm('Create a Quarterly Reactive invoice?\n\n'+approved.length+' assets imported ('+billable.length+' out-of-warranty billed @ '+money(rate)+' = '+money(billable.length*rate)+').\nDenied: '+((rvReview.length)-approved.length)+'.\n\nThis posts a real QBO invoice (FP-QRB) and adds it to the portal.')) return;
+  rvBusy=true; render();
+  try{
+    // find or create the draft batch for this quarter + location
+    var batch=rvBatches.find(function(b){ return b.status==='draft' && (b.quarter_label||'')===q && (b.location||'')===loc; });
+    var batchId;
+    if(batch){ batchId=batch.id; }
+    else {
+      var bIns=await sb.from('reactive_batches').insert({ quarter_label:q, location:loc||null, rate:rate, status:'draft', created_by:user.email }).select('id').single();
+      if(bIns.error) throw new Error(bIns.error.message);
+      batchId=bIns.data.id;
+    }
+    // dedup by serial against what's already saved in this batch
+    var existing={}; rvSaved.forEach(function(a){ if(a.batch_id===batchId) existing[(a.serial||'').toUpperCase()]=1; });
+    var toSave=idxs.map(function(i){ return rvReview[i]; }).filter(function(x){ return !existing[(x.serial||'').toUpperCase()]; });
+    if(toSave.length){
+      var rows=toSave.map(function(x){ return { batch_id:batchId, store:x.store, address:x.address, city:x.city, state:x.state, zip:x.zip,
+        serial:x.serial, model:x.model, manufacturer:x.manufacturer, under_warranty:!!x.under_warranty, billable:!x.under_warranty, approved:true }; });
+      var aIns=await sb.from('reactive_assets').insert(rows); if(aIns.error) throw new Error(aIns.error.message);
+    }
+    // clear the saved rows out of the review list
+    var saveSet={}; idxs.forEach(function(i){ saveSet[i]=1; });
+    rvReview=rvReview.filter(function(x,i){ return !saveSet[i]; });
+    // refresh saved accounts + batches, then recompute this batch's counts
+    await loadAll();
+    var mine=rvSaved.filter(function(a){ return a.batch_id===batchId; });
+    var bill=mine.filter(function(a){ return a.billable && !a.under_warranty; });
+    await sb.from('reactive_batches').update({ asset_count:mine.length, billable_count:bill.length, total:bill.length*rate, rate:rate }).eq('id', batchId);
+    var lb=rvBatches.find(function(b){ return b.id===batchId; });
+    if(lb){ lb.asset_count=mine.length; lb.billable_count=bill.length; lb.total=bill.length*rate; lb.rate=rate; }
+    rvBusy=false;
+    var dupes=idxs.length-toSave.length;
+    toast(toSave.length+' account'+(toSave.length===1?'':'s')+' saved to '+q+(dupes?(' ('+dupes+' already saved)'):''),'ok');
+    render();
+  }catch(e){ rvBusy=false; toast('Save failed: '+e.message,'err'); render(); }
+}
+// Bill a saved quarter: posts the QBO FP-QRB invoice for the out-of-warranty
+// accounts saved in the batch, renders the PDF, and adds it to the portal.
+async function invoiceBatch(id){
+  var b=rvBatches.find(function(x){ return x.id===id; }); if(!b) return;
+  var mine=rvSaved.filter(function(a){ return a.batch_id===b.id; });
+  var bill=mine.filter(function(a){ return a.billable && !a.under_warranty; });
+  if(!bill.length) return toast('No out-of-warranty accounts saved in this quarter to bill','err');
+  var rate=Number(b.rate)||30;
+  if(!confirm('Create the Quarterly Reactive invoice for '+(b.quarter_label||'this quarter')+'?\n\n'+mine.length+' accounts saved · '+bill.length+' out-of-warranty billed @ '+money(rate)+' = '+money(bill.length*rate)+'.\n\nThis posts a real QBO invoice (FP-QRB) and adds it to the portal.')) return;
   rvBusy=true; rvResult=null; render();
   try{
     var token=(await sb.auth.getSession()).data.session.access_token;
-    // 1) allocate FP-QRB ref
-    var refRes=await sb.rpc('fp_next_qrb_ref'); if(refRes.error) throw new Error(refRes.error.message);
-    var ref=refRes.data;
-    // 2) create batch
-    var bIns=await sb.from('reactive_batches').insert({ invoice_ref:ref, quarter_label:rvQuarter||null, location:rvLocation||null,
-      rate:rate, asset_count:approved.length, billable_count:billable.length, total:billable.length*rate, status:'draft', created_by:user.email }).select('id').single();
-    if(bIns.error) throw new Error(bIns.error.message);
-    var batchId=bIns.data.id;
-    // 3) insert approved assets
-    var rows=approved.map(function(x){ return { batch_id:batchId, store:x.store, address:x.address, city:x.city, state:x.state, zip:x.zip,
-      serial:x.serial, model:x.model, manufacturer:x.manufacturer, under_warranty:!!x.under_warranty, billable:!x.under_warranty, approved:true }; });
-    var aIns=await sb.from('reactive_assets').insert(rows); if(aIns.error) throw new Error(aIns.error.message);
-    // 4) create the QBO invoice + PDF via the backend
+    var ref=b.invoice_ref;
+    if(!ref){ var refRes=await sb.rpc('fp_next_qrb_ref'); if(refRes.error) throw new Error(refRes.error.message); ref=refRes.data;
+      var uRef=await sb.from('reactive_batches').update({ invoice_ref:ref }).eq('id', b.id); if(uRef.error) throw new Error(uRef.error.message); }
     var res=await fetch(QUARTERLY_FN,{ method:'POST', headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+token },
-      body:JSON.stringify({ mode:'create', batchId:batchId, rate:rate, recipientEmail:(rvRecipient||'').trim() }) });
+      body:JSON.stringify({ mode:'create', batchId:b.id, rate:rate, recipientEmail:(rvRecipient||'').trim() }) });
     var j=await res.json(); if(!res.ok) throw new Error(j.error||('HTTP '+res.status));
-    rvResult=j; rvRows=null; rvMode=''; rvReview=null;
-    await loadAll();
+    rvResult=j; await loadAll();
     toast('Invoice '+(j.invoice&&j.invoice.ref)+' created','ok');
   }catch(e){ toast('Failed: '+e.message,'err'); }
   rvBusy=false; render();
@@ -1067,7 +1112,7 @@ function renderReactive(){
     h += '<div class="muted" style="margin-top:10px">📄 '+esc(rvFileName)+' — '+rvRows.length+' assets parsed.</div>';
     h += '<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">'
        + '<button class="btn '+(rvMode==='pm'?'':'o')+'" onclick="pickMode(\'pm\')">🗺️ Update PM routes</button>'
-       + '<button class="btn '+(rvMode==='reactive'?'':'o')+'" onclick="pickMode(\'reactive\')">🧾 Create Quarterly Reactive Invoice</button>'
+       + '<button class="btn '+(rvMode==='reactive'?'':'o')+'" onclick="pickMode(\'reactive\')">🧾 Review &amp; save to a Quarter</button>'
        + '</div>';
   }
   h += '</div>';
@@ -1086,7 +1131,7 @@ function renderReactive(){
   if(rvMode==='reactive' && rvReview){
     var appr=rvReview.filter(function(x){return x.approved;}); var bill=appr.filter(function(x){return !x.under_warranty;});
     var rate=Number(rvRate)||30;
-    h += '<div class="card"><h3>Quarterly Reactive — review</h3><div class="hint">Approve/deny each account. Denied accounts can be emailed back to Freshpet to remove. Approved accounts import; only <strong>out-of-warranty</strong> ones are billed @ rate. All approved appear on the invoice report; billing counts OOW only.</div>';
+    h += '<div class="card"><h3>Quarterly Reactive — review</h3><div class="hint">Set each account\'s warranty, then <strong>Approve &amp; save</strong> — approved accounts are saved to the quarter and drop off this list. Both under- and out-of-warranty accounts are kept (under-warranty for coverage lookup, out-of-warranty for billing). Denied accounts stay here so you can email them back to Freshpet to remove. Billing the quarter is a separate step below.</div>';
     h += '<div class="row" style="align-items:flex-end">'
        + '<div style="flex:none"><label class="f">Quarter</label><input type="text" placeholder="2026 Q3" value="'+esc(rvQuarter)+'" oninput="rvQuarter=this.value" style="max-width:140px"></div>'
        + '<div class="col" style="max-width:240px"><label class="f">Location label</label><input type="text" placeholder="NorCal" value="'+esc(rvLocation)+'" oninput="rvLocation=this.value"></div>'
@@ -1095,9 +1140,8 @@ function renderReactive(){
        + '</div>';
     var outN=rvReview.filter(function(x){return !x.under_warranty;}).length;
     var underN=rvReview.length-outN;
-    h += '<div style="display:flex;align-items:center;gap:14px;margin:12px 0;flex-wrap:wrap"><span class="muted">'+appr.length+' approved · '+bill.length+' out-of-warranty (billed) · '+money(bill.length*rate)+'</span>'
-       + '<div style="margin-left:auto;display:flex;gap:8px"><button class="btn o sm" onclick="composeDenyEmail()">✉ Email denied to Freshpet</button>'
-       + '<button class="btn gn sm" onclick="createReactiveInvoice()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Working…':'🧾 Create FP-QRB invoice')+'</button></div></div>';
+    h += '<div style="display:flex;align-items:center;gap:14px;margin:12px 0;flex-wrap:wrap"><span class="muted">'+rvReview.length+' still to review · '+appr.length+' approved ('+bill.length+' out-of-warranty) · '+underN+' under warranty</span>'
+       + '<div style="margin-left:auto;display:flex;gap:8px"><button class="btn o sm" onclick="composeDenyEmail()">✉ Email denied to Freshpet</button></div></div>';
     // Filter + bulk approve/deny (speeds up review: e.g. filter Under → Deny all, or Out → Approve all)
     var shown=rvShown();
     h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
@@ -1108,11 +1152,12 @@ function renderReactive(){
        + '</div>'
        + '<input type="search" placeholder="Search store, city, serial…" value="'+esc(rvSearch)+'" oninput="rvSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
        + '<span class="muted" style="font-size:.8rem">'+shown.length+' shown</span>'
-       + '<button class="btn gn sm" onclick="rvApproveShown(true)">✓ Approve shown</button>'
        + '<button class="btn o sm" onclick="rvApproveShown(false)">✕ Deny shown</button>'
+       + '<button class="btn gn sm" onclick="saveApprovedToQuarter()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Saving…':'✓ Approve &amp; save shown')+'</button>'
        + '</div>';
+    if(!rvReview.length){ h += '<div class="empty" style="padding:16px;color:var(--gn)">✓ All reviewed accounts saved to '+esc(rvQuarter||'this quarter')+'. Bill the quarter from the Quarterly Reactive table below.</div>'; }
     h += '<div style="overflow-x:auto;max-height:460px;overflow-y:auto"><table><thead><tr><th>Store</th><th class="hide">City</th><th>Serial</th><th>Warranty</th><th>Approve</th></tr></thead><tbody>';
-    if(!shown.length){ h += '<tr><td colspan="5" class="empty">No rows match.</td></tr>'; }
+    if(!shown.length){ h += '<tr><td colspan="5" class="empty">'+(rvReview.length?'No rows match.':'Nothing left to review.')+'</td></tr>'; }
     shown.forEach(function(i){ var x=rvReview[i];
       h += '<tr'+(!x.approved?' style="opacity:.5"':'')+'>'
         + '<td>'+esc(x.store||'')+'</td><td class="hide">'+esc(x.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(x.serial||'')+'</td>'
@@ -1130,16 +1175,53 @@ function renderReactive(){
        + '</div>';
   }
 
-  // Existing reactive batches
-  h += '<div class="card"><h3>Quarterly Reactive invoices</h3>';
+  // Quarterly batches — saved accounts accumulate here; bill each quarter's OOW when ready
+  h += '<div class="card"><h3>Quarterly Reactive invoices</h3><div class="hint">Approved accounts save into a draft quarter. Bill the out-of-warranty accounts when the quarter is ready — completion/saving and billing are independent.</div>';
   if(!rvBatches.length){ h += '<div class="empty" style="padding:16px">None yet.</div>'; }
   else {
-    h += '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Quarter</th><th>Location</th><th class="num">OOW billed</th><th class="num">Total</th><th>Status</th></tr></thead><tbody>';
+    h += '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Quarter</th><th>Location</th><th class="num">Saved</th><th class="num">OOW billed</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody>';
     rvBatches.forEach(function(b){
-      h += '<tr><td class="mono">'+esc(b.invoice_ref)+'</td><td>'+esc(b.quarter_label||'')+'</td><td>'+esc(b.location||'')+'</td>'
-         + '<td class="num">'+(b.billable_count||0)+'</td><td class="num">'+money(b.total)+'</td>'
-         + '<td>'+(b.status==='invoiced'?'<span class="pill gn">Invoiced</span>':'<span class="pill am">Draft</span>')+'</td></tr>';
+      var savedN=rvSaved.filter(function(a){ return a.batch_id===b.id; }).length;
+      h += '<tr><td class="mono">'+esc(b.invoice_ref||'—')+'</td><td>'+esc(b.quarter_label||'')+'</td><td>'+esc(b.location||'')+'</td>'
+         + '<td class="num">'+savedN+'</td><td class="num">'+(b.billable_count||0)+'</td><td class="num">'+money(b.total)+'</td>'
+         + '<td>'+(b.status==='invoiced'?'<span class="pill gn">Invoiced</span>':'<span class="pill am">Draft</span>')+'</td>'
+         + '<td>'+(b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>🧾 Invoice OOW</button>':'')+'</td></tr>';
     });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+
+  // Saved reactive accounts — warranty coverage lookup (kept across all quarters)
+  h += '<div class="card"><h3>Saved accounts · warranty lookup</h3><div class="hint">Every account approved into a quarter is kept here. Search to check whether a store or serial is <strong>under warranty</strong> (kept for coverage, not billed) or <strong>out of warranty</strong> (billed).</div>';
+  var byBatch={}; rvBatches.forEach(function(b){ byBatch[b.id]=b; });
+  var sq=(rvSavedSearch||'').trim().toLowerCase();
+  var savedShown=rvSaved.filter(function(a){
+    if(rvSavedFilter==='under' && !a.under_warranty) return false;
+    if(rvSavedFilter==='out' && a.under_warranty) return false;
+    if(sq && ((a.store||'')+' '+(a.city||'')+' '+(a.serial||'')).toLowerCase().indexOf(sq)<0) return false;
+    return true;
+  });
+  var suN=rvSaved.filter(function(a){ return a.under_warranty; }).length;
+  var soN=rvSaved.length-suN;
+  h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
+     + '<div class="seg">'
+       + '<button class="'+(rvSavedFilter==='all'?'on':'')+'" onclick="rvSavedFilter=\'all\';render()">All ('+rvSaved.length+')</button>'
+       + '<button class="'+(rvSavedFilter==='under'?'on':'')+'" onclick="rvSavedFilter=\'under\';render()">🛡 Under ('+suN+')</button>'
+       + '<button class="'+(rvSavedFilter==='out'?'on':'')+'" onclick="rvSavedFilter=\'out\';render()">💲 Out ('+soN+')</button>'
+     + '</div>'
+     + '<input type="search" placeholder="Search store, city, serial…" value="'+esc(rvSavedSearch)+'" oninput="rvSavedSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
+     + '<span class="muted" style="font-size:.8rem">'+savedShown.length+' shown</span>'
+     + '</div>';
+  if(!rvSaved.length){ h += '<div class="empty" style="padding:16px">No saved accounts yet. Approve accounts in a Quarterly Reactive review to keep them here.</div>'; }
+  else {
+    h += '<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr><th>Store</th><th class="hide">City</th><th>Serial</th><th>Quarter</th><th>Warranty</th></tr></thead><tbody>';
+    if(!savedShown.length){ h += '<tr><td colspan="5" class="empty">No matches.</td></tr>'; }
+    savedShown.slice(0,500).forEach(function(a){ var b=byBatch[a.batch_id]||{};
+      h += '<tr><td>'+esc(a.store||'')+'</td><td class="hide">'+esc(a.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(a.serial||'')+'</td>'
+        + '<td>'+esc(b.quarter_label||'')+'</td>'
+        + '<td>'+(a.under_warranty?'<span class="pill">🛡 Under</span>':'<span class="pill am">💲 Out</span>')+'</td></tr>';
+    });
+    if(savedShown.length>500){ h += '<tr><td colspan="5" class="muted" style="text-align:center">Showing first 500 of '+savedShown.length+' — refine your search.</td></tr>'; }
     h += '</tbody></table></div>';
   }
   h += '</div>';
