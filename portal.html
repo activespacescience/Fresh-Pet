@@ -12,7 +12,7 @@
 :root{
   --bg:#FFF8F0; --sf:#FFFFFF; --sf2:#F6EEE3; --bd:#EEE0CF; --bd2:#DCC8AC;
   --line:rgba(42,37,33,.07);
-  --tx:#2A2521; --tx2:#786B5E; --dim:#A2937F;
+  --tx:#2A2521; --tx2:#786B5E; --dim:#8A7A66;
   --ac:#E56A15; --ac2:#C85A0E; --gn:#2FA24C; --am:#CF8A17; --rd:#DB4A44;
   --shadow:0 1px 2px rgba(42,37,33,.04),0 4px 16px rgba(191,120,58,.08);
   --font:'Helvetica Neue',Helvetica,Arial,'Segoe UI',Roboto,system-ui,sans-serif;
@@ -21,6 +21,10 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--tx);min-height:100vh;line-height:1.5;letter-spacing:-.006em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* Accessibility: visible keyboard focus + honor reduced-motion */
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:8px}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+@media (max-width:680px){.btn.sm{min-height:40px}}
 a{color:var(--ac);text-decoration:none}
 button{font-family:inherit;cursor:pointer;border:none;background:none;color:inherit}
 input,select{font-family:inherit;color:inherit}
@@ -456,7 +460,7 @@ function openCall(id){
   var h = '<div class="ov" onclick="if(event.target===this)closeCall()"><div class="modal">';
   h += '<div class="mh"><div><h2>'+esc(p.store||a.store||('Asset '+p.asset_id))+'</h2>'
      + '<div class="addr">'+esc([a.address, p.city||a.city, a.state, a.zip].filter(Boolean).join(', '))+'</div></div>'
-     + '<button class="x" onclick="closeCall()">✕</button></div>';
+     + '<button class="x" onclick="closeCall()" aria-label="Close">✕</button></div>';
   h += '<div class="mb">';
 
   // key facts
