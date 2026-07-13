@@ -13,6 +13,9 @@
 :root{--bg:#f2f2f7;--sf:#ffffff;--sf2:#f2f2f7;--bd:#e2e2e7;--tx:#1c1c1e;--dim:#8e8e93;--ac:#34c759;--gn:#34c759;--rd:#ff3b30;--or:#ff9500;--shadow:0 1px 3px rgba(0,0,0,.07)}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{font-family:'SF Pro Rounded',-apple-system,BlinkMacSystemFont,'Arial Rounded MT Bold','Segoe UI',Roboto,sans-serif;background:var(--bg);color:var(--tx);min-height:100vh;padding-bottom:env(safe-area-inset-bottom);font-size:17px;-webkit-font-smoothing:antialiased}
+/* Accessibility: visible keyboard focus + honor reduced-motion */
+:focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:8px}
+@media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
 .app{max-width:480px;margin:0 auto;padding:16px}
 .card{background:var(--sf);border:none;border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
 .btn{display:block;width:100%;padding:17px;border:none;border-radius:14px;font-size:19px;font-weight:600;cursor:pointer;text-align:center;transition:opacity .15s,transform .1s;font-family:inherit}
