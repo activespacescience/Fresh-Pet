@@ -692,7 +692,7 @@ function renderHome() {
   var hasProgress = localStorage.getItem('fp_progress');
   var userBar = '<div class="user-bar">' +
     '<span class="email">' + esc(currentUser.email || '') + (userRole === 'admin' ? ' <span class="badge" style="background:var(--rd)">Admin</span>' : '') + '</span>' +
-    '<span><button onclick="toggleTheme()" style="margin-right:6px">' + (localStorage.getItem('fp_theme') === 'dark' ? '\u2600\ufe0f' : '\ud83c\udf19') + '</button>' +
+    '<span><button onclick="toggleTheme()" aria-label="Toggle light/dark theme" title="Toggle theme" style="margin-right:6px">' + (localStorage.getItem('fp_theme') === 'dark' ? '\u2600\ufe0f' : '\ud83c\udf19') + '</button>' +
     '<button onclick="signOut()">Sign Out</button></span>' +
   '</div>';
 
@@ -874,7 +874,7 @@ function renderChecklist() {
   if (photos.length) {
     h += '<div class="photo-grid">';
     photos.forEach(function(p, i) {
-      h += '<div><img src="' + p + '"><button class="del" onclick="removePhoto(' + i + ')">×</button></div>';
+      h += '<div><img src="' + p + '"><button class="del" onclick="removePhoto(' + i + ')" aria-label="Remove photo">×</button></div>';
     });
     h += '</div>';
   }
@@ -1694,7 +1694,7 @@ function renderAdminRoutes() {
       h += '<div><span class="stop-num pending">' + (i+1) + '</span><strong>' + esc(s.store) + '</strong><br>';
       h += '<span style="font-size:12px;color:var(--dim)">' + esc(s.address) + ', ' + esc(s.city) + '</span><br>';
       h += '<span style="font-size:12px;color:var(--dim)">' + s.assets.length + ' asset(s)</span></div>';
-      h += '<button class="remove-btn" title="Unassign" onclick="removeStopFromRoute([' + ids.join(',') + '])">✕</button>';
+      h += '<button class="remove-btn" title="Unassign" aria-label="Unassign stop" onclick="removeStopFromRoute([' + ids.join(',') + '])">✕</button>';
       h += '</div></div>';
     });
 
