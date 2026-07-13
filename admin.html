@@ -235,7 +235,10 @@ var ICON_PATHS = {
   'eraser':'<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
   'link':'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
   'smartphone':'<rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/>',
-  'save':'<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'
+  'save':'<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>',
+  'chevron-up':'<path d="m18 15-6-6-6 6"/>',
+  'chevron-down':'<path d="m6 9 6 6 6-6"/>',
+  'x':'<path d="M18 6 6 18"/><path d="m6 6 12 12"/>'
 };
 function icon(n, cls){ var d=ICON_PATHS[n]; if(!d) return ''; return '<svg class="ic-svg'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>'; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
@@ -567,10 +570,10 @@ function renderRoutes(){
         ? '<span class="pill gn" style="flex:none;font-weight:800">✓ COMPLETED</span>'
         : '<span class="pill dim" style="flex:none">open</span>';
       var acts = d
-        ? '<span class="ic" title="Completed — locked" style="opacity:.55;cursor:default">'+icon('lock')+'</span>'
-        : '<button class="ic" onclick="moveStop('+i+',-1)" '+(i===0?'disabled':'')+' title="Up">▲</button>'
-          + '<button class="ic" onclick="moveStop('+i+',1)" '+(i===routeStops.length-1?'disabled':'')+' title="Down">▼</button>'
-          + '<button class="ic" onclick="removeStop('+i+')" title="Remove">✕</button>';
+        ? '<span class="ic" title="Completed — locked" aria-label="Completed — locked" style="opacity:.55;cursor:default">'+icon('lock')+'</span>'
+        : '<button class="ic" onclick="moveStop('+i+',-1)" '+(i===0?'disabled':'')+' title="Move up" aria-label="Move up">'+icon('chevron-up')+'</button>'
+          + '<button class="ic" onclick="moveStop('+i+',1)" '+(i===routeStops.length-1?'disabled':'')+' title="Move down" aria-label="Move down">'+icon('chevron-down')+'</button>'
+          + '<button class="ic" onclick="removeStop('+i+')" title="Remove stop" aria-label="Remove stop">'+icon('x')+'</button>';
       h += '<div class="stop"'+(d?' style="border-color:var(--gn)"':'')+'><div class="n"'+(d?' style="background:var(--gn)"':'')+'>'+(i+1)+'</div><div class="meta"><div class="s">'+esc(a.store||a.serial||('Asset '+a.id))+'</div><div class="a">'+esc([a.address,a.city,a.state].filter(Boolean).join(', '))+(d?' · completed '+esc(fmtDate(d)):'')+'</div></div>'
         + status
         + '<div class="acts">'+acts+'</div></div>';
@@ -1357,7 +1360,7 @@ function renderReactive(){
          + '<td style="white-space:nowrap">'
            + (b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>'+icon('receipt')+' Invoice OOW</button> ':'')
            + (b.status==='invoiced'?('<a class="btn o sm" href="'+esc(fpInvoicePdfUrl(b.invoice_pdf_path||('Invoice-'+String(b.invoice_ref||'').replace(/[^A-Za-z0-9._-]/g,"_")+'.pdf')))+'" target="_blank" rel="noopener" title="View invoice PDF">'+icon('file-text')+' Invoice</a> '):'')
-           + '<button class="btn o sm" onclick="deleteBatch('+b.id+')" '+(rvBusy?'disabled':'')+' title="Delete this saved dataset">'+icon('trash')+'</button></td></tr>';
+           + '<button class="btn o sm" onclick="deleteBatch('+b.id+')" '+(rvBusy?'disabled':'')+' title="Delete this saved dataset" aria-label="Delete this saved dataset">'+icon('trash')+'</button></td></tr>';
     });
     h += '</tbody></table></div>';
   }
