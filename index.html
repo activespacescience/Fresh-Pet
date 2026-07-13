@@ -19,6 +19,8 @@ body{font-family:var(--font);background:var(--bg);color:var(--tx);min-height:100
 /* Accessibility: visible keyboard focus + honor reduced-motion */
 :focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:8px}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
+/* Inline SVG icons (Lucide-style) — inherit color + font-size, replace emoji */
+.ic-svg{width:1.05em;height:1.05em;vertical-align:-.16em;stroke-width:2;flex:none}
 .app{max-width:480px;margin:0 auto;padding:16px}
 .card{background:var(--sf);border:none;border-radius:16px;padding:18px;margin-bottom:14px;box-shadow:var(--shadow)}
 .btn{display:block;width:100%;padding:17px;border:none;border-radius:14px;font-size:19px;font-weight:600;cursor:pointer;text-align:center;transition:opacity .15s,transform .1s;font-family:inherit}
@@ -352,6 +354,36 @@ function showStatus(msg, type) {
 }
 
 function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+// Inline SVG icon set (Lucide-style, currentColor). Replaces emoji UI icons.
+var ICON_PATHS = {
+  'file-text':'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  'shield':'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>',
+  'dollar':'<line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  'map':'<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14"/><path d="M15 6v14"/>',
+  'map-pin':'<path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0Z"/><circle cx="12" cy="10" r="3"/>',
+  'bar-chart':'<line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/>',
+  'plus':'<path d="M5 12h14"/><path d="M12 5v14"/>',
+  'check':'<polyline points="20 6 9 17 4 12"/>',
+  'alert':'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/>',
+  'wrench':'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/>',
+  'refresh':'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  'trash':'<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  'camera':'<path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3"/>',
+  'image':'<rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.09-3.09a2 2 0 0 0-2.82 0L6 21"/>',
+  'upload':'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" x2="12" y1="3" y2="15"/>',
+  'pencil':'<path d="M17 3a2.85 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/><path d="m15 5 4 4"/>',
+  'clipboard':'<rect width="8" height="4" x="8" y="2" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+  'settings':'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z"/>',
+  'octagon':'<polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86"/><line x1="12" x2="12" y1="8" y2="12"/><line x1="12" x2="12.01" y1="16" y2="16"/>',
+  'play':'<polygon points="6 3 20 12 6 21 6 3"/>',
+  'message':'<path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z"/>',
+  'monitor':'<rect width="20" height="14" x="2" y="3" rx="2"/><line x1="8" x2="16" y1="21" y2="21"/><line x1="12" x2="12" y1="17" y2="21"/>',
+  'printer':'<polyline points="6 9 6 2 18 2 18 9"/><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2"/><rect width="12" height="8" x="6" y="14"/>',
+  'check-square':'<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  'square':'<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  'lock':'<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>'
+};
+function icon(n, cls){ var d=ICON_PATHS[n]; if(!d) return ''; return '<svg class="ic-svg'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>'; }
 function lbl(t) { return '<label style="font-size:13px;color:var(--dim);margin-bottom:2px">' + t + '</label>'; }
 function inp(name, type, ph) { return '<input type="' + (type||'text') + '" name="' + name + '" placeholder="' + (ph||'') + '" value="' + esc(form[name]||'') + '">'; }
 function fld(t, name, type, ph) { return lbl(t) + inp(name, type, ph); }
@@ -368,7 +400,7 @@ function sigPad(key, title) {
       '<button type="button" class="btn btn-o" style="width:auto;padding:12px 16px;font-size:16px" onclick="openSigModal(\'' + key + '\')">Re-sign</button>' +
     '</div>';
   } else {
-    h += '<button type="button" class="btn btn-o" style="margin-bottom:12px;border:2px dashed var(--dim);color:var(--dim)" onclick="openSigModal(\'' + key + '\')">✍️ Tap to Sign</button>';
+    h += '<button type="button" class="btn btn-o" style="margin-bottom:12px;border:2px dashed var(--dim);color:var(--dim)" onclick="openSigModal(\'' + key + '\')">'+icon('pencil')+' Tap to Sign</button>';
   }
   return h;
 }
@@ -381,7 +413,7 @@ function openSigModal(key) {
 function renderSigModal() {
   var title = sigModalKey === 'store' ? 'Store Manager Signature' : (sigModalKey === 'mySig' ? 'My Signature (saved to your profile)' : 'Technician Signature');
   return '<div class="sig-modal">' +
-    '<div class="sig-modal-head">✍️ ' + title + '</div>' +
+    '<div class="sig-modal-head">'+icon('pencil')+' ' + title + '</div>' +
     '<canvas id="sigModalCanvas"></canvas>' +
     '<div class="sig-modal-btns">' +
       '<button class="btn btn-o" style="flex:1" onclick="clearSigModal()">Clear</button>' +
@@ -670,24 +702,24 @@ function renderHome() {
 
   if (hasProgress) {
     h += '<div class="card">' +
-      '<p style="font-size:14px;margin-bottom:10px">📋 You have a PM in progress</p>' +
+      '<p style="font-size:14px;margin-bottom:10px">'+icon('clipboard')+' You have a PM in progress</p>' +
       '<button class="btn btn-p" onclick="resumeProgress()">Resume PM</button>' +
       '<button class="btn btn-o" style="margin-top:8px" onclick="clearProgress();render()">Discard</button>' +
     '</div>';
   }
 
   // Route button (for techs with assigned routes)
-  h += '<button class="btn btn-p" style="margin-bottom:10px" onclick="goRoute()">🗺️ My Route</button>';
-  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goSelect()">🔧 Browse All Assets</button>';
-  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goHistory()">📊 PM History</button>';
-  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goPay()">💰 Weekly Pay</button>';
+  h += '<button class="btn btn-p" style="margin-bottom:10px" onclick="goRoute()">'+icon('map')+' My Route</button>';
+  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goSelect()">'+icon('wrench')+' Browse All Assets</button>';
+  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goHistory()">'+icon('bar-chart')+' PM History</button>';
+  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="goPay()">'+icon('dollar')+' Weekly Pay</button>';
 
   // Admin button
   if (userRole === 'admin') {
-    h += '<button class="btn btn-o" style="color:var(--rd)" onclick="goAdmin()">⚙️ Admin Panel</button>';
+    h += '<button class="btn btn-o" style="color:var(--rd)" onclick="goAdmin()">'+icon('settings')+' Admin Panel</button>';
     // Dedicated back-office console (routes + payments) — same Supabase backend,
     // bigger screen layout for when you're at a computer.
-    h += '<a class="btn btn-o" style="display:block;text-align:center;margin-top:8px;text-decoration:none" href="admin.html">🖥️ Admin Console (routes &amp; pay)</a>';
+    h += '<a class="btn btn-o" style="display:block;text-align:center;margin-top:8px;text-decoration:none" href="admin.html">'+icon('monitor')+' Admin Console (routes &amp; pay)</a>';
   }
   h += '<div class="card" style="margin-top:14px">';
   if (mySig) {
@@ -697,7 +729,7 @@ function renderHome() {
     h += '</div>';
     h += '<div style="font-size:14px;color:var(--gn);margin-top:8px">✓ Your signature is signed onto every PM automatically</div>';
   } else {
-    h += '<button class="btn btn-p" onclick="openSigModal(\'mySig\')">✍️ Lock In My Signature</button>';
+    h += '<button class="btn btn-p" onclick="openSigModal(\'mySig\')">'+icon('pencil')+' Lock In My Signature</button>';
     h += '<div style="font-size:14px;color:var(--dim);margin-top:8px">Sign once — it gets applied to every PM so you never sign twice</div>';
   }
   h += '</div>';
@@ -735,15 +767,15 @@ function renderSelect() {
 
   cityOrder.forEach(function(key) {
     var g = groups[key];
-    h += '<div class="store-grp"><h4>📍 ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
+    h += '<div class="store-grp"><h4>'+icon('map-pin')+' ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
     h += '<div style="font-size:12px;color:var(--dim);margin-bottom:6px;padding:0 4px">' + esc(g.address) + '</div>';
     g.assets.forEach(function(item) {
       var a = item.asset;
       var done = isCompleted(a.serial);
       h += '<button class="asset-btn' + (done ? ' done' : '') + '" data-idx="' + item.idx + '">' +
         esc(a.manufacturer) + ' ' + esc(a.model) +
-        (done ? ' ✅' : '') +
-        '<br><span class="ser">S/N: ' + esc(a.serial) + (a.warranty === 'UNDER' ? ' 🛡️' : '') + '</span>' +
+        (done ? ' '+icon('check')+'' : '') +
+        '<br><span class="ser">S/N: ' + esc(a.serial) + (a.warranty === 'UNDER' ? ' '+icon('shield')+'' : '') + '</span>' +
       '</button>';
     });
     h += '</div>';
@@ -759,7 +791,7 @@ function renderSelect() {
 function renderChecklist() {
   if (!selectedAsset) { screen = 'home'; return renderHome(); }
   var a = selectedAsset;
-  var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">✏️ Editing a previously submitted PM — submitting will update it</div>' : '';
+  var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('pencil')+' Editing a previously submitted PM — submitting will update it</div>' : '';
 
   var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
@@ -835,8 +867,8 @@ function renderChecklist() {
 
   h += '<h3>Photos</h3>';
   h += '<div style="display:flex;gap:8px;margin-bottom:8px">' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto()">📸 Camera</button>' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="uploadPhoto()">🖼️ Upload</button>' +
+    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto()">'+icon('camera')+' Camera</button>' +
+    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="uploadPhoto()">'+icon('image')+' Upload</button>' +
   '</div>';
 
   if (photos.length) {
@@ -852,10 +884,10 @@ function renderChecklist() {
   if (submitting) {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Uploading PM...</div>';
   } else {
-    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">✅ ' + (reopenPmId ? 'Update PM' : 'Submit PM') + '</button>';
-    h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">🚨 Open Service Ticket</button>';
+    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">'+icon('check')+' ' + (reopenPmId ? 'Update PM' : 'Submit PM') + '</button>';
+    h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' Open Service Ticket</button>';
     if (!reopenPmId) {
-      h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">📋 PM PREV COMP (done elsewhere)</button>';
+      h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">'+icon('clipboard')+' PM PREV COMP (done elsewhere)</button>';
     }
   }
 
@@ -880,9 +912,9 @@ function renderHistory() {
         '<br>' +
         '<span style="color:var(--dim)">S/N: ' + esc(pm.serial) + ' &bull; Tech: ' + esc(pm.tech_name || '') + '</span>';
       if (pm.pdf_path) {
-        h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:13px">📄 View PDF</a>' +
-          ' &nbsp; <a href="#" onclick="sharePDF(\'' + esc(pm.pdf_path) + '\');return false" style="color:var(--ac);font-size:13px">📤 Send to Freshpet</a>' +
-          ' &nbsp; <a href="#" onclick="reopenPM(' + pm.id + ');return false" style="color:var(--ac);font-size:13px">✏️ Reopen</a>';
+        h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:13px">'+icon('file-text')+' View PDF</a>' +
+          ' &nbsp; <a href="#" onclick="sharePDF(\'' + esc(pm.pdf_path) + '\');return false" style="color:var(--ac);font-size:13px">'+icon('upload')+' Send to Freshpet</a>' +
+          ' &nbsp; <a href="#" onclick="reopenPM(' + pm.id + ');return false" style="color:var(--ac);font-size:13px">'+icon('pencil')+' Reopen</a>';
       }
       h += '</div>';
     });
@@ -1162,7 +1194,7 @@ async function sharePDF(path) {
 function renderAdmin() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="goHome()">←</button>' +
-    '<h2 style="margin:0;flex:1">⚙️ Admin Panel</h2>' +
+    '<h2 style="margin:0;flex:1">'+icon('settings')+' Admin Panel</h2>' +
   '</div>';
 
   h += '<div class="tab-bar">' +
@@ -1209,11 +1241,11 @@ function renderAdminReview() {
     h += '<button class="btn btn-s" style="width:auto;padding:8px 14px;font-size:13px" onclick="clearReview(' + pm.id + ')">✓ Clear</button>';
     h += '</div>';
     if (pm.form_data && pm.form_data.comments) {
-      h += '<div style="font-size:13px;color:var(--dim);margin-top:6px">💬 ' + esc(pm.form_data.comments) + '</div>';
+      h += '<div style="font-size:13px;color:var(--dim);margin-top:6px">'+icon('message')+' ' + esc(pm.form_data.comments) + '</div>';
     }
     if (pm.pdf_path) {
-      h += '<a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:13px">📄 View PDF</a>' +
-        ' &nbsp; <a href="#" onclick="reopenPM(' + pm.id + ');return false" style="color:var(--ac);font-size:13px">✏️ Reopen</a>';
+      h += '<a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:13px">'+icon('file-text')+' View PDF</a>' +
+        ' &nbsp; <a href="#" onclick="reopenPM(' + pm.id + ');return false" style="color:var(--ac);font-size:13px">'+icon('pencil')+' Reopen</a>';
     }
     h += '</div>';
   });
@@ -1283,7 +1315,7 @@ function renderAdminPay() {
         });
       });
       if (prof) {
-        h += '<button class="btn btn-o" style="margin-top:8px;padding:8px;font-size:13px" onclick="printTechWeek(\'' + esc(prof.email).replace(/'/g, "\\'") + '\',' + adminPayWeekOffset + ')">🖨️ Print Payout Invoice</button>';
+        h += '<button class="btn btn-o" style="margin-top:8px;padding:8px;font-size:13px" onclick="printTechWeek(\'' + esc(prof.email).replace(/'/g, "\\'") + '\',' + adminPayWeekOffset + ')">'+icon('printer')+' Print Payout Invoice</button>';
         if (payout && payout.status !== 'paid') {
           h += '<button class="btn btn-s" style="margin-top:6px;padding:8px;font-size:13px" onclick="markPayoutPaid(' + payout.id + ')">✓ Mark Paid</button>';
         }
@@ -1466,7 +1498,7 @@ function renderAdminReports() {
   if (sharingReports) {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Preparing ' + selCount + ' PDF' + (selCount === 1 ? '' : 's') + '...</div>';
   } else if (selCount > 0) {
-    h += '<button class="btn btn-s" style="margin-bottom:10px" onclick="shareSelectedReports()">📤 Send ' + selCount + ' PDF' + (selCount === 1 ? '' : 's') + '</button>';
+    h += '<button class="btn btn-s" style="margin-bottom:10px" onclick="shareSelectedReports()">'+icon('upload')+' Send ' + selCount + ' PDF' + (selCount === 1 ? '' : 's') + '</button>';
   }
 
   list.forEach(function(pm) {
@@ -1619,7 +1651,7 @@ async function assignStoreToTech(assetIds) {
 
 function renderAdminRoutes() {
   var h = '';
-  h += '<button class="btn ' + (showUnassigned ? 'btn-p' : 'btn-o') + '" style="margin-bottom:12px" onclick="toggleUnassigned()">📍 ' + (showUnassigned ? 'Hide' : 'Show') + ' Unassigned Stores</button>';
+  h += '<button class="btn ' + (showUnassigned ? 'btn-p' : 'btn-o') + '" style="margin-bottom:12px" onclick="toggleUnassigned()">'+icon('map-pin')+' ' + (showUnassigned ? 'Hide' : 'Show') + ' Unassigned Stores</button>';
   if (showUnassigned) { h += renderUnassignedStores(); return h; }
   h += '<div class="card">';
   h += '<h3>Select Technician</h3>';
@@ -1668,7 +1700,7 @@ function renderAdminRoutes() {
 
     h += '<div style="display:flex;gap:8px;margin-top:12px">';
     h += '<button class="btn btn-p" style="flex:1" onclick="goAddAssets()">+ Add Stores</button>';
-    h += '<button class="btn btn-s" style="flex:1" onclick="optimizeAndSaveRoute()">🗺️ Optimize</button>';
+    h += '<button class="btn btn-s" style="flex:1" onclick="optimizeAndSaveRoute()">'+icon('map')+' Optimize</button>';
     h += '</div>';
     if (assignedAssets.length > 0) {
       h += '<button class="btn btn-d" style="margin-top:8px" onclick="clearRoute()">Clear Route</button>';
@@ -1695,10 +1727,10 @@ function renderAdminImport() {
     h += '<div class="card">';
     h += '<h3>Preview: ' + esc(importFileName) + '</h3>';
     h += '<div style="font-size:14px;line-height:1.9">';
-    h += '📄 ' + p.rows.length + ' assets in file<br>';
-    h += '➕ <strong>' + p.newCount + '</strong> new assets will be added<br>';
-    h += '🔄 <strong>' + p.updateCount + '</strong> existing assets will be updated<br>';
-    h += '🗑️ <strong>' + p.deactivateSerials.length + '</strong> current assets are not in the file';
+    h += ''+icon('file-text')+' ' + p.rows.length + ' assets in file<br>';
+    h += ''+icon('plus')+' <strong>' + p.newCount + '</strong> new assets will be added<br>';
+    h += ''+icon('refresh')+' <strong>' + p.updateCount + '</strong> existing assets will be updated<br>';
+    h += ''+icon('trash')+' <strong>' + p.deactivateSerials.length + '</strong> current assets are not in the file';
     h += '</div>';
     if (p.skipped.length) {
       h += '<h3>Skipped Rows (' + p.skipped.length + ')</h3>';
@@ -1708,7 +1740,7 @@ function renderAdminImport() {
       h += '</div>';
     }
     h += '<label style="margin-top:10px"><input type="checkbox" onchange="importFullReplace=this.checked"' + (importFullReplace ? ' checked' : '') + '> Remove accounts not in this file (full replace)</label>';
-    h += '<button class="btn btn-s" style="margin-top:10px" onclick="runImport()">✅ Apply Import</button>';
+    h += '<button class="btn btn-s" style="margin-top:10px" onclick="runImport()">'+icon('check')+' Apply Import</button>';
     h += '<button class="btn btn-o" style="margin-top:8px" onclick="importPreview=null;render()">Cancel</button>';
     h += '</div>';
   }
@@ -1921,7 +1953,7 @@ async function runImport() {
 function renderRoute() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="goHome()">←</button>' +
-    '<h2 style="margin:0;flex:1">🗺️ My Route</h2>' +
+    '<h2 style="margin:0;flex:1">'+icon('map')+' My Route</h2>' +
   '</div>';
 
   if (myRoute.length === 0) {
@@ -1968,12 +2000,12 @@ function renderRoute() {
     if (startingDay) {
       h += '<div class="card" style="text-align:center"><span class="spinner"></span> Locating start point &amp; optimizing route...</div>';
     } else if (localStorage.getItem('fp_day_on')) {
-      h += '<button class="btn btn-o" style="margin-bottom:10px;border-color:var(--rd);color:var(--rd)" onclick="endDay()">🛑 Complete Day</button>';
+      h += '<button class="btn btn-o" style="margin-bottom:10px;border-color:var(--rd);color:var(--rd)" onclick="endDay()">'+icon('octagon')+' Complete Day</button>';
     } else {
       h += '<div class="card">';
       h += lbl('Start from (address, city or zip — leave blank to use GPS)');
       h += '<input type="text" id="startAddr" placeholder="e.g. 1200 Main St, San Jose">';
-      h += '<button class="btn btn-s" onclick="startDay()">▶️ Start Day — Optimize From Here</button>';
+      h += '<button class="btn btn-s" onclick="startDay()">'+icon('play')+' Start Day — Optimize From Here</button>';
       h += '</div>';
     }
   }
@@ -1997,8 +2029,8 @@ function renderRoute() {
 
     if (isCurrent || !s.allDone) {
       h += '<div style="display:flex;gap:8px;margin-top:8px">';
-      h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">🗺️ Navigate</button>';
-      h += '<button class="btn btn-p" style="display:inline-flex;align-items:center;padding:10px 16px;width:auto;margin-top:0" onclick="goRouteStop(' + i + ')">📋 PMs</button>';
+      h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate</button>';
+      h += '<button class="btn btn-p" style="display:inline-flex;align-items:center;padding:10px 16px;width:auto;margin-top:0" onclick="goRouteStop(' + i + ')">'+icon('clipboard')+' PMs</button>';
       h += '</div>';
     }
 
@@ -2020,7 +2052,7 @@ function renderRouteStop() {
     '<div style="font-size:17px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">' + esc(stop.address) + ', ' + esc(stop.city) + '</div></div>' +
   '</div>';
 
-  h += '<button class="nav-btn" style="width:100%;justify-content:center;margin-bottom:12px" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">🗺️ Navigate to This Stop</button>';
+  h += '<button class="nav-btn" style="width:100%;justify-content:center;margin-bottom:12px" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate to This Stop</button>';
 
   h += '<h3>Assets at This Stop</h3>';
   stop.assets.forEach(function(a) {
@@ -2028,7 +2060,7 @@ function renderRouteStop() {
     var idx = ASSETS.indexOf(a);
     h += '<div class="asset-btn' + (done ? ' done' : '') + '" style="cursor:pointer" onclick="startChecklistFromRoute(' + idx + ')">' +
       esc(a.manufacturer) + ' ' + esc(a.model) +
-      (done ? ' ✅' : ' →') +
+      (done ? ' '+icon('check')+'' : ' →') +
       '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
     '</div>';
   });
@@ -2701,11 +2733,11 @@ function renderAdminAssetPicker() {
   // Multi-select action bar
   h += '<div class="card" style="position:sticky;top:0;z-index:5;display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:10px 12px">';
   if (eligibleKeys.length) {
-    h += '<button class="btn btn-o" style="width:auto;padding:8px 12px;font-size:13px" onclick="toggleSelectAllShown()">' + (allShownSelected ? '☑ Deselect shown' : '☐ Select all shown') + '</button>';
+    h += '<button class="btn btn-o" style="width:auto;padding:8px 12px;font-size:13px" onclick="toggleSelectAllShown()">' + (allShownSelected ? ''+icon('check-square')+' Deselect shown' : ''+icon('square')+' Select all shown') + '</button>';
   }
   h += '<span style="font-size:13px;color:var(--dim)">' + selCount + ' selected</span>';
   if (selCount) {
-    h += '<button class="btn btn-p" style="width:auto;padding:8px 14px;font-size:13px;margin-left:auto" onclick="assignSelectedStores()">➕ Assign ' + selCount + ' store' + (selCount === 1 ? '' : 's') + '</button>';
+    h += '<button class="btn btn-p" style="width:auto;padding:8px 14px;font-size:13px;margin-left:auto" onclick="assignSelectedStores()">'+icon('plus')+' Assign ' + selCount + ' store' + (selCount === 1 ? '' : 's') + '</button>';
     h += '<button class="btn btn-o" style="width:auto;padding:8px 12px;font-size:13px" onclick="pickerSel={};render()">Clear</button>';
   }
   h += '</div>';
@@ -2721,11 +2753,11 @@ function renderAdminAssetPicker() {
     if (eligible) {
       h += '<input type="checkbox" style="width:22px;height:22px;flex:none" onclick="togglePickStore(\'' + encKey + '\')"' + (checked ? ' checked' : '') + '>';
     }
-    h += '<h4 style="margin:0;overflow:hidden;text-overflow:ellipsis">📍 ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
+    h += '<h4 style="margin:0;overflow:hidden;text-overflow:ellipsis">'+icon('map-pin')+' ' + esc(g.store) + ' — ' + esc(g.city) + '</h4>';
     h += '</div>';
     if (g.takenBy) {
       var owner = techProfiles.find(function(t) { return t.email === g.takenBy; });
-      h += '<span style="color:var(--rd);font-size:12px;flex:none">🔒 ' + esc(owner ? (owner.name || owner.email) : g.takenBy) + '</span>';
+      h += '<span style="color:var(--rd);font-size:12px;flex:none">'+icon('lock')+' ' + esc(owner ? (owner.name || owner.email) : g.takenBy) + '</span>';
     } else if (!g.allAssigned) {
       var ids = g.assets.filter(function(x) { return !x.assigned; }).map(function(x) { return x.asset.id; });
       h += '<button class="btn btn-p" style="width:auto;padding:6px 12px;font-size:12px;flex:none" onclick="addStoreToRoute([' + ids.join(',') + '])">+ Add</button>';

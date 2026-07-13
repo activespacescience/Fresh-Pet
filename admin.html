@@ -31,6 +31,10 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:var(--font);background:var(--bg);color:var(--tx);min-height:100vh;line-height:1.5;letter-spacing:-.006em;-webkit-font-smoothing:antialiased;-moz-osx-font-smoothing:grayscale;text-rendering:optimizeLegibility}
 .mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+/* Inline SVG icons (Lucide-style) — inherit color + font-size, replace emoji */
+.ic-svg{width:1.05em;height:1.05em;vertical-align:-.16em;flex:none;stroke-width:2}
+.logo .ic-svg{width:1.15em;height:1.15em;vertical-align:-.18em;color:var(--ac)}
+.tab .ic-svg,.seg button .ic-svg{margin-right:5px}
 /* Accessibility: visible keyboard focus + honor reduced-motion */
 :focus-visible{outline:2px solid var(--ac);outline-offset:2px;border-radius:8px}
 @media (prefers-reduced-motion:reduce){*{animation-duration:.001ms!important;transition-duration:.001ms!important;scroll-behavior:auto!important}}
@@ -207,6 +211,33 @@ var siBusy = false;
 var siResult = null;
 
 function esc(s){ var d=document.createElement('div'); d.textContent = s==null?'':s; return d.innerHTML; }
+// Inline SVG icon set (Lucide-style, currentColor). Replaces emoji UI icons.
+var ICON_PATHS = {
+  'file-text':'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8"/><path d="M16 17H8"/><path d="M10 9H8"/>',
+  'receipt':'<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1V2l-2 1-2-1-2 1-2-1-2 1-2-1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/>',
+  'shield':'<path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10Z"/>',
+  'dollar':'<line x1="12" x2="12" y1="2" y2="22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>',
+  'lock':'<rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>',
+  'map':'<path d="M9 4 3 6v14l6-2 6 2 6-2V4l-6 2-6-2Z"/><path d="M9 4v14"/><path d="M15 6v14"/>',
+  'paw':'<circle cx="11" cy="4" r="2"/><circle cx="18" cy="8" r="2"/><circle cx="4" cy="8" r="2"/><circle cx="7.5" cy="12.5" r="2"/><path d="M9.5 16.5c-2.5 1-3.5 2.6-3 4 .5 1.3 2.3 1.5 4 1.2 1.7.3 3.5.1 4-1.2.5-1.4-.5-3-3-4a2.2 2.2 0 0 0-2 0Z"/>',
+  'bar-chart':'<line x1="12" x2="12" y1="20" y2="10"/><line x1="18" x2="18" y1="20" y2="4"/><line x1="6" x2="6" y1="20" y2="16"/>',
+  'download':'<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/>',
+  'mail':'<rect width="20" height="16" x="2" y="4" rx="2"/><path d="m22 7-8.97 5.7a1.94 1.94 0 0 1-2.06 0L2 7"/>',
+  'eye':'<path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/>',
+  'plus':'<path d="M5 12h14"/><path d="M12 5v14"/>',
+  'check':'<polyline points="20 6 9 17 4 12"/>',
+  'check-square':'<polyline points="9 11 12 14 22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/>',
+  'square':'<rect width="18" height="18" x="3" y="3" rx="2"/>',
+  'alert':'<path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3Z"/><line x1="12" x2="12" y1="9" y2="13"/><line x1="12" x2="12.01" y1="17" y2="17"/>',
+  'wrench':'<path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76Z"/>',
+  'refresh':'<path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16"/><path d="M8 16H3v5"/>',
+  'trash':'<path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>',
+  'eraser':'<path d="m7 21-4.3-4.3c-1-1-1-2.5 0-3.4l9.6-9.6c1-1 2.5-1 3.4 0l5.6 5.6c1 1 1 2.5 0 3.4L13 21"/><path d="M22 21H7"/><path d="m5 11 9 9"/>',
+  'link':'<path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>',
+  'smartphone':'<rect width="14" height="20" x="5" y="2" rx="2"/><path d="M12 18h.01"/>',
+  'save':'<path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"/><path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7"/><path d="M7 3v4a1 1 0 0 0 1 1h7"/>'
+};
+function icon(n, cls){ var d=ICON_PATHS[n]; if(!d) return ''; return '<svg class="ic-svg'+(cls?' '+cls:'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+d+'</svg>'; }
 function money(n){ return '$' + Number(n||0).toFixed(2); }
 // Public URL for a stored reactive-invoice PDF (fp-invoices bucket is public).
 function fpInvoicePdfUrl(path){ return path ? (SUPA_URL+'/storage/v1/object/public/fp-invoices/'+encodeURIComponent(path)) : ''; }
@@ -348,23 +379,23 @@ function render(){
   var app = document.getElementById('app');
   if (screen==='loading'){ app.innerHTML='<div class="empty" style="margin-top:80px">Loading…</div>'; return; }
   if (screen==='login'){
-    app.innerHTML='<div class="login"><div class="box"><div class="logo">🐾 <span style="color:var(--ac)">Freshpet</span> Admin</div><div class="sub">Back-office console — routes &amp; payments</div><button class="btn" style="width:100%;justify-content:center" onclick="signIn()">Sign in with Google</button></div></div>';
+    app.innerHTML='<div class="login"><div class="box"><div class="logo">'+icon('paw')+' <span style="color:var(--ac)">Freshpet</span> Admin</div><div class="sub">Back-office console — routes &amp; payments</div><button class="btn" style="width:100%;justify-content:center" onclick="signIn()">Sign in with Google</button></div></div>';
     return;
   }
   if (screen==='denied'){
-    app.innerHTML='<div class="login"><div class="box"><div class="logo">🔒 Admin only</div><div class="sub">'+esc(user?user.email:'')+' isn\'t an admin on Freshpet. Ask a super-admin to set your role, then reload.</div><button class="btn o" style="width:100%;justify-content:center" onclick="signOut()">Sign out</button></div></div>';
+    app.innerHTML='<div class="login"><div class="box"><div class="logo">'+icon('lock')+' Admin only</div><div class="sub">'+esc(user?user.email:'')+' isn\'t an admin on Freshpet. Ask a super-admin to set your role, then reload.</div><button class="btn o" style="width:100%;justify-content:center" onclick="signOut()">Sign out</button></div></div>';
     return;
   }
   var h = '<div class="wrap">';
-  h += '<div class="hd"><div><div class="logo">🐾 <span class="fp">Freshpet</span> Admin</div></div><div class="sub">Back office</div>'
-     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><a class="btn o sm" href="./portal" target="_blank" title="Open the Freshpet customer portal (view as they see it)">👁 Freshpet portal</a><a class="btn o sm" href="./">📱 Field app</a><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
+  h += '<div class="hd"><div><div class="logo">'+icon('paw')+' <span class="fp">Freshpet</span> Admin</div></div><div class="sub">Back office</div>'
+     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><a class="btn o sm" href="./portal" target="_blank" title="Open the Freshpet customer portal (view as they see it)">'+icon('eye')+' Freshpet portal</a><a class="btn o sm" href="./">'+icon('smartphone')+' Field app</a><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
   h += '<div class="tabs">'
-     + '<button class="tab '+(tab==='overview'?'on':'')+'" onclick="tab=\'overview\';render()">📊 Overview</button>'
-     + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">🗺️ Routes</button>'
-     + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">💰 Payments</button>'
-     + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">🧾 Freshpet Billing</button>'
-     + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">📥 Upload / Reactive</button>'
-     + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">📧 Send Invoice</button>'
+     + '<button class="tab '+(tab==='overview'?'on':'')+'" onclick="tab=\'overview\';render()">'+icon('bar-chart')+' Overview</button>'
+     + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">'+icon('map')+' Routes</button>'
+     + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">'+icon('dollar')+' Payments</button>'
+     + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">'+icon('receipt')+' Freshpet Billing</button>'
+     + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">'+icon('download')+' Upload / Reactive</button>'
+     + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">'+icon('mail')+' Send Invoice</button>'
      + '</div>';
   h += tab==='overview' ? renderOverview()
      : tab==='routes' ? renderRoutes()
@@ -494,7 +525,7 @@ function renderOverview(){
   h+='<tr class="tot"><td>Total</td><td class="num">'+c.assigned+'</td><td class="num">'+c.completed+'</td><td class="num">'+c.remaining+'</td><td></td><td class="num">'+money(o.contribPaid)+'</td><td class="num">'+money(o.contribOwed)+'</td></tr>';
   h+='</tbody></table></div>';
   if(o.offRoutePaid||o.company.offRoute){ h+='<div class="muted" style="margin-top:8px;font-size:.76rem">'+(o.company.offRoute||0)+' off-route stop(s) serviced (not on any tech\'s route)'+(o.offRoutePaid?' · '+money(o.offRoutePaid)+' paid':'')+' — included in the company totals above, not the per-contractor rows.</div>'; }
-  h+='<div class="muted" style="margin-top:6px;font-size:.78rem">Need to bill Freshpet or pay a contractor? Use the 🧾 Billing and 💰 Payments tabs.</div>';
+  h+='<div class="muted" style="margin-top:6px;font-size:.78rem">Need to bill Freshpet or pay a contractor? Use the '+icon('receipt')+' Billing and '+icon('dollar')+' Payments tabs.</div>';
   h+='</div>';
   return h;
 }
@@ -536,7 +567,7 @@ function renderRoutes(){
         ? '<span class="pill gn" style="flex:none;font-weight:800">✓ COMPLETED</span>'
         : '<span class="pill dim" style="flex:none">open</span>';
       var acts = d
-        ? '<span class="ic" title="Completed — locked" style="opacity:.55;cursor:default">🔒</span>'
+        ? '<span class="ic" title="Completed — locked" style="opacity:.55;cursor:default">'+icon('lock')+'</span>'
         : '<button class="ic" onclick="moveStop('+i+',-1)" '+(i===0?'disabled':'')+' title="Up">▲</button>'
           + '<button class="ic" onclick="moveStop('+i+',1)" '+(i===routeStops.length-1?'disabled':'')+' title="Down">▼</button>'
           + '<button class="ic" onclick="removeStop('+i+')" title="Remove">✕</button>';
@@ -545,7 +576,7 @@ function renderRoutes(){
         + '<div class="acts">'+acts+'</div></div>';
     });
   }
-  h += '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn gn" onclick="saveRoute()" '+(saving?'disabled':'')+'>'+(saving?'Saving…':'💾 Save route')+'</button><button class="btn o" onclick="selectRouteTech(routeTech)">↺ Reset</button></div>';
+  h += '<div style="margin-top:14px;display:flex;gap:10px"><button class="btn gn" onclick="saveRoute()" '+(saving?'disabled':'')+'>'+(saving?'Saving…':''+icon('save')+' Save route')+'</button><button class="btn o" onclick="selectRouteTech(routeTech)">'+icon('refresh')+' Reset</button></div>';
   h += '</div></div>';
 
   // Add stores
@@ -560,12 +591,12 @@ function renderRoutes(){
   var addableIds = avail.filter(function(a){ return !isLocked(a); }).map(function(a){ return a.id; });
   var addSelCount = Object.keys(addSel).filter(function(k){ return addSel[k]; }).length;
   var allAvailSel = addableIds.length>0 && addableIds.every(function(id){ return addSel[id]; });
-  h += '<div class="col"><div class="card"><h3>Add stops</h3><div class="hint">Tick multiple stores and add them together, or use the row + button for one. Stores already on another tech\'s route are 🔒 locked — a store can only belong to one tech.</div>';
+  h += '<div class="col"><div class="card"><h3>Add stops</h3><div class="hint">Tick multiple stores and add them together, or use the row + button for one. Stores already on another tech\'s route are '+icon('lock')+' locked — a store can only belong to one tech.</div>';
   h += '<input type="search" placeholder="Search store, city, address, serial…" value="'+esc(addSearch)+'" oninput="addSearch=this.value;render();this.focus()">';
   h += '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:10px 0 4px">';
-  if(addableIds.length){ h += '<button class="btn o sm" onclick="toggleAddSelAll()">'+(allAvailSel?'☑ Deselect shown':'☐ Select all shown')+'</button>'; }
+  if(addableIds.length){ h += '<button class="btn o sm" onclick="toggleAddSelAll()">'+(allAvailSel?''+icon('check-square')+' Deselect shown':''+icon('square')+' Select all shown')+'</button>'; }
   h += '<span class="muted" style="font-size:.8rem">'+addSelCount+' selected</span>';
-  if(addSelCount){ h += '<button class="btn sm" style="margin-left:auto" onclick="addSelectedStops()">➕ Add '+addSelCount+' selected</button><button class="btn o sm" onclick="addSel={};render()">Clear</button>'; }
+  if(addSelCount){ h += '<button class="btn sm" style="margin-left:auto" onclick="addSelectedStops()">'+icon('plus')+' Add '+addSelCount+' selected</button><button class="btn o sm" onclick="addSel={};render()">Clear</button>'; }
   h += '</div>';
   h += '<div class="addlist">';
   if(!avail.length){ h += '<div class="empty">No matching stores.</div>'; }
@@ -577,7 +608,7 @@ function renderRoutes(){
         var other = isLocked(a);
         var ck = !!addSel[a.id];
         var left = other
-          ? '<span style="width:18px;flex:none;text-align:center">🔒</span>'
+          ? '<span style="width:18px;flex:none;text-align:center">'+icon('lock')+'</span>'
           : '<input type="checkbox" style="width:18px;height:18px;flex:none" onclick="toggleAddSel('+a.id+')"'+(ck?' checked':'')+'>';
         var right = other
           ? '<span class="pill dim" style="flex:none">on '+esc(techName(assignedIds[a.id]))+'</span>'
@@ -627,7 +658,7 @@ function renderTechPay(){
     var b=payBillResult.bill||{};
     h += '<div class="card" style="background:var(--sf2);border-color:var(--gn);margin:0 0 14px"><h3 style="color:var(--gn)">✓ Bill #'+esc(b.docNumber)+' created</h3>'
        + '<div class="muted" style="font-size:.85rem">'+payBillResult.paidCount+' PM(s) · '+money(b.total)+' · vendor '+esc(b.vendor)+'</div>'
-       + ((payBillResult.warnings&&payBillResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">⚠ '+payBillResult.warnings.map(esc).join('<br>⚠ ')+'</div>':'')
+       + ((payBillResult.warnings&&payBillResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">'+icon('alert')+' '+payBillResult.warnings.map(esc).join('<br>'+icon('alert')+' ')+'</div>':'')
        + '</div>';
   }
 
@@ -643,7 +674,7 @@ function renderTechPay(){
        + '<td class="num">'+(rate!=null?money(rate):'<span class="muted">—</span>')+'</td>'
        + '<td class="num">'+(owed!=null?money(owed):'<span class="muted">set rate</span>')+'</td>'
        + '<td>'+(paidCount[t.user_id]?'<span class="pill gn">'+paidCount[t.user_id]+' paid</span>':'<span class="muted">—</span>')+'</td>'
-       + '<td>'+((unpaid&&rate!=null)?'<button class="btn gn sm" onclick="createPayoutBill(\''+esc(t.user_id)+'\')" '+(payBusy?'disabled':'')+'>'+(payBusy?'Working…':'💵 Create QBO bill')+'</button>':'')+'</td></tr>';
+       + '<td>'+((unpaid&&rate!=null)?'<button class="btn gn sm" onclick="createPayoutBill(\''+esc(t.user_id)+'\')" '+(payBusy?'disabled':'')+'>'+(payBusy?'Working…':''+icon('dollar')+' Create QBO bill')+'</button>':'')+'</td></tr>';
   });
   h += '</tbody></table></div></div>';
   return h;
@@ -861,8 +892,8 @@ function renderBilling(){
      + '<span class="muted">'+sel.length+' selected · '+money(sel.length*rate)+'</span>'
      + '<label class="muted" style="display:flex;align-items:center;gap:6px;cursor:pointer"><input type="checkbox" '+(billShowBilled?'checked':'')+' onchange="billShowBilled=this.checked;render()"> Show already-billed stops</label>'
      + '<div style="margin-left:auto;display:flex;gap:8px">'
-     + '<button class="btn o sm" onclick="previewInvoice()" '+(billBusy||!sel.length?'disabled':'')+'>👁 Preview</button>'
-     + '<button class="btn gn sm" onclick="createInvoice()" '+(billBusy||!sel.length?'disabled':'')+'>'+(billBusy?'Working…':'🧾 Create QBO invoice')+'</button>'
+     + '<button class="btn o sm" onclick="previewInvoice()" '+(billBusy||!sel.length?'disabled':'')+'>'+icon('eye')+' Preview</button>'
+     + '<button class="btn gn sm" onclick="createInvoice()" '+(billBusy||!sel.length?'disabled':'')+'>'+(billBusy?'Working…':''+icon('receipt')+' Create QBO invoice')+'</button>'
      + '</div></div>';
 
   if(billResult){
@@ -871,7 +902,7 @@ function renderBilling(){
        + '<h3 style="color:var(--gn)">✓ Invoice #'+esc(inv.docNumber)+' created</h3>'
        + '<div class="muted" style="font-size:.85rem">'+billResult.billedCount+' PM(s) · '+money(inv.total)+' · item '+esc(inv.itemUsed)+' · '+(billResult.emailed?'emailed to '+esc(billRecipient):'not emailed')+'</div>'
        + (inv.invoiceLink?'<div style="margin-top:8px"><a class="btn sm" href="'+esc(inv.invoiceLink)+'" target="_blank">Open in QBO →</a></div>':'')
-       + ((billResult.warnings&&billResult.warnings.length)?'<div style="margin-top:10px;color:var(--am);font-size:.82rem">⚠ '+billResult.warnings.map(esc).join('<br>⚠ ')+'</div>':'')
+       + ((billResult.warnings&&billResult.warnings.length)?'<div style="margin-top:10px;color:var(--am);font-size:.82rem">'+icon('alert')+' '+billResult.warnings.map(esc).join('<br>'+icon('alert')+' ')+'</div>':'')
        + '</div>';
   }
   if(billPreview){
@@ -1203,10 +1234,10 @@ function renderSendInvoice(){
   var list = siType==='reactive'
     ? reactiveInvoiceList().map(function(b){ return { ref:b.invoice_ref, label:b.invoice_ref+' · '+[b.quarter_label,b.location].filter(Boolean).join(' · ')+' · '+money(b.total) }; })
     : pmInvoiceList().map(function(g){ return { ref:g.ref, label:'#'+g.ref+' · '+g.count+' visit'+(g.count===1?'':'s')+' · '+money(g.total) }; });
-  var h='<div class="card"><h3>📧 Send invoice to Freshpet accounting</h3><div class="hint">Pick an invoice, enter the recipient email(s), and send a clean branded email. <strong>Reactive</strong> attaches the invoice PDF. <strong>PM</strong> includes a link to the portal so they can view the service backup (photos + signed reports). The PDF attachment toggle applies to either.</div>';
+  var h='<div class="card"><h3>'+icon('mail')+' Send invoice to Freshpet accounting</h3><div class="hint">Pick an invoice, enter the recipient email(s), and send a clean branded email. <strong>Reactive</strong> attaches the invoice PDF. <strong>PM</strong> includes a link to the portal so they can view the service backup (photos + signed reports). The PDF attachment toggle applies to either.</div>';
   h += '<div class="seg" style="margin-bottom:14px">'
-     + '<button class="'+(siType==='reactive'?'on':'')+'" onclick="setSiType(\'reactive\')">🧾 Reactive invoice</button>'
-     + '<button class="'+(siType==='pm'?'on':'')+'" onclick="setSiType(\'pm\')">🛠 PM invoice</button>'
+     + '<button class="'+(siType==='reactive'?'on':'')+'" onclick="setSiType(\'reactive\')">'+icon('receipt')+' Reactive invoice</button>'
+     + '<button class="'+(siType==='pm'?'on':'')+'" onclick="setSiType(\'pm\')">'+icon('wrench')+' PM invoice</button>'
      + '</div>';
   h += '<div class="row" style="align-items:flex-end">'
      + '<div class="col" style="max-width:380px"><label class="f">Invoice</label><select onchange="siRef=this.value;siResult=null;render()">'
@@ -1225,7 +1256,7 @@ function renderSendInvoice(){
   h += '<div style="display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap">'
      + '<label style="display:flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:var(--tx2);cursor:pointer"><input type="checkbox" '+(siAttach?'checked':'')+' onchange="siAttach=this.checked" style="width:auto;accent-color:var(--ac)"> Attach invoice PDF</label>'
      + (siType==='pm'?'<span class="muted" style="font-size:.78rem">Portal backup link is always included for PM invoices.</span>':'')
-     + '<button class="btn gn" style="margin-left:auto" onclick="sendInvoiceEmail()" '+((siBusy||!siRef)?'disabled':'')+'>'+(siBusy?'Sending…':'📧 Send email')+'</button>'
+     + '<button class="btn gn" style="margin-left:auto" onclick="sendInvoiceEmail()" '+((siBusy||!siRef)?'disabled':'')+'>'+(siBusy?'Sending…':''+icon('mail')+' Send email')+'</button>'
      + '</div>';
   if(!list.length){ h += '<div class="empty" style="padding:16px;margin-top:8px">No '+(siType==='reactive'?'reactive':'PM')+' invoices billed yet. Create one first, then send it here.</div>'; }
   if(siResult){
@@ -1240,10 +1271,10 @@ function renderReactive(){
   var h='<div class="card"><h3>Upload asset spreadsheet</h3><div class="hint">Upload the Freshpet asset list as <strong>CSV or Excel (.xls/.xlsx)</strong>, then choose what to do with it. Matched by serial. Same file works for a PM route reset or a Quarterly Reactive invoice.</div>';
   h += '<input type="file" accept=".csv,.xls,.xlsx,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" onchange="onReactiveCSV(this)" style="width:100%;padding:10px;background:var(--bg);border:1px solid var(--bd);border-radius:10px;color:var(--tx)">';
   if(rvRows){
-    h += '<div class="muted" style="margin-top:10px">📄 '+esc(rvFileName)+' — '+rvRows.length+' assets parsed.</div>';
+    h += '<div class="muted" style="margin-top:10px">'+icon('file-text')+' '+esc(rvFileName)+' — '+rvRows.length+' assets parsed.</div>';
     h += '<div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">'
-       + '<button class="btn '+(rvMode==='pm'?'':'o')+'" onclick="pickMode(\'pm\')">🗺️ Update PM routes</button>'
-       + '<button class="btn '+(rvMode==='reactive'?'':'o')+'" onclick="pickMode(\'reactive\')">🧾 Review &amp; save to a Quarter</button>'
+       + '<button class="btn '+(rvMode==='pm'?'':'o')+'" onclick="pickMode(\'pm\')">'+icon('map')+' Update PM routes</button>'
+       + '<button class="btn '+(rvMode==='reactive'?'':'o')+'" onclick="pickMode(\'reactive\')">'+icon('receipt')+' Review &amp; save to a Quarter</button>'
        + '</div>';
   }
   h += '</div>';
@@ -1252,9 +1283,9 @@ function renderReactive(){
   if(rvMode==='pm' && rvPMPreview){
     var p=rvPMPreview;
     h += '<div class="card"><h3>Update PM routes</h3><div class="hint">Reloads locations from the file. Completed PM history is kept. Completed stops are unassigned; <strong>pending (uncompleted) assignments are kept</strong>; new locations come in unassigned and need routing.</div>';
-    h += '<div style="line-height:2">➕ <strong>'+p.newCount+'</strong> new locations · 🔄 <strong>'+p.updateCount+'</strong> updated · 🗑️ <strong>'+p.deactivate.length+'</strong> removed<br>'
-       + '🧹 <strong>'+p.dropAssign+'</strong> completed stops unassigned · ✅ <strong>'+p.keepAssign+'</strong> pending assignments kept</div>';
-    h += '<button class="btn rd" style="margin-top:12px" onclick="applyPMReset()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Working…':'⚠ Reset PM routes')+'</button>';
+    h += '<div style="line-height:2">'+icon('plus')+' <strong>'+p.newCount+'</strong> new locations · '+icon('refresh')+' <strong>'+p.updateCount+'</strong> updated · '+icon('trash')+' <strong>'+p.deactivate.length+'</strong> removed<br>'
+       + ''+icon('eraser')+' <strong>'+p.dropAssign+'</strong> completed stops unassigned · '+icon('check')+' <strong>'+p.keepAssign+'</strong> pending assignments kept</div>';
+    h += '<button class="btn rd" style="margin-top:12px" onclick="applyPMReset()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Working…':''+icon('alert')+' Reset PM routes')+'</button>';
     h += '</div>';
   }
 
@@ -1272,14 +1303,14 @@ function renderReactive(){
     var outN=rvReview.filter(function(x){return !x.under_warranty;}).length;
     var underN=rvReview.length-outN;
     h += '<div style="display:flex;align-items:center;gap:14px;margin:12px 0;flex-wrap:wrap"><span class="muted">'+rvReview.length+' still to review · '+appr.length+' approved ('+bill.length+' out-of-warranty) · '+underN+' under warranty</span>'
-       + '<div style="margin-left:auto;display:flex;gap:8px"><button class="btn o sm" onclick="composeDenyEmail()">✉ Email denied to Freshpet</button></div></div>';
+       + '<div style="margin-left:auto;display:flex;gap:8px"><button class="btn o sm" onclick="composeDenyEmail()">'+icon('mail')+' Email denied to Freshpet</button></div></div>';
     // Filter + bulk approve/deny (speeds up review: e.g. filter Under → Deny all, or Out → Approve all)
     var shown=rvShown();
     h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
        + '<div class="seg">'
          + '<button class="'+(rvFilter==='all'?'on':'')+'" onclick="setRvFilter(\'all\')">All ('+rvReview.length+')</button>'
-         + '<button class="'+(rvFilter==='out'?'on':'')+'" onclick="setRvFilter(\'out\')">💲 Out ('+outN+')</button>'
-         + '<button class="'+(rvFilter==='under'?'on':'')+'" onclick="setRvFilter(\'under\')">🛡 Under ('+underN+')</button>'
+         + '<button class="'+(rvFilter==='out'?'on':'')+'" onclick="setRvFilter(\'out\')">'+icon('dollar')+' Out ('+outN+')</button>'
+         + '<button class="'+(rvFilter==='under'?'on':'')+'" onclick="setRvFilter(\'under\')">'+icon('shield')+' Under ('+underN+')</button>'
        + '</div>'
        + '<input type="search" placeholder="Search store, city, serial…" value="'+esc(rvSearch)+'" oninput="rvSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
        + '<span class="muted" style="font-size:.8rem">'+shown.length+' shown</span>'
@@ -1292,7 +1323,7 @@ function renderReactive(){
     shown.forEach(function(i){ var x=rvReview[i];
       h += '<tr'+(!x.approved?' style="opacity:.5"':'')+'>'
         + '<td>'+esc(x.store||'')+'</td><td class="hide">'+esc(x.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(x.serial||'')+'</td>'
-        + '<td><button class="btn o sm" onclick="toggleRvWarranty('+i+')" title="Toggle warranty">'+(x.under_warranty?'🛡 Under warranty':'💲 Out of warranty')+'</button></td>'
+        + '<td><button class="btn o sm" onclick="toggleRvWarranty('+i+')" title="Toggle warranty">'+(x.under_warranty?''+icon('shield')+' Under warranty':''+icon('dollar')+' Out of warranty')+'</button></td>'
         + '<td><button class="btn '+(x.approved?'gn':'o')+' sm" onclick="toggleRvApprove('+i+')">'+(x.approved?'✓ Approved':'✕ Denied')+'</button></td></tr>';
     });
     h += '</tbody></table></div></div>';
@@ -1305,16 +1336,16 @@ function renderReactive(){
     h += '<div class="card" style="background:var(--sf2);border-color:var(--gn)"><h3 style="color:var(--gn)">✓ '+esc(inv.ref)+' created</h3>'
        + '<div class="muted" style="font-size:.85rem">'+inv.billableCount+' out-of-warranty billed of '+inv.assetCount+' assets · '+money(inv.total)+' · item '+esc(inv.itemUsed)+(rvResult.emailed?' · emailed':'')+(inv.pdfStored?' · PDF stored':'')+'</div>'
        + '<div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">'
-       + (inv.pdfStored?('<a class="btn gn sm" href="'+esc(pdfUrl)+'" target="_blank" rel="noopener">📄 View invoice PDF</a>'):'')
-       + '<a class="btn o sm" href="'+esc(portalUrl)+'" target="_blank" rel="noopener">🔗 Open in portal</a>'
-       + (inv.qboInvoiceUrl?('<a class="btn o sm" href="'+esc(inv.qboInvoiceUrl)+'" target="_blank" rel="noopener">💵 Open in QuickBooks</a>'):'')
+       + (inv.pdfStored?('<a class="btn gn sm" href="'+esc(pdfUrl)+'" target="_blank" rel="noopener">'+icon('file-text')+' View invoice PDF</a>'):'')
+       + '<a class="btn o sm" href="'+esc(portalUrl)+'" target="_blank" rel="noopener">'+icon('link')+' Open in portal</a>'
+       + (inv.qboInvoiceUrl?('<a class="btn o sm" href="'+esc(inv.qboInvoiceUrl)+'" target="_blank" rel="noopener">'+icon('dollar')+' Open in QuickBooks</a>'):'')
        + '</div>'
-       + ((rvResult.warnings&&rvResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">⚠ '+rvResult.warnings.map(esc).join('<br>⚠ ')+'</div>':'')
+       + ((rvResult.warnings&&rvResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">'+icon('alert')+' '+rvResult.warnings.map(esc).join('<br>'+icon('alert')+' ')+'</div>':'')
        + '</div>';
   }
 
   // Quarterly batches — saved accounts accumulate here; bill each quarter's OOW when ready
-  h += '<div class="card"><h3>Quarterly Reactive invoices</h3><div class="hint">Approved accounts save into a draft quarter. Bill the out-of-warranty accounts when the quarter is ready. <strong>Saving a new quarter purges older reactive datasets</strong> — the newest import always replaces the old. Delete (🗑) removes a saved dataset (the QBO invoice, if any, is not touched).</div>';
+  h += '<div class="card"><h3>Quarterly Reactive invoices</h3><div class="hint">Approved accounts save into a draft quarter. Bill the out-of-warranty accounts when the quarter is ready. <strong>Saving a new quarter purges older reactive datasets</strong> — the newest import always replaces the old. Delete ('+icon('trash')+') removes a saved dataset (the QBO invoice, if any, is not touched).</div>';
   if(!rvBatches.length){ h += '<div class="empty" style="padding:16px">None yet.</div>'; }
   else {
     h += '<div style="overflow-x:auto"><table><thead><tr><th>Invoice</th><th>Quarter</th><th>Location</th><th class="num">Saved</th><th class="num">OOW billed</th><th class="num">Total</th><th>Status</th><th></th></tr></thead><tbody>';
@@ -1324,9 +1355,9 @@ function renderReactive(){
          + '<td class="num">'+savedN+'</td><td class="num">'+(b.billable_count||0)+'</td><td class="num">'+money(b.total)+'</td>'
          + '<td>'+(b.status==='invoiced'?'<span class="pill gn">Invoiced</span>':'<span class="pill am">Draft</span>')+'</td>'
          + '<td style="white-space:nowrap">'
-           + (b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>🧾 Invoice OOW</button> ':'')
-           + (b.status==='invoiced'?('<a class="btn o sm" href="'+esc(fpInvoicePdfUrl(b.invoice_pdf_path||('Invoice-'+String(b.invoice_ref||'').replace(/[^A-Za-z0-9._-]/g,"_")+'.pdf')))+'" target="_blank" rel="noopener" title="View invoice PDF">📄 Invoice</a> '):'')
-           + '<button class="btn o sm" onclick="deleteBatch('+b.id+')" '+(rvBusy?'disabled':'')+' title="Delete this saved dataset">🗑</button></td></tr>';
+           + (b.status!=='invoiced'?'<button class="btn gn sm" onclick="invoiceBatch('+b.id+')" '+(rvBusy?'disabled':'')+'>'+icon('receipt')+' Invoice OOW</button> ':'')
+           + (b.status==='invoiced'?('<a class="btn o sm" href="'+esc(fpInvoicePdfUrl(b.invoice_pdf_path||('Invoice-'+String(b.invoice_ref||'').replace(/[^A-Za-z0-9._-]/g,"_")+'.pdf')))+'" target="_blank" rel="noopener" title="View invoice PDF">'+icon('file-text')+' Invoice</a> '):'')
+           + '<button class="btn o sm" onclick="deleteBatch('+b.id+')" '+(rvBusy?'disabled':'')+' title="Delete this saved dataset">'+icon('trash')+'</button></td></tr>';
     });
     h += '</tbody></table></div>';
   }
@@ -1347,8 +1378,8 @@ function renderReactive(){
   h += '<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
      + '<div class="seg">'
        + '<button class="'+(rvSavedFilter==='all'?'on':'')+'" onclick="rvSavedFilter=\'all\';render()">All ('+rvSaved.length+')</button>'
-       + '<button class="'+(rvSavedFilter==='under'?'on':'')+'" onclick="rvSavedFilter=\'under\';render()">🛡 Under ('+suN+')</button>'
-       + '<button class="'+(rvSavedFilter==='out'?'on':'')+'" onclick="rvSavedFilter=\'out\';render()">💲 Out ('+soN+')</button>'
+       + '<button class="'+(rvSavedFilter==='under'?'on':'')+'" onclick="rvSavedFilter=\'under\';render()">'+icon('shield')+' Under ('+suN+')</button>'
+       + '<button class="'+(rvSavedFilter==='out'?'on':'')+'" onclick="rvSavedFilter=\'out\';render()">'+icon('dollar')+' Out ('+soN+')</button>'
      + '</div>'
      + '<input type="search" placeholder="Search store, city, serial…" value="'+esc(rvSavedSearch)+'" oninput="rvSavedSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
      + '<span class="muted" style="font-size:.8rem">'+savedShown.length+' shown</span>'
@@ -1360,7 +1391,7 @@ function renderReactive(){
     savedShown.slice(0,500).forEach(function(a){ var b=byBatch[a.batch_id]||{};
       h += '<tr><td>'+esc(a.store||'')+'</td><td class="hide">'+esc(a.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(a.serial||'')+'</td>'
         + '<td>'+esc(b.quarter_label||'')+'</td>'
-        + '<td>'+(a.under_warranty?'<span class="pill">🛡 Under</span>':'<span class="pill am">💲 Out</span>')+'</td></tr>';
+        + '<td>'+(a.under_warranty?'<span class="pill">'+icon('shield')+' Under</span>':'<span class="pill am">'+icon('dollar')+' Out</span>')+'</td></tr>';
     });
     if(savedShown.length>500){ h += '<tr><td colspan="5" class="muted" style="text-align:center">Showing first 500 of '+savedShown.length+' — refine your search.</td></tr>'; }
     h += '</tbody></table></div>';
