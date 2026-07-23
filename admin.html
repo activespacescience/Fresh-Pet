@@ -174,6 +174,15 @@ var billBusy = false;
 var billPreview = null;       // preview result
 var billResult = null;        // create result
 
+// ── Added assets (field-found, un-reported) ──
+var aaSel = {};               // { pm id: true } added-asset PMs selected for invoicing
+var aaRate = 30;              // $ per added-asset PM billed to Freshpet
+var aaRecipient = '';         // invoice email recipient
+var aaBusy = false;
+var aaPreview = null;         // invoice preview result
+var aaResult = null;          // invoice create result
+var aaPayResult = null;       // vendor payout bill result
+
 // ── Reactive / CSV upload ──
 var QUARTERLY_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-quarterly-invoice';
 var rvBatches = [];           // existing reactive_batches
@@ -275,7 +284,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store')
   ]);
@@ -397,12 +406,15 @@ function render(){
      + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">'+icon('map')+' Routes</button>'
      + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">'+icon('dollar')+' Payments</button>'
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">'+icon('receipt')+' Freshpet Billing</button>'
+     + (function(){ var n=assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
+        return '<button class="tab '+(tab==='added'?'on':'')+'" onclick="tab=\'added\';render()">'+icon('plus')+' Added Assets'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">'+icon('download')+' Upload / Reactive</button>'
      + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">'+icon('mail')+' Send Invoice</button>'
      + '</div>';
   h += tab==='overview' ? renderOverview()
      : tab==='routes' ? renderRoutes()
      : tab==='payments' ? renderPayments()
+     : tab==='added' ? renderAddedAssets()
      : tab==='reactive' ? renderReactive()
      : tab==='send' ? renderSendInvoice()
      : renderBilling();
@@ -939,6 +951,182 @@ function renderBilling(){
   return h;
 }
 
+// ═══ Added Assets (field-found, un-reported) ═══
+function fieldAssets(){ return assets.filter(function(a){ return a.source==='field'; }); }
+function addedAssetPMs(){ return completedPMs.filter(function(p){ return p.added_asset && !p.prev_comp; }); }
+
+async function markReported(id){
+  var a = assets.find(function(x){ return x.id===id; }); if(!a) return;
+  if(!confirm('Mark this asset as REPORTED to Freshpet?\n\n'+(a.store||'')+' — S/N '+(a.serial||'')+'\n\nDo this once Freshpet has been told the unit exists (it should show up in their next asset export).')) return;
+  var { error } = await sb.from('assets').update({ reported:true, reported_at:new Date().toISOString(), reported_by:user.email }).eq('id', id);
+  if(error) return toast('Failed: '+error.message,'err');
+  await loadAll(); toast('Marked reported','ok'); render();
+}
+
+function toggleAa(id){ if(aaSel[id]) delete aaSel[id]; else aaSel[id]=true; aaPreview=null; render(); }
+function aaSelectedIds(){ return Object.keys(aaSel).filter(function(k){ return aaSel[k]; }).map(Number); }
+function aaSelectAll(){
+  var list = addedAssetPMs().filter(function(p){ return !p.billed; });
+  var allSel = list.length && list.every(function(p){ return aaSel[p.id]; });
+  if(allSel){ list.forEach(function(p){ delete aaSel[p.id]; }); }
+  else { list.forEach(function(p){ aaSel[p.id]=true; }); }
+  aaPreview=null; render();
+}
+
+// Same QBO invoice pipeline as the Billing tab (freshpet-invoice fn), scoped
+// to the selected added-asset PMs.
+async function aaInvoice(mode){
+  var ids = aaSelectedIds();
+  if(!ids.length) return toast('Select at least one added-asset PM','err');
+  var rate = Number(aaRate)||30;
+  if(mode==='create' && !confirm('Create a QuickBooks invoice to FRESH PET for '+ids.length+' ADDED-ASSET PM'+(ids.length===1?'':'s')+' @ '+money(rate)+' = '+money(ids.length*rate)+'?\n\nThis posts a real invoice in QBO and marks these PMs billed.')) return;
+  aaBusy=true; if(mode==='create'){ aaResult=null; } else { aaPreview=null; } render();
+  try{
+    var token = await billToken();
+    var res = await fetch(BILL_FN, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body: JSON.stringify({ mode:mode, pmIds:ids, rate:rate, recipientEmail:(aaRecipient||'').trim() }) });
+    var j = await res.json();
+    if(!res.ok) throw new Error(j.error || ('HTTP '+res.status));
+    if(mode==='create'){
+      aaResult=j; aaSel={}; aaPreview=null;
+      await loadAll();
+      toast('Invoice #'+(j.invoice&&j.invoice.docNumber)+' created'+(j.emailed?' + emailed':''),'ok');
+    } else { aaPreview=j; }
+  }catch(e){ toast((mode==='create'?'Create':'Preview')+' failed: '+e.message,'err'); }
+  aaBusy=false; render();
+}
+
+// QBO vendor bill scoped to JUST this tech's unpaid added-asset PMs
+// (freshpet-payout-bill with pmIds — the Payments tab pays everything unpaid).
+async function aaPayTech(techUserId){
+  var t = techs.find(function(x){ return x.user_id===techUserId; }); if(!t) return;
+  var mine = addedAssetPMs().filter(function(p){ return !p.paid_out && p.tech_user_id===techUserId; });
+  if(!mine.length) return toast('No unpaid added-asset PMs for this tech','err');
+  var rate = t.pm_rate!=null && Number(t.pm_rate)>0 ? Number(t.pm_rate) : DEFAULT_PM_RATE;
+  if(!confirm('Create a QuickBooks BILL to '+(t.name||t.email)+' for '+mine.length+' ADDED-ASSET PM'+(mine.length===1?'':'s')+' @ '+money(rate)+' = '+money(mine.length*rate)+'?\n\nThis posts a real vendor bill in QBO and marks just these PMs paid out.')) return;
+  aaBusy=true; aaPayResult=null; render();
+  try{
+    var token = await billToken();
+    var res = await fetch(PAYOUT_FN, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body: JSON.stringify({ mode:'create', techUserId:techUserId, rate:rate, pmIds:mine.map(function(p){ return p.id; }) }) });
+    var j = await res.json();
+    if(!res.ok) throw new Error(j.error || ('HTTP '+res.status));
+    aaPayResult=j;
+    await loadAll();
+    toast('Bill #'+(j.bill&&j.bill.docNumber)+' created for '+(j.bill&&j.bill.vendor),'ok');
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+  aaBusy=false; render();
+}
+
+function renderAddedAssets(){
+  var fa = fieldAssets().slice().sort(function(a,b){ return String(b.added_at||'').localeCompare(String(a.added_at||'')); });
+  var pms = addedAssetPMs();
+  var pmByAsset = {};
+  pms.forEach(function(p){ if(p.asset_id!=null && !pmByAsset[p.asset_id]) pmByAsset[p.asset_id]=p; });
+  var unreported = fa.filter(function(a){ return a.reported===false; });
+  var unbilled = pms.filter(function(p){ return !p.billed; });
+  var unpaid = pms.filter(function(p){ return !p.paid_out; });
+
+  var h='<div class="card"><h3>'+icon('plus')+' Added assets — found in the field</h3>'
+    +'<div class="hint">Units techs discovered at a store that weren\'t on the Freshpet asset list, added from a closed stop in the field app. They arrive <strong>un-reported</strong> — tell Freshpet about the unit, then Mark reported so the next spreadsheet export owns it (imports never deactivate un-reported field assets). The full PM done on each one is flagged <span class="mono">ADDED ASSET</span> under Needs Review and is billed / paid from this tab.</div>';
+  h+='<div class="tiles">'
+    +'<div class="tile"><div class="lb">Field-added assets</div><div class="v ac">'+fa.length+'</div></div>'
+    +'<div class="tile"><div class="lb">Un-reported</div><div class="v '+(unreported.length?'am':'gn')+'">'+unreported.length+'</div><div class="sub">not yet on Freshpet\'s books</div></div>'
+    +'<div class="tile"><div class="lb">Unbilled added PMs</div><div class="v '+(unbilled.length?'am':'gn')+'">'+unbilled.length+'</div><div class="sub">bill Freshpet below</div></div>'
+    +'<div class="tile"><div class="lb">Unpaid added PMs</div><div class="v '+(unpaid.length?'am':'gn')+'">'+unpaid.length+'</div><div class="sub">pay the vendor below</div></div>'
+    +'</div></div>';
+
+  // ── the un-reported / reported asset list ──
+  h+='<div class="card"><h3>New un-reported assets</h3><div class="hint">Every field-added asset, newest first. "Mark reported" records that Freshpet has been told the unit exists.</div>';
+  if(!fa.length){ h+='<div class="empty">No field-added assets yet. Techs add them from a closed stop in the field app (Re-open / Add asset).</div>'; }
+  else {
+    h+='<div style="overflow-x:auto"><table><thead><tr><th>Store</th><th class="hide">City</th><th>Serial</th><th class="hide">Model</th><th>Added by</th><th>PM</th><th>Billed</th><th class="hide">Paid</th><th>Reported</th></tr></thead><tbody>';
+    fa.forEach(function(a){
+      var pm = pmByAsset[a.id];
+      h+='<tr><td>'+esc(a.store||'')+'</td><td class="hide">'+esc(a.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(a.serial||'')+'</td><td class="hide">'+esc(a.model||'')+'</td>'
+        +'<td>'+esc((a.added_by||'').split('@')[0])+'<div class="muted" style="font-size:.7rem">'+esc(String(a.added_at||'').slice(0,10))+'</div></td>'
+        +'<td>'+(pm?'<span class="pill gn">✓ '+esc(pm.pm_date||'')+'</span>':'<span class="pill am">pending</span>')+'</td>'
+        +'<td>'+(pm&&pm.billed?'<span class="pill gn">Inv #'+esc(pm.invoice_doc_number||'—')+'</span>':(pm?'<span class="pill am">unbilled</span>':'<span class="pill dim">—</span>'))+'</td>'
+        +'<td class="hide">'+(pm&&pm.paid_out?'<span class="pill gn">'+esc(pm.payout_bill_ref||'paid')+'</span>':(pm?'<span class="pill am">unpaid</span>':'<span class="pill dim">—</span>'))+'</td>'
+        +'<td>'+(a.reported===false
+            ?'<button class="btn sm" onclick="markReported('+a.id+')">'+icon('check')+' Mark reported</button>'
+            :'<span class="pill gn">Reported'+(a.reported_at?' '+esc(String(a.reported_at).slice(0,10)):'')+'</span>')+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  h+='</div>';
+
+  // ── bill Freshpet for the added assets ──
+  var rate=Number(aaRate)||30;
+  var sel=aaSelectedIds();
+  h+='<div class="card"><h3>'+icon('receipt')+' Bill Freshpet for added assets</h3><div class="hint">Same QBO invoice pipeline as the Billing tab, scoped to added-asset PMs — the invoice line calls out that these are newly found units.</div>';
+  h+='<div class="row" style="align-items:flex-end">'
+    +'<div style="flex:none"><label class="f">Rate / PM</label><input type="number" step="0.01" min="0" value="'+rate+'" oninput="aaRate=this.value;aaPreview=null" style="max-width:120px;text-align:right"></div>'
+    +'<div class="col" style="max-width:320px"><label class="f">Invoice email to (optional)</label><input type="text" placeholder="billing@freshpet.com" value="'+esc(aaRecipient)+'" oninput="aaRecipient=this.value"></div>'
+    +'<div style="margin-left:auto;display:flex;gap:8px">'
+    +'<button class="btn o sm" onclick="aaInvoice(\'preview\')" '+(aaBusy||!sel.length?'disabled':'')+'>'+icon('eye')+' Preview</button>'
+    +'<button class="btn gn sm" onclick="aaInvoice(\'create\')" '+(aaBusy||!sel.length?'disabled':'')+'>'+(aaBusy?'Working…':''+icon('receipt')+' Create QBO invoice')+'</button>'
+    +'</div></div>';
+  h+='<div style="display:flex;align-items:center;gap:14px;margin:12px 0 6px;flex-wrap:wrap"><span class="muted">'+sel.length+' selected · '+money(sel.length*rate)+'</span>'
+    +(unbilled.length?'<button class="btn o sm" onclick="aaSelectAll()">✓ all unbilled</button>':'')+'</div>';
+  if(aaResult){
+    var inv=aaResult.invoice||{};
+    h+='<div class="card" style="background:var(--sf2);border-color:var(--gn);margin:0 0 14px"><h3 style="color:var(--gn)">✓ Invoice #'+esc(inv.docNumber)+' created</h3>'
+      +'<div class="muted" style="font-size:.85rem">'+aaResult.billedCount+' added-asset PM(s) · '+money(inv.total)+' · item '+esc(inv.itemUsed)+' · '+(aaResult.emailed?'emailed':'not emailed')+'</div>'
+      +(inv.invoiceLink?'<div style="margin-top:8px"><a class="btn sm" href="'+esc(inv.invoiceLink)+'" target="_blank">Open in QBO →</a></div>':'')
+      +((aaResult.warnings&&aaResult.warnings.length)?'<div style="margin-top:10px;color:var(--am);font-size:.82rem">'+icon('alert')+' '+aaResult.warnings.map(esc).join('<br>'+icon('alert')+' ')+'</div>':'')
+      +'</div>';
+  }
+  if(aaPreview){
+    h+='<div class="card" style="background:var(--sf2);margin:0 0 14px"><h3>Preview</h3><div class="muted" style="font-size:.85rem">'+aaPreview.count+' billable added-asset PM(s) @ '+money(aaPreview.rate)+' = <strong style="color:var(--tx)">'+money(aaPreview.total)+'</strong>'+(aaPreview.periodLabel?' · '+esc(aaPreview.periodLabel):'')+(aaPreview.skipped&&aaPreview.skipped.length?' · '+aaPreview.skipped.length+' skipped':'')+'</div></div>';
+  }
+  if(!pms.length){ h+='<div class="empty">No added-asset PMs yet.</div>'; }
+  else {
+    h+='<div style="overflow-x:auto"><table><thead><tr><th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Status</th></tr></thead><tbody>';
+    pms.forEach(function(p){
+      h+='<tr>'
+        +'<td>'+(p.billed?'':'<input type="checkbox" '+(aaSel[p.id]?'checked':'')+' onclick="toggleAa('+p.id+')">')+'</td>'
+        +'<td>'+esc(p.store||'')+'</td>'
+        +'<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
+        +'<td>'+esc(p.pm_date||'')+'</td>'
+        +'<td class="hide">'+esc(p.tech_name||'')+'</td>'
+        +'<td>'+(p.billed?'<span class="pill gn">Inv #'+esc(p.invoice_doc_number||'—')+'</span>':'<span class="pill am">Unbilled</span>')+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  h+='</div>';
+
+  // ── pay the vendors for the added assets ──
+  h+='<div class="card"><h3>'+icon('dollar')+' Pay vendors for added assets</h3><div class="hint">Creates a QBO vendor <strong>bill</strong> scoped to just the unpaid added-asset PMs — separate from the Payments tab, which pays everything a tech is owed at once. Rate is the tech\'s per-PM rate ('+money(DEFAULT_PM_RATE)+' default).</div>';
+  if(aaPayResult){
+    var b=aaPayResult.bill||{};
+    h+='<div class="card" style="background:var(--sf2);border-color:var(--gn);margin:0 0 14px"><h3 style="color:var(--gn)">✓ Bill #'+esc(b.docNumber)+' created</h3>'
+      +'<div class="muted" style="font-size:.85rem">'+aaPayResult.paidCount+' added-asset PM(s) · '+money(b.total)+' · vendor '+esc(b.vendor)+'</div>'
+      +((aaPayResult.warnings&&aaPayResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">'+icon('alert')+' '+aaPayResult.warnings.map(esc).join('<br>'+icon('alert')+' ')+'</div>':'')
+      +'</div>';
+  }
+  var byTech={};
+  unpaid.forEach(function(p){ if(!p.tech_user_id) return; (byTech[p.tech_user_id]=byTech[p.tech_user_id]||[]).push(p); });
+  var uids=Object.keys(byTech);
+  if(!uids.length){ h+='<div class="empty" style="padding:20px">Nothing owed for added assets right now.</div>'; }
+  else {
+    h+='<div style="overflow-x:auto"><table><thead><tr><th>Vendor / technician</th><th class="num">Unpaid added PMs</th><th class="num">Rate / PM</th><th class="num">Owed</th><th></th></tr></thead><tbody>';
+    uids.forEach(function(uid){
+      var t = techs.find(function(x){ return x.user_id===uid; });
+      var n = byTech[uid].length;
+      var r = t && t.pm_rate!=null && Number(t.pm_rate)>0 ? Number(t.pm_rate) : DEFAULT_PM_RATE;
+      h+='<tr><td>'+esc(t?(t.name||t.email):'(unknown tech)')+(t?'<div class="muted" style="font-size:.72rem">'+esc(t.email)+'</div>':'')+'</td>'
+        +'<td class="num">'+n+'</td>'
+        +'<td class="num">'+money(r)+'</td>'
+        +'<td class="num">'+money(n*r)+'</td>'
+        +'<td>'+(t?'<button class="btn gn sm" onclick="aaPayTech(\''+esc(uid)+'\')" '+(aaBusy?'disabled':'')+'>'+(aaBusy?'Working…':''+icon('dollar')+' Create QBO bill')+'</button>':'<span class="muted">no profile</span>')+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  h+='</div>';
+  return h;
+}
+
 // ═══ Reactive / CSV upload ═══
 function parseCSV(text){
   var rows=[], row=[], cur='', inQ=false;
@@ -1053,10 +1241,12 @@ function buildPMPreview(){
   var completedSerials={}; completedPMs.forEach(function(p){ completedSerials[p.serial]=1; });
   var newCount=0, updateCount=0;
   rvRows.forEach(function(x){ if(bySerial[x.serial]) updateCount++; else newCount++; });
-  var deactivate=assets.filter(function(a){ return !fileSerials[a.serial]; });
+  // Un-reported field-added assets can't be in Freshpet's export yet — keep them.
+  var deactivate=assets.filter(function(a){ return !fileSerials[a.serial] && !(a.source==='field' && a.reported===false); });
+  var keptField=assets.filter(function(a){ return !fileSerials[a.serial] && a.source==='field' && a.reported===false; }).length;
   // assignments dropped = those whose asset is completed; kept = uncompleted
   var completedAssignments = assignments.filter(function(a){ var as=assetById(a.asset_id); return as && completedSerials[as.serial]; });
-  rvPMPreview={ newCount:newCount, updateCount:updateCount, deactivate:deactivate, dropAssign:completedAssignments.length, keepAssign:assignments.length-completedAssignments.length };
+  rvPMPreview={ newCount:newCount, updateCount:updateCount, deactivate:deactivate, keptField:keptField, dropAssign:completedAssignments.length, keepAssign:assignments.length-completedAssignments.length };
   render();
 }
 async function applyPMReset(){
@@ -1074,9 +1264,10 @@ async function applyPMReset(){
       if(ex){ await sb.from('assets').update(rec).eq('id', ex.id); }
       else { await sb.from('assets').insert(rec); }
     }
-    // Deactivate assets not in the file
+    // Deactivate assets not in the file (un-reported field-added assets are
+    // kept — Freshpet's export can't contain them yet)
     var fileSerials={}; rvRows.forEach(function(x){ fileSerials[x.serial]=1; });
-    var deact=assets.filter(function(a){ return !fileSerials[a.serial]; }).map(function(a){ return a.id; });
+    var deact=assets.filter(function(a){ return !fileSerials[a.serial] && !(a.source==='field' && a.reported===false); }).map(function(a){ return a.id; });
     if(deact.length){ await sb.from('assets').update({ active:false }).in('id', deact); }
     // Drop route assignments for COMPLETED assets; keep pending ones
     var dropIds=assignments.filter(function(a){ var as=assetById(a.asset_id); return as && completedSerials[as.serial]; }).map(function(a){ return a.asset_id; });
@@ -1286,7 +1477,7 @@ function renderReactive(){
   if(rvMode==='pm' && rvPMPreview){
     var p=rvPMPreview;
     h += '<div class="card"><h3>Update PM routes</h3><div class="hint">Reloads locations from the file. Completed PM history is kept. Completed stops are unassigned; <strong>pending (uncompleted) assignments are kept</strong>; new locations come in unassigned and need routing.</div>';
-    h += '<div style="line-height:2">'+icon('plus')+' <strong>'+p.newCount+'</strong> new locations · '+icon('refresh')+' <strong>'+p.updateCount+'</strong> updated · '+icon('trash')+' <strong>'+p.deactivate.length+'</strong> removed<br>'
+    h += '<div style="line-height:2">'+icon('plus')+' <strong>'+p.newCount+'</strong> new locations · '+icon('refresh')+' <strong>'+p.updateCount+'</strong> updated · '+icon('trash')+' <strong>'+p.deactivate.length+'</strong> removed'+(p.keptField?' · '+icon('shield')+' <strong>'+p.keptField+'</strong> un-reported field asset'+(p.keptField===1?'':'s')+' kept':'')+'<br>'
        + ''+icon('eraser')+' <strong>'+p.dropAssign+'</strong> completed stops unassigned · '+icon('check')+' <strong>'+p.keepAssign+'</strong> pending assignments kept</div>';
     h += '<button class="btn rd" style="margin-top:12px" onclick="applyPMReset()" '+(rvBusy?'disabled':'')+'>'+(rvBusy?'Working…':''+icon('alert')+' Reset PM routes')+'</button>';
     h += '</div>';
