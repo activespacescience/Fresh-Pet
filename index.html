@@ -75,7 +75,7 @@ label input[type=checkbox]{width:26px;height:26px;accent-color:var(--ac)}
 .tab-bar button.active{background:var(--ac);color:#fff}
 .stop-card{background:var(--sf);border-radius:16px;padding:15px;margin-bottom:10px;border-left:4px solid var(--bd);box-shadow:var(--shadow)}
 .stop-card.current{border-left-color:var(--ac);background:#FDEFE0}
-.stop-card.completed{border-left-color:var(--gn);opacity:.6}
+.stop-card.completed{border-left-color:var(--gn);opacity:.78}
 .stop-num{display:inline-flex;align-items:center;justify-content:center;width:34px;height:34px;border-radius:50%;font-size:16px;font-weight:700;margin-right:8px}
 .stop-num.current{background:var(--ac);color:#fff}
 .stop-num.done{background:var(--gn);color:#fff}
@@ -149,6 +149,9 @@ var myName = null; // tech profile name
 var mySig = null; // locked-in technician signature (auto-applied to PMs)
 var reopenPmId = null; // editing an existing PM
 var ticketFlag = false; // submit as service ticket (needs review)
+var addedAssetFlag = false; // current checklist is a PM on a freshly field-added asset
+var addAssetStop = null; // route stop we're adding a found asset to
+var addingAsset = false; // asset insert in flight
 var techProfiles = [];
 var adminTab = 'techs'; // 'techs', 'routes', 'import', 'reports' or 'pay'
 // Assignment & pay state
@@ -182,7 +185,7 @@ var routeFromChecklist = false; // track if we came from route view
 // ===== LocalStorage helpers =====
 function saveProgress() {
   try {
-    var d = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, photos: photos, reopenId: reopenPmId };
+    var d = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, photos: photos, reopenId: reopenPmId, aa: addedAssetFlag };
     try {
       localStorage.setItem('fp_progress', JSON.stringify(d));
     } catch (e) {
@@ -202,6 +205,7 @@ function loadProgress() {
       sigs = d.sigs || { store: null, tech: null };
       photos = d.photos || [];
       reopenPmId = d.reopenId || null;
+      addedAssetFlag = !!d.aa;
       if (d.serial) {
         var i = ASSETS.findIndex(function(a) { return a.serial === d.serial; });
         if (i > -1) { selectedAssetIdx = i; }
@@ -216,6 +220,7 @@ function clearProgress() {
   photos = [];
   sigs = { store: null, tech: null };
   reopenPmId = null;
+  addedAssetFlag = false;
 }
 
 // ===== Auth =====
@@ -620,6 +625,7 @@ function render() {
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
+  else if (screen === 'addAsset') { html += renderAddAsset(); }
   if (sigModalKey) { html += renderSigModal(); }
   el.innerHTML = html;
   bindEvents();
@@ -791,7 +797,10 @@ function renderSelect() {
 function renderChecklist() {
   if (!selectedAsset) { screen = 'home'; return renderHome(); }
   var a = selectedAsset;
-  var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('pencil')+' Editing a previously submitted PM — submitting will update it</div>' : '';
+  var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('pencil')+' Editing a previously submitted PM — submitting will update it and timestamp the modification</div>' : '';
+  if (addedAssetFlag) {
+    reopenBanner += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('plus')+' New field-added asset — this PM will be flagged NEEDS REVIEW · ADDED ASSET</div>';
+  }
 
   var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
@@ -908,9 +917,11 @@ function renderHistory() {
         '<span class="dt">' + esc(pm.pm_date) + '</span> &bull; ' +
         esc(pm.store) +
         (pm.needs_review ? ' <span class="badge" style="background:var(--rd)">NEEDS REVIEW</span>' : '') +
+        (pm.added_asset ? ' <span class="badge" style="background:var(--or)">ADDED ASSET</span>' : '') +
         (pm.prev_comp ? ' <span class="badge" style="background:var(--dim)">PREV COMP</span>' : '') +
         '<br>' +
-        '<span style="color:var(--dim)">S/N: ' + esc(pm.serial) + ' &bull; Tech: ' + esc(pm.tech_name || '') + '</span>';
+        '<span style="color:var(--dim)">S/N: ' + esc(pm.serial) + ' &bull; Tech: ' + esc(pm.tech_name || '') + '</span>' +
+        (pm.modified_at ? '<br><span style="color:var(--dim);font-size:12px">'+icon('pencil')+' Modified ' + esc(String(pm.modified_at).slice(0, 10)) + (pm.modified_by ? ' by ' + esc(pm.modified_by) : '') + '</span>' : '');
       if (pm.pdf_path) {
         h += '<br><a href="' + SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pm.pdf_path + '" target="_blank" style="color:var(--ac);font-size:13px">'+icon('file-text')+' View PDF</a>' +
           ' &nbsp; <a href="#" onclick="sharePDF(\'' + esc(pm.pdf_path) + '\');return false" style="color:var(--ac);font-size:13px">'+icon('upload')+' Send to Freshpet</a>' +
@@ -1234,9 +1245,10 @@ function renderAdminReview() {
     return h;
   }
   list.forEach(function(pm) {
-    h += '<div class="hist-item" style="border-left:4px solid var(--rd)">';
+    h += '<div class="hist-item" style="border-left:4px solid ' + (pm.added_asset ? 'var(--or)' : 'var(--rd)') + '">';
     h += '<div style="display:flex;justify-content:space-between;align-items:center;gap:8px">';
     h += '<span style="flex:1"><strong>' + esc(pm.store) + '</strong> &bull; <span class="dt">' + esc(pm.pm_date) + '</span>' +
+      (pm.added_asset ? '<br><span style="color:var(--or);font-size:12px;font-weight:700">'+icon('plus')+' ADDED ASSET — new unit found in the field</span>' : '') +
       '<br><span style="color:var(--dim);font-size:12px">S/N ' + esc(pm.serial) + ' &bull; ' + esc(pm.tech_name || '') + '</span></span>';
     h += '<button class="btn btn-s" style="width:auto;padding:8px 14px;font-size:13px" onclick="clearReview(' + pm.id + ')">✓ Clear</button>';
     h += '</div>';
@@ -1731,6 +1743,9 @@ function renderAdminImport() {
     h += ''+icon('plus')+' <strong>' + p.newCount + '</strong> new assets will be added<br>';
     h += ''+icon('refresh')+' <strong>' + p.updateCount + '</strong> existing assets will be updated<br>';
     h += ''+icon('trash')+' <strong>' + p.deactivateSerials.length + '</strong> current assets are not in the file';
+    if (p.keptField) {
+      h += '<br>'+icon('shield')+' <strong>' + p.keptField + '</strong> field-added (un-reported) asset' + (p.keptField === 1 ? '' : 's') + ' kept';
+    }
     h += '</div>';
     if (p.skipped.length) {
       h += '<h3>Skipped Rows (' + p.skipped.length + ')</h3>';
@@ -1857,7 +1872,7 @@ async function buildImportPreview(text) {
   if (rows.length === 0) { showStatus('No valid asset rows found in file', 'err'); return; }
 
   // Compare against ALL assets in DB (including deactivated ones)
-  var { data: existing, error } = await sb.from('assets').select('id,serial,zip,lat,lng,active');
+  var { data: existing, error } = await sb.from('assets').select('id,serial,zip,lat,lng,active,source,reported');
   if (error) { showStatus('Failed to read current assets: ' + error.message, 'err'); return; }
   var bySerial = {};
   (existing || []).forEach(function(a) { bySerial[(a.serial || '').toUpperCase()] = a; });
@@ -1868,11 +1883,16 @@ async function buildImportPreview(text) {
   });
   var fileSerials = {};
   rows.forEach(function(rec) { fileSerials[rec.serial.toUpperCase()] = true; });
+  // Field-added assets Freshpet hasn't been told about yet can never be in
+  // their export — keep them instead of deactivating them on a full replace.
+  var keptField = 0;
   var deactivateSerials = (existing || []).filter(function(a) {
-    return a.active && !fileSerials[(a.serial || '').toUpperCase()];
+    if (!a.active || fileSerials[(a.serial || '').toUpperCase()]) return false;
+    if (a.source === 'field' && a.reported === false) { keptField++; return false; }
+    return true;
   }).map(function(a) { return a.serial; });
 
-  importPreview = { rows: rows, newCount: newCount, updateCount: updateCount, deactivateSerials: deactivateSerials, skipped: skipped, existingBySerial: bySerial };
+  importPreview = { rows: rows, newCount: newCount, updateCount: updateCount, deactivateSerials: deactivateSerials, keptField: keptField, skipped: skipped, existingBySerial: bySerial };
   render();
 }
 
@@ -2032,6 +2052,13 @@ function renderRoute() {
       h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate</button>';
       h += '<button class="btn btn-p" style="display:inline-flex;align-items:center;padding:10px 16px;width:auto;margin-top:0" onclick="goRouteStop(' + i + ')">'+icon('clipboard')+' PMs</button>';
       h += '</div>';
+    } else {
+      // Closed stop: re-open & modify a submitted PM, or add a NEW asset
+      // found at this store (does the full PM on it).
+      h += '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">';
+      h += '<button class="btn btn-o" style="display:inline-flex;align-items:center;gap:6px;width:auto;padding:10px 14px;margin-top:0;font-size:15px" onclick="goRouteStop(' + i + ')">'+icon('pencil')+' Re-open &amp; modify</button>';
+      h += '<button class="btn btn-o" style="display:inline-flex;align-items:center;gap:6px;width:auto;padding:10px 14px;margin-top:0;font-size:15px" onclick="goAddAssetForStop(' + i + ')">'+icon('plus')+' Add asset to this store</button>';
+      h += '</div>';
     }
 
     h += '</div></div></div>';
@@ -2054,16 +2081,32 @@ function renderRouteStop() {
 
   h += '<button class="nav-btn" style="width:100%;justify-content:center;margin-bottom:12px" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate to This Stop</button>';
 
+  var stopClosed = stop.assets.every(function(a) { return isCompleted(a.serial); });
+  if (stopClosed) {
+    h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--gn)">'+icon('check')+' This stop is closed. Re-open a PM below to modify it, or add a new asset you found at this store.</div>';
+  }
+
   h += '<h3>Assets at This Stop</h3>';
   stop.assets.forEach(function(a) {
     var done = isCompleted(a.serial);
     var idx = ASSETS.indexOf(a);
-    h += '<div class="asset-btn' + (done ? ' done' : '') + '" style="cursor:pointer" onclick="startChecklistFromRoute(' + idx + ')">' +
-      esc(a.manufacturer) + ' ' + esc(a.model) +
-      (done ? ' '+icon('check')+'' : ' →') +
-      '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
-    '</div>';
+    if (done) {
+      // Completed unit: modifying goes through re-open (updates + timestamps
+      // the existing PM) instead of starting a duplicate PM.
+      h += '<div class="asset-btn done">' +
+        esc(a.manufacturer) + ' ' + esc(a.model) + ' ' + icon('check') +
+        '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
+        '<button class="btn" style="width:auto;padding:9px 14px;font-size:14px;margin-top:8px;background:rgba(255,255,255,.24);color:#fff;box-shadow:none" onclick="reopenLatestPM(\'' + esc(a.serial).replace(/'/g, "\\'") + '\')">'+icon('pencil')+' Re-open &amp; modify</button>' +
+      '</div>';
+    } else {
+      h += '<div class="asset-btn" style="cursor:pointer" onclick="startChecklistFromRoute(' + idx + ')">' +
+        esc(a.manufacturer) + ' ' + esc(a.model) + ' →' +
+        '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
+      '</div>';
+    }
   });
+
+  h += '<button class="btn btn-o" style="margin-top:12px" onclick="goAddAssetForStop(' + currentStopIdx + ')">'+icon('plus')+' Add an asset found at this store</button>';
 
   // Next stop button
   if (currentStopIdx < stops.length - 1) {
@@ -2074,6 +2117,109 @@ function renderRouteStop() {
   }
 
   return h;
+}
+
+// ===== Add a field-found asset to a stop =====
+function goAddAssetForStop(i) {
+  var stops = getRouteStops();
+  var stop = stops[i];
+  if (!stop) return;
+  currentStopIdx = i;
+  addAssetStop = stop;
+  screen = 'addAsset';
+  render();
+}
+
+function renderAddAsset() {
+  var s = addAssetStop;
+  if (!s) { screen = 'route'; return renderRoute(); }
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn back-btn" onclick="screen=\'routeStop\';render()">←</button>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:21px">'+icon('plus')+' Add Asset</h2>' +
+    '<div style="font-size:15px;color:var(--dim)">' + esc(s.store) + ' — ' + esc(s.address) + ', ' + esc(s.city) + '</div></div>' +
+  '</div>';
+
+  h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--or)">' +
+    'Found a unit at this store that isn\'t on the list? Enter it below, then complete the full PM. ' +
+    'It will be flagged <strong>NEEDS REVIEW · ADDED ASSET</strong> and show on the back office\'s un-reported assets list for billing.' +
+  '</div>';
+
+  h += '<div class="card">';
+  h += lbl('Manufacturer') + '<input type="text" id="naMan" placeholder="e.g. AHT, MTL, TRUE">';
+  h += lbl('Model') + '<input type="text" id="naModel" placeholder="Model">';
+  h += lbl('Serial Number (required)') + '<input type="text" id="naSerial" placeholder="S/N on the unit">';
+  h += lbl('Warranty');
+  h += '<select id="naWarranty"><option value="OUT" selected>OUT (not in Freshpet records)</option><option value="UNDER">UNDER warranty</option></select>';
+  h += '</div>';
+
+  if (addingAsset) {
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Saving asset...</div>';
+  } else {
+    h += '<button class="btn btn-s" onclick="saveNewAsset()">'+icon('check')+' Save Asset &amp; Start PM</button>';
+    h += '<button class="btn btn-o" style="margin-top:8px" onclick="screen=\'routeStop\';render()">Cancel</button>';
+  }
+  return h;
+}
+
+async function saveNewAsset() {
+  if (addingAsset || !addAssetStop) return;
+  var man = ((document.getElementById('naMan') || {}).value || '').trim();
+  var model = ((document.getElementById('naModel') || {}).value || '').trim();
+  var serial = ((document.getElementById('naSerial') || {}).value || '').trim();
+  var warranty = ((document.getElementById('naWarranty') || {}).value || 'OUT');
+  if (!serial) { showStatus('Enter the serial number', 'err'); return; }
+  var dup = ASSETS.find(function(a) { return (a.serial || '').toUpperCase() === serial.toUpperCase(); });
+  if (dup) { showStatus('S/N ' + serial + ' already exists (' + dup.store + ')', 'err'); return; }
+
+  addingAsset = true;
+  render();
+  try {
+    var ref = addAssetStop.assets[0]; // sibling unit at this address — copy the store identity
+    var { data: newAsset, error } = await sb.from('assets').insert({
+      store: ref.store, address: ref.address, city: ref.city, state: ref.state, zip: ref.zip,
+      phone: ref.phone || '', manufacturer: man, model: model, serial: serial, warranty: warranty,
+      pm_fee: ref.pm_fee || 0, lat: ref.lat, lng: ref.lng,
+      active: true, source: 'field', reported: false,
+      added_by: currentUser.email, added_at: new Date().toISOString()
+    }).select().single();
+    if (error) { throw new Error(error.message); }
+
+    // Pin the new unit onto MY route at this same stop so it stays with the
+    // store (best-effort — the PM works either way).
+    try {
+      await sb.from('route_assignments').insert({
+        tech_email: currentUser.email, asset_id: newAsset.id,
+        stop_order: addAssetStop.order, route_name: 'Primary Route', active: true
+      });
+    } catch (e) {}
+
+    await loadAssets();
+    await loadMyRoute();
+    addingAsset = false;
+    addAssetStop = null;
+    var idx = ASSETS.findIndex(function(a) { return a.id === newAsset.id; });
+    if (idx === -1) {
+      showStatus('Asset saved — find it under Browse All Assets to run the PM', 'err');
+      screen = 'routeStop';
+      render();
+      return;
+    }
+    startChecklistFromRoute(idx);
+    addedAssetFlag = true;
+    saveProgress();
+    showStatus('Asset added — now complete the full PM', 'ok');
+  } catch (err) {
+    addingAsset = false;
+    showStatus('Could not add asset: ' + err.message, 'err');
+    render();
+  }
+}
+
+// Re-open the newest submitted PM for a serial (closed-stop "modify" path).
+async function reopenLatestPM(serial) {
+  var pm = completedPMs.find(function(p) { return p.serial === serial && !p.prev_comp; });
+  if (!pm) { showStatus('No editable PM found for this unit', 'err'); return; }
+  await reopenPM(pm.id, true);
 }
 
 // ===== Start / End Day =====
@@ -2202,8 +2348,8 @@ function getRouteStops() {
 }
 
 // ===== Navigation Functions =====
-function goHome() { screen = 'home'; search = ''; routeFromChecklist = false; reopenPmId = null; ticketFlag = false; render(); }
-function goSelect() { screen = 'select'; search = ''; routeFromChecklist = false; reopenPmId = null; ticketFlag = false; render(); }
+function goHome() { screen = 'home'; search = ''; routeFromChecklist = false; reopenPmId = null; ticketFlag = false; addedAssetFlag = false; render(); }
+function goSelect() { screen = 'select'; search = ''; routeFromChecklist = false; reopenPmId = null; ticketFlag = false; addedAssetFlag = false; render(); }
 function goHistory() { screen = 'history'; render(); }
 
 async function goAdmin() {
@@ -2264,6 +2410,7 @@ function startChecklist(idx) {
   selectedAssetIdx = idx;
   reopenPmId = null;
   ticketFlag = false;
+  addedAssetFlag = false;
   form = defaultForm();
   photos = [];
   sigs = { store: null, tech: mySig || null };
@@ -2430,7 +2577,7 @@ async function submitForm() {
     }
 
     var pdfDoc = await new Promise(function(resolve) {
-      generatePDF(a, form, photos, sigs, { signedAt: signedAt, gps: gps }, function(doc) { resolve(doc); });
+      generatePDF(a, form, photos, sigs, { signedAt: signedAt, gps: gps, addedAsset: addedAssetFlag }, function(doc) { resolve(doc); });
     });
 
     var pdfBlob = pdfDoc.output('blob');
@@ -2457,8 +2604,15 @@ async function submitForm() {
       gps_lat: gps ? gps.lat : null,
       gps_lng: gps ? gps.lng : null,
       gps_accuracy: gps ? gps.accuracy : null,
-      needs_review: ticketFlag || !!(prevPm && prevPm.needs_review)
+      needs_review: ticketFlag || addedAssetFlag || !!(prevPm && prevPm.needs_review),
+      added_asset: addedAssetFlag || !!(prevPm && prevPm.added_asset)
     };
+    if (reopenPmId) {
+      // Timestamp the modification — the original signed_at/created_at stay
+      // in place as the record of the first submit.
+      record.modified_at = signedAt;
+      record.modified_by = currentUser.email;
+    }
     var dbErr;
     if (reopenPmId) {
       dbErr = (await sb.from('completed_pms').update(record).eq('id', reopenPmId)).error;
@@ -2470,8 +2624,10 @@ async function submitForm() {
 
     var wasTicket = ticketFlag;
     var wasReopen = !!reopenPmId;
+    var wasAdded = addedAssetFlag;
     reopenPmId = null;
     ticketFlag = false;
+    addedAssetFlag = false;
     if (wasTicket) {
       var sent = await sendReviewEmail(pdfPath, a);
       showStatus(sent ? '🚨 Service ticket opened — emailed to service@brixbev.com' : 'PM flagged NEEDS REVIEW, but the email failed (check Resend setup)', sent ? 'ok' : 'err');
@@ -2491,7 +2647,10 @@ async function submitForm() {
     } else {
       screen = 'home';
     }
-    if (!wasTicket) { showStatus(wasReopen ? 'PM updated!' : 'PM submitted successfully!', 'ok'); }
+    if (!wasTicket) {
+      showStatus(wasAdded ? 'Added-asset PM submitted — flagged for review as ADDED ASSET'
+        : (wasReopen ? 'PM updated — modification timestamped' : 'PM submitted successfully!'), 'ok');
+    }
 
   } catch (err) {
     submitting = false;
@@ -2554,7 +2713,7 @@ function blobToDataURL(blob) {
   return new Promise(function(res) { var r = new FileReader(); r.onload = function() { res(r.result); }; r.readAsDataURL(blob); });
 }
 
-async function reopenPM(pmId) {
+async function reopenPM(pmId, fromRoute) {
   var pm = completedPMs.find(function(p) { return p.id === pmId; });
   if (!pm) return;
   if (pm.prev_comp) { showStatus('PREV COMP entries have no checklist to edit', 'err'); return; }
@@ -2568,7 +2727,8 @@ async function reopenPM(pmId) {
   sigs = { store: null, tech: mySig || null };
   reopenPmId = pm.id;
   ticketFlag = false;
-  routeFromChecklist = false;
+  addedAssetFlag = false;
+  routeFromChecklist = !!fromRoute;
   screen = 'checklist';
   saveProgress();
   render();
@@ -2607,6 +2767,12 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   doc.setFontSize(9); doc.text('***NOTE***', W/2, y, { align: 'center' }); y += 11;
   doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
   doc.text('All inspections and services listed in this PM are to be performed by Certified Refrigeration Technicians Only!', W/2, y, { align: 'center' }); y += 18;
+
+  if (meta && meta.addedAsset) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(200, 60, 10);
+    doc.text('ADDED ASSET — new unit found in the field, not on the original Freshpet asset list', W/2, y, { align: 'center' });
+    doc.setTextColor(0, 0, 0); y += 14;
+  }
 
   doc.setFontSize(9);
   doc.setFont('helvetica','bold');doc.text('Store:',LM,y);doc.setFont('helvetica','normal');doc.text(a.store,LM+38,y);
@@ -2932,6 +3098,7 @@ render = function() {
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
+  else if (screen === 'addAsset') { html += renderAddAsset(); }
   if (sigModalKey) { html += renderSigModal(); }
   el.innerHTML = html;
   bindEvents();
