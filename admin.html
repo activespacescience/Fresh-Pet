@@ -183,6 +183,19 @@ var aaPreview = null;         // invoice preview result
 var aaResult = null;          // invoice create result
 var aaPayResult = null;       // vendor payout bill result
 
+// ── Report Issues to Freshpet (email with photos + reports attached) ──
+var ISSUE_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-issue-report';
+var riSel = {};              // { pm id: true } selected for the report
+var riFilter = 'issues';     // issues | added | review | all
+var riSearch = '';
+var riNote = '';             // free-text note included at the top of the email
+var riPicked = { 'roparaku@Freshpet.com': true };  // quick-pick recipients (Freshpet contact pre-checked)
+var riRecipients = '';       // additional ad-hoc emails (comma-separated)
+var riAttachPhotos = true;
+var riAttachPdfs = true;
+var riBusy = false;
+var riResult = null;
+
 // ── Reactive / CSV upload ──
 var QUARTERLY_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-quarterly-invoice';
 var rvBatches = [];           // existing reactive_batches
@@ -284,7 +297,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,comments:form_data->>comments').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store')
   ]);
@@ -408,6 +421,8 @@ function render(){
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">'+icon('receipt')+' Freshpet Billing</button>'
      + (function(){ var n=assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
         return '<button class="tab '+(tab==='added'?'on':'')+'" onclick="tab=\'added\';render()">'+icon('plus')+' Added Assets'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
+     + (function(){ var n=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
+        return '<button class="tab '+(tab==='issues'?'on':'')+'" onclick="tab=\'issues\';render()">'+icon('alert')+' Report Issues'+(n?' <span class="pill am" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">'+icon('download')+' Upload / Reactive</button>'
      + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">'+icon('mail')+' Send Invoice</button>'
      + '</div>';
@@ -415,6 +430,7 @@ function render(){
      : tab==='routes' ? renderRoutes()
      : tab==='payments' ? renderPayments()
      : tab==='added' ? renderAddedAssets()
+     : tab==='issues' ? renderReportIssues()
      : tab==='reactive' ? renderReactive()
      : tab==='send' ? renderSendInvoice()
      : renderBilling();
@@ -1122,6 +1138,127 @@ function renderAddedAssets(){
         +'<td>'+(t?'<button class="btn gn sm" onclick="aaPayTech(\''+esc(uid)+'\')" '+(aaBusy?'disabled':'')+'>'+(aaBusy?'Working…':''+icon('dollar')+' Create QBO bill')+'</button>':'<span class="muted">no profile</span>')+'</td></tr>';
     });
     h+='</tbody></table></div>';
+  }
+  h+='</div>';
+  return h;
+}
+
+// ═══ Report Issues to Freshpet ═══
+function riList(){
+  var q=(riSearch||'').trim().toLowerCase();
+  return completedPMs.filter(function(p){
+    if(p.prev_comp) return false;
+    if(riFilter==='issues' && !(p.added_asset || p.needs_review)) return false;
+    if(riFilter==='added' && !p.added_asset) return false;
+    if(riFilter==='review' && !p.needs_review) return false;
+    if(q && ((p.store||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)<0) return false;
+    return true;
+  });
+}
+function riToggle(id){ if(riSel[id]) delete riSel[id]; else riSel[id]=true; render(); }
+function riSelectedIds(){ return Object.keys(riSel).filter(function(k){ return riSel[k]; }).map(Number); }
+function riSelectAll(){
+  var list=riList();
+  var allSel=list.length && list.every(function(p){ return riSel[p.id]; });
+  if(allSel){ list.forEach(function(p){ delete riSel[p.id]; }); }
+  else { list.forEach(function(p){ riSel[p.id]=true; }); }
+  render();
+}
+function riToggleRecip(e){ riPicked[e]=!riPicked[e]; riResult=null; render(); }
+
+async function sendIssueReport(){
+  var ids=riSelectedIds();
+  if(!ids.length) return toast('Select at least one unit to report','err');
+  var picked=SEND_RECIPIENTS.filter(function(e){ return riPicked[e]; });
+  var typed=(riRecipients||'').split(/[,;\s]+/).map(function(s){return s.trim();}).filter(Boolean);
+  var seen={}, recips=[];
+  picked.concat(typed).forEach(function(e){ var k=e.toLowerCase(); if(!seen[k]){ seen[k]=1; recips.push(e); } });
+  if(!recips.length) return toast('Select or enter at least one recipient','err');
+  var bad=recips.filter(function(e){ return !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); });
+  if(bad.length) return toast('Invalid email: '+bad[0],'err');
+  var nPhotos=0; completedPMs.forEach(function(p){ if(riSel[p.id] && Array.isArray(p.photo_paths)) nPhotos+=p.photo_paths.length; });
+  if(!confirm('Email a cooler report to Freshpet?\n\n'+ids.length+' unit'+(ids.length===1?'':'s')+' · '
+    +(riAttachPhotos?nPhotos+' photo'+(nPhotos===1?'':'s'):'no photos')+' · '
+    +(riAttachPdfs?'signed PM reports attached':'no PDFs')+'\nTo: '+recips.join(', '))) return;
+  riBusy=true; riResult=null; render();
+  try{
+    var token=await billToken();
+    var res=await fetch(ISSUE_FN,{ method:'POST', headers:{ 'Content-Type':'application/json','Authorization':'Bearer '+token },
+      body:JSON.stringify({ pmIds:ids, recipients:recips, note:(riNote||'').trim(), attachPhotos:riAttachPhotos, attachPdfs:riAttachPdfs }) });
+    var j=await res.json(); if(!res.ok) throw new Error(j.error||('HTTP '+res.status));
+    riResult=j; riSel={};
+    await loadAll();
+    toast('Report sent — '+j.count+' unit(s), '+j.attachedCount+' file(s) attached','ok');
+  }catch(e){ toast('Send failed: '+e.message,'err'); }
+  riBusy=false; render();
+}
+
+function renderReportIssues(){
+  var list=riList();
+  var sel=riSelectedIds();
+  var allIssues=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset||p.needs_review); });
+  var addedN=completedPMs.filter(function(p){ return !p.prev_comp && p.added_asset; }).length;
+  var reviewN=completedPMs.filter(function(p){ return !p.prev_comp && p.needs_review; }).length;
+
+  var h='<div class="card"><h3>'+icon('alert')+' Report issues to Freshpet</h3>'
+    +'<div class="hint">Email Freshpet a list of extra coolers found in the field and coolers with service issues so they can record them. Each selected unit\'s <strong>photos</strong> and <strong>signed PM report PDF</strong> are attached to the email (very large batches auto-trim to stay under email size limits — send in smaller batches if files get skipped). Sent units are stamped so you can see what Freshpet already has.</div>';
+
+  // filters + search
+  h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
+    +'<div class="seg">'
+      +'<button class="'+(riFilter==='issues'?'on':'')+'" onclick="riFilter=\'issues\';render()">Issues ('+allIssues.length+')</button>'
+      +'<button class="'+(riFilter==='added'?'on':'')+'" onclick="riFilter=\'added\';render()">Added assets ('+addedN+')</button>'
+      +'<button class="'+(riFilter==='review'?'on':'')+'" onclick="riFilter=\'review\';render()">Needs review ('+reviewN+')</button>'
+      +'<button class="'+(riFilter==='all'?'on':'')+'" onclick="riFilter=\'all\';render()">All PMs</button>'
+    +'</div>'
+    +'<input type="search" placeholder="Search store, serial, tech…" value="'+esc(riSearch)+'" oninput="riSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
+    +(list.length?'<button class="btn o sm" onclick="riSelectAll()">'+(list.every(function(p){return riSel[p.id];})&&list.length?'Deselect shown':'✓ Select shown')+'</button>':'')
+    +'<span class="muted" style="font-size:.8rem">'+sel.length+' selected</span>'
+    +'</div>';
+
+  // list
+  if(!list.length){ h+='<div class="empty">No '+(riFilter==='all'?'completed PMs':'matching issues')+'.</div>'; }
+  else {
+    h+='<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Type</th><th class="hide">Files</th><th>Sent</th></tr></thead><tbody>';
+    list.forEach(function(p){
+      var nPh=Array.isArray(p.photo_paths)?p.photo_paths.length:0;
+      var type=(p.added_asset?'<span class="pill ac">Added asset</span> ':'')+(p.needs_review?'<span class="pill rd">Needs review</span>':'')||'<span class="pill dim">PM</span>';
+      h+='<tr>'
+        +'<td><input type="checkbox" '+(riSel[p.id]?'checked':'')+' onclick="riToggle('+p.id+')"></td>'
+        +'<td>'+esc(p.store||'')+(p.comments?'<div class="muted" style="font-size:.72rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(p.comments)+'">'+esc(p.comments)+'</div>':'')+'</td>'
+        +'<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
+        +'<td>'+esc(p.pm_date||'')+'</td>'
+        +'<td class="hide">'+esc(p.tech_name||'')+'</td>'
+        +'<td>'+type+'</td>'
+        +'<td class="hide">'+(nPh?nPh+' photo'+(nPh===1?'':'s'):'')+(p.pdf_path?(nPh?' + ':'')+'PDF':'')+'</td>'
+        +'<td>'+(p.issue_emailed_at?'<span class="pill gn" title="'+esc(p.issue_emailed_to||'')+'">✓ '+esc(String(p.issue_emailed_at).slice(0,10))+'</span>':'<span class="pill dim">—</span>')+'</td></tr>';
+    });
+    h+='</tbody></table></div>';
+  }
+  h+='</div>';
+
+  // compose + send
+  var pickedN=SEND_RECIPIENTS.filter(function(e){return riPicked[e];}).length;
+  h+='<div class="card"><h3>'+icon('mail')+' Send the report</h3>';
+  h+='<label class="f">Send to <span class="muted" style="text-transform:none;letter-spacing:0">('+pickedN+' selected)</span></label>';
+  h+='<div style="display:flex;flex-wrap:wrap;gap:8px 16px;margin-bottom:12px">'
+    +SEND_RECIPIENTS.map(function(e){ return '<label style="display:flex;align-items:center;gap:7px;font-size:.83rem;color:var(--tx);cursor:pointer">'
+      +'<input type="checkbox" '+(riPicked[e]?'checked':'')+' onchange="riToggleRecip(\''+e+'\')" style="width:auto;accent-color:var(--ac)"> '+esc(e)+'</label>'; }).join('')
+    +'</div>';
+  h+='<div class="col" style="max-width:440px"><label class="f">Additional emails (optional, comma-separated)</label><input type="text" placeholder="someone@freshpet.com" value="'+esc(riRecipients)+'" oninput="riRecipients=this.value"></div>';
+  h+='<div style="margin-top:12px"><label class="f">Note to Freshpet (optional — goes at the top of the email)</label>'
+    +'<textarea rows="3" style="width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:.88rem;font-family:inherit;resize:vertical" oninput="riNote=this.value" placeholder="e.g. Two extra coolers found on the NorCal route this week — please add to your asset list.">'+esc(riNote)+'</textarea></div>';
+  h+='<div style="display:flex;align-items:center;gap:16px;margin-top:14px;flex-wrap:wrap">'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:var(--tx2);cursor:pointer"><input type="checkbox" '+(riAttachPhotos?'checked':'')+' onchange="riAttachPhotos=this.checked" style="width:auto;accent-color:var(--ac)"> Attach photos</label>'
+    +'<label style="display:flex;align-items:center;gap:8px;font-size:.85rem;font-weight:600;color:var(--tx2);cursor:pointer"><input type="checkbox" '+(riAttachPdfs?'checked':'')+' onchange="riAttachPdfs=this.checked" style="width:auto;accent-color:var(--ac)"> Attach signed PM reports (PDF)</label>'
+    +'<button class="btn gn" style="margin-left:auto" onclick="sendIssueReport()" '+((riBusy||!sel.length)?'disabled':'')+'>'+(riBusy?'Sending…':''+icon('mail')+' Email report ('+sel.length+' unit'+(sel.length===1?'':'s')+')')+'</button>'
+    +'</div>';
+  if(riResult){
+    h+='<div class="card" style="background:var(--sf2);border-color:var(--gn);margin:14px 0 0"><h3 style="color:var(--gn)">✓ Report sent</h3>'
+      +'<div class="muted" style="font-size:.85rem">'+riResult.count+' unit'+(riResult.count===1?'':'s')+' · '+riResult.attachedCount+' file'+(riResult.attachedCount===1?'':'s')+' attached ('+(Math.round((riResult.attachedBytes||0)/1048576*10)/10)+' MB) · to '+esc((riResult.recipients||[]).join(', '))+'</div>'
+      +((riResult.skipped&&riResult.skipped.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">'+icon('alert')+' '+riResult.skipped.length+' file(s) skipped for size — send those units in a smaller batch: '+esc(riResult.skipped.slice(0,6).join(', '))+(riResult.skipped.length>6?'…':'')+'</div>':'')
+      +((riResult.warnings&&riResult.warnings.length)?'<div style="margin-top:8px;color:var(--am);font-size:.82rem">'+icon('alert')+' '+riResult.warnings.map(esc).join('<br>')+'</div>':'')
+      +'</div>';
   }
   h+='</div>';
   return h;
