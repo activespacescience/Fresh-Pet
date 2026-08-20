@@ -840,16 +840,59 @@ function selectAllBill(){
 }
 function selectedIds(){ return Object.keys(billSel).filter(function(k){ return billSel[k]; }).map(Number); }
 
+// Portal user management backend — creates the real Supabase login, mints a
+// one-time set-password link, and sends the branded walkthrough/reset email.
+var USERS_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-portal-users';
+var fpLegacyLink = '';
+try { fpLegacyLink = localStorage.getItem('fp_legacy_link') || ''; } catch(e){}
+var fpInviteBusy = {};   // { email: true } while an invite/reset is in flight
+
+function setLegacyLink(v){ fpLegacyLink=(v||'').trim(); try{ localStorage.setItem('fp_legacy_link', fpLegacyLink); }catch(e){} }
+
+async function portalUsersCall(body){
+  var token = await billToken();
+  var res = await fetch(USERS_FN, { method:'POST', headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token }, body: JSON.stringify(body) });
+  var j = await res.json().catch(function(){ return {}; });
+  if(!res.ok) throw new Error(j.error || ('HTTP '+res.status));
+  return j;
+}
+
 async function grantPortal(){
   var el = document.getElementById('fp_email');
   var email = (el && el.value || '').trim().toLowerCase();
   if(!email || email.indexOf('@')<0) return toast('Enter a valid email','err');
+  var sendInvite = !!(document.getElementById('fp_send_invite')||{}).checked;
   var existing = techs.find(function(t){ return (t.email||'').toLowerCase()===email; });
+  if (existing && existing.role==='admin'){ if(sendInvite) return sendPortalInvite(email); return toast(email+' is an admin — they already have portal access','info'); }
   var res = existing
     ? await sb.from('tech_profiles').update({ role:'freshpet' }).eq('email', existing.email)
     : await sb.from('tech_profiles').insert({ email:email, name:email.split('@')[0], role:'freshpet' });
   if(res.error) return toast('Failed: '+res.error.message,'err');
   await loadAll(); toast('Portal access granted to '+email,'ok'); render();
+  if (sendInvite) await sendPortalInvite(email);
+}
+// Also the "resend invite" path — safe to send any number of times.
+async function sendPortalInvite(email){
+  if(fpInviteBusy[email]) return;
+  fpInviteBusy[email]=true; render();
+  try{
+    var t = techs.find(function(x){ return (x.email||'').toLowerCase()===email.toLowerCase(); });
+    var j = await portalUsersCall({ action:'invite', email:email, name:(t&&t.name)||'', legacyLink: fpLegacyLink });
+    toast('Invite + walkthrough emailed to '+email+(j.legacyLinkIncluded?'':' (no legacy folder link set)'),'ok');
+    await loadAll();
+  }catch(e){ toast('Invite failed: '+e.message,'err'); }
+  delete fpInviteBusy[email]; render();
+}
+async function resetPortalPassword(email){
+  if(fpInviteBusy[email]) return;
+  if(!confirm('Email a password-reset link to '+email+'?')) return;
+  fpInviteBusy[email]=true; render();
+  try{
+    await portalUsersCall({ action:'reset', email:email });
+    toast('Password-reset email sent to '+email,'ok');
+    await loadAll();
+  }catch(e){ toast('Reset failed: '+e.message,'err'); }
+  delete fpInviteBusy[email]; render();
 }
 async function revokePortal(email){
   if(!confirm('Remove Freshpet portal access for '+email+'?')) return;
@@ -895,13 +938,25 @@ function renderBilling(){
   var h = '';
   // ── Portal access ──
   var viewers = techs.filter(function(t){ return t.role==='freshpet'; });
-  h += '<div class="card"><h3>Freshpet portal access</h3><div class="hint">Grant a Freshpet contact read-only access to the completed-calls portal at <span class="mono">/portal</span>. They sign in (Google or email) and see only completed visits, photos, and signed reports — never routes, pay, or the field app.</div>';
-  h += '<div class="row" style="align-items:flex-end"><div class="col" style="max-width:420px"><label class="f">Email</label><input type="text" id="fp_email" placeholder="name@freshpet.com"></div><div style="flex:none"><button class="btn" onclick="grantPortal()">+ Grant access</button></div></div>';
+  h += '<div class="card"><h3>Freshpet portal access</h3><div class="hint">Grant a Freshpet contact read-only access to the completed-calls portal at <span class="mono">/portal</span>. Granting sends a <strong>walkthrough invite email</strong> with a one-time set-password link, so they can sign in with plain email + password (Google works too, but isn\'t required). The email also notes that anything before <strong>6/1/2026</strong> lives on the previous system, with the archive-folder link below. Viewers can reset their own password any time via "Forgot password?" on the sign-in page.</div>';
+  h += '<div class="row" style="align-items:flex-end">'
+     + '<div class="col" style="max-width:420px"><label class="f">Email</label><input type="text" id="fp_email" placeholder="name@freshpet.com"></div>'
+     + '<div style="flex:none;padding-bottom:8px"><label style="display:flex;align-items:center;gap:6px;font-size:.8rem;color:var(--tx2);cursor:pointer"><input type="checkbox" id="fp_send_invite" checked> Send walkthrough invite email</label></div>'
+     + '<div style="flex:none"><button class="btn" onclick="grantPortal()">+ Grant access</button></div>'
+     + '</div>';
+  h += '<div class="row" style="align-items:flex-end;margin-top:10px"><div class="col" style="max-width:560px"><label class="f">Legacy folder link — pre-6/1/2026 photos &amp; paperwork</label>'
+     + '<input type="text" placeholder="https://… (shared folder with old-system pics + paperwork)" value="'+esc(fpLegacyLink)+'" onchange="setLegacyLink(this.value)">'
+     + '<div class="muted" style="font-size:.72rem;margin-top:4px">Included as a button in every invite email. Saved on this browser.</div></div></div>';
   if(viewers.length){
-    h += '<div style="overflow-x:auto;margin-top:14px"><table><thead><tr><th>Portal viewer</th><th></th></tr></thead><tbody>';
+    h += '<div style="overflow-x:auto;margin-top:14px"><table><thead><tr><th>Portal viewer</th><th>Invite</th><th></th></tr></thead><tbody>';
     viewers.forEach(function(t){
+      var busy = !!fpInviteBusy[t.email];
       h += '<tr><td>'+esc(t.name||t.email)+'<div class="muted" style="font-size:.72rem">'+esc(t.email)+'</div></td>'
-         + '<td style="text-align:right"><button class="btn o sm" onclick="revokePortal(\''+esc(t.email)+'\')">Remove</button></td></tr>';
+         + '<td class="muted" style="font-size:.74rem;white-space:nowrap">'+(t.invited_at?('Emailed '+esc(new Date(t.invited_at).toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}))):'Never emailed')+'</td>'
+         + '<td style="text-align:right;white-space:nowrap">'
+         + '<button class="btn o sm" onclick="sendPortalInvite(\''+esc(t.email)+'\')"'+(busy?' disabled':'')+'>'+(busy?'Sending…':icon('mail')+' Invite / walkthrough')+'</button> '
+         + '<button class="btn o sm" onclick="resetPortalPassword(\''+esc(t.email)+'\')"'+(busy?' disabled':'')+'>'+icon('lock')+' Reset password</button> '
+         + '<button class="btn o sm" onclick="revokePortal(\''+esc(t.email)+'\')">Remove</button></td></tr>';
     });
     h += '</tbody></table></div>';
   } else { h += '<div class="empty" style="padding:20px">No portal viewers yet.</div>'; }
