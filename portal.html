@@ -158,6 +158,10 @@ var SUPA_URL = 'https://mmkncrsaijexezmhfmiw.supabase.co';
 var SUPA_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im1ta25jcnNhaWpleGV6bWhmbWl3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODA3OTkyMjUsImV4cCI6MjA5NjM3NTIyNX0.lx4J-YhlFFrQVJMqjeBXXHNmgZfRe23xYGKZMEL8dPM';
 var sb = supabase.createClient(SUPA_URL, SUPA_KEY, { auth: { flowType: 'implicit' } });
 
+// Self-serve password reset backend (public, anti-enumeration). Lives with
+// the other Freshpet functions on apbg-billing.
+var RESET_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-password-reset';
+
 // Checklist label map (mirrors the field app's renderChecklist groups).
 var CHECK_GROUPS = [
   { h:'Unit Location', keys:[['onFloor','On Floor'],['notOnFloor','Not on Floor'],['petFood','Pet Food Aisle'],['notFound','Not Found'],['backOfStore','Back of Store'],['otherLoc','Other Location']] },
@@ -167,8 +171,12 @@ var CHECK_GROUPS = [
 ];
 
 // ── state ──
-var screen = 'loading';   // loading | login | denied | app
+var screen = 'loading';   // loading | login | denied | app | setpass | linkerr
 var user = null, profile = null;
+var fpMode = 'signin';    // login card view: signin | forgot | forgotSent
+var liEmail = '';         // email field value, kept across re-renders
+var recovering = false;   // true while a token_hash set-password flow is live
+var resetBusy = false, setPassBusy = false;
 var pms = [], assets = {};
 var fSearch = '', fCity = '', fMonth = '', fInvoice = '';
 var groupBy = 'invoice';   // 'invoice' | 'month'
@@ -280,13 +288,90 @@ function monthLabel(k){ if(!k) return 'Undated'; try{ return new Date(k+'-01T00:
 
 // ── auth ──
 async function init(){
-  var { data:{ session } } = await sb.auth.getSession();
-  if (session){ user = session.user; await afterLogin(); }
-  else { screen='login'; render(); }
   sb.auth.onAuthStateChange(async function(ev, s){
+    if (recovering) { if (s && s.user) user = s.user; return; }  // set-password flow drives itself
     if (ev==='SIGNED_IN' && s){ if (user && user.id===s.user.id) { user=s.user; return; } user=s.user; await afterLogin(); }
     else if (ev==='SIGNED_OUT'){ user=null; profile=null; screen='login'; render(); }
   });
+
+  // Invite / password-reset emails land here as ?type=recovery&token_hash=….
+  // The token is redeemed HERE (verifyOtp), never by a GET — so an email
+  // scanner following the link can't burn it.
+  var qp = null;
+  try { qp = new URLSearchParams(window.location.search); } catch(e){}
+  var tokenHash = qp && qp.get('token_hash');
+  if (tokenHash && (qp.get('type')||'recovery')==='recovery'){
+    recovering = true;
+    screen='loading'; render();
+    var v = await sb.auth.verifyOtp({ type:'recovery', token_hash: tokenHash });
+    try { history.replaceState(null, '', window.location.pathname); } catch(e){}
+    if (v.error){ recovering=false; screen='linkerr'; render(); return; }
+    user = (v.data && (v.data.user || (v.data.session && v.data.session.user))) || user;
+    screen='setpass'; render();
+    return;
+  }
+
+  var { data:{ session } } = await sb.auth.getSession();
+  if (session){ user = session.user; await afterLogin(); }
+  else { screen='login'; render(); }
+}
+
+// ── self-serve password management ──
+async function requestReset(){
+  if(resetBusy) return;
+  var email = (liEmail||'').trim();
+  if(!email || email.indexOf('@')<0) return toast('Enter your email address','err');
+  resetBusy=true; render();
+  try{
+    await fetch(RESET_FN, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email: email }) });
+  }catch(e){ /* anti-enumeration: same outcome either way */ }
+  resetBusy=false; fpMode='forgotSent'; render();
+}
+function validNewPassword(p1, p2){
+  if(!p1 || p1.length < 8){ toast('Password must be at least 8 characters','err'); return false; }
+  if(p1 !== p2){ toast('Passwords don’t match','err'); return false; }
+  return true;
+}
+// Submit from the full-screen set-password view (recovery-link landing).
+async function submitNewPassword(){
+  if(setPassBusy) return;
+  var p1=(document.getElementById('np1')||{}).value||'', p2=(document.getElementById('np2')||{}).value||'';
+  if(!validNewPassword(p1,p2)) return;
+  setPassBusy=true; render();
+  var { error } = await sb.auth.updateUser({ password: p1 });
+  setPassBusy=false;
+  if(error){ toast(error.message,'err'); render(); return; }
+  recovering=false;
+  toast('Password set — you’re in','ok');
+  await afterLogin();
+}
+function toggleNpShow(box){
+  var t = box.checked ? 'text' : 'password';
+  ['np1','np2'].forEach(function(id){ var el=document.getElementById(id); if(el) el.type=t; });
+}
+// Header "Set password" — lets a Google-signed-in viewer add a password so
+// plain email sign-in works on its own.
+function openSetPass(){
+  var m = document.getElementById('modal');
+  m.innerHTML = '<div class="ov" onclick="if(event.target===this)closeSetPass()"><div class="modal" style="max-width:420px">'
+    + '<div class="mh"><div><h2>Set password</h2><div class="addr">For signing in with email — works with or without Google.</div></div>'
+    + '<button class="x" onclick="closeSetPass()" aria-label="Close">✕</button></div>'
+    + '<div class="mb">'
+    + '<input type="password" id="np1" placeholder="New password (min 8 characters)" autocomplete="new-password" style="width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:9px;margin-bottom:10px">'
+    + '<input type="password" id="np2" placeholder="Repeat new password" autocomplete="new-password" style="width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:9px;margin-bottom:10px" onkeydown="if(event.key===\'Enter\')saveNewPassword()">'
+    + '<label style="display:flex;align-items:center;gap:7px;font-size:.8rem;color:var(--tx2);margin-bottom:14px"><input type="checkbox" onchange="toggleNpShow(this)"> Show password</label>'
+    + '<button class="btn" id="np_save" style="width:100%;justify-content:center" onclick="saveNewPassword()">Save password</button>'
+    + '</div></div></div>';
+}
+function closeSetPass(){ document.getElementById('modal').innerHTML=''; }
+async function saveNewPassword(){
+  var p1=(document.getElementById('np1')||{}).value||'', p2=(document.getElementById('np2')||{}).value||'';
+  if(!validNewPassword(p1,p2)) return;
+  var btn=document.getElementById('np_save'); if(btn){ btn.disabled=true; btn.textContent='Saving…'; }
+  var { error } = await sb.auth.updateUser({ password: p1 });
+  if(error){ if(btn){ btn.disabled=false; btn.textContent='Save password'; } return toast(error.message,'err'); }
+  closeSetPass();
+  toast('Password saved — email sign-in is ready','ok');
 }
 async function afterLogin(){
   var { data } = await sb.from('tech_profiles').select('*').eq('email', user.email).single();
@@ -399,15 +484,54 @@ function render(){
   var app = document.getElementById('app');
   if (screen==='loading'){ app.innerHTML='<div class="empty" style="margin-top:90px">Loading…</div>'; return; }
   if (screen==='login'){
+    var inner = '';
+    if (fpMode==='forgot'){
+      inner =
+        '<div class="sub">Enter the email your portal invite was sent to and we\'ll email you a link to set a new password.</div>'
+        + '<input type="email" id="li_email" placeholder="Email" autocomplete="email" value="'+esc(liEmail)+'" oninput="liEmail=this.value" onkeydown="if(event.key===\'Enter\')requestReset()">'
+        + '<button class="btn" style="width:100%;justify-content:center" onclick="requestReset()"'+(resetBusy?' disabled':'')+'>'+(resetBusy?'Sending…':'Email me a reset link')+'</button>'
+        + '<div style="margin-top:14px"><a href="#" onclick="fpMode=\'signin\';render();return false" style="font-size:.8rem">← Back to sign in</a></div>';
+    } else if (fpMode==='forgotSent'){
+      inner =
+        '<div class="sub">If <strong>'+esc(liEmail)+'</strong> has portal access, a password-reset email is on its way. The link in it is one-time — open it on this device and set your new password.</div>'
+        + '<div class="sub" style="margin-top:-12px">Nothing arriving? Check spam, or contact your Alameda Point Beverage Group representative.</div>'
+        + '<button class="btn o" style="width:100%;justify-content:center" onclick="fpMode=\'signin\';render()">← Back to sign in</button>';
+    } else {
+      inner =
+        '<div class="sub">Completed service calls — view every preventive-maintenance visit with photos and signed reports. Sign in with the email your invite was sent to.</div>'
+        + '<input type="email" id="li_email" placeholder="Email" autocomplete="email" value="'+esc(liEmail)+'" oninput="liEmail=this.value">'
+        + '<input type="password" id="li_pass" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')signInEmail()">'
+        + '<button class="btn" style="width:100%;justify-content:center" onclick="signInEmail()"'+(authBusy?' disabled':'')+'>'+(authBusy?'Signing in…':'Sign in')+'</button>'
+        + '<div style="margin:10px 0 0"><a href="#" onclick="fpMode=\'forgot\';render();return false" style="font-size:.8rem">Forgot password?</a></div>'
+        + '<div class="divider">or</div>'
+        + '<button class="btn o" style="width:100%;justify-content:center" onclick="signInGoogle()">Sign in with Google</button>'
+        + '<div class="sub" style="margin:14px 0 0;font-size:.74rem">Google not working for you? Email + password works on its own — use “Forgot password?” to set one.</div>';
+    }
     app.innerHTML =
       '<div class="login"><div class="box">'
       + '<div class="logo">'+icon('paw')+' <span style="color:var(--ac)">Freshpet</span></div>'
-      + '<div class="sub">Completed service calls — view every preventive-maintenance visit with photos and signed reports.</div>'
-      + '<input type="email" id="li_email" placeholder="Email" autocomplete="email">'
-      + '<input type="password" id="li_pass" placeholder="Password" autocomplete="current-password" onkeydown="if(event.key===\'Enter\')signInEmail()">'
-      + '<button class="btn" style="width:100%;justify-content:center" onclick="signInEmail()"'+(authBusy?' disabled':'')+'>'+(authBusy?'Signing in…':'Sign in')+'</button>'
-      + '<div class="divider">or</div>'
-      + '<button class="btn o" style="width:100%;justify-content:center" onclick="signInGoogle()">Sign in with Google</button>'
+      + inner
+      + '</div></div>';
+    return;
+  }
+  if (screen==='setpass'){
+    app.innerHTML =
+      '<div class="login"><div class="box">'
+      + '<div class="logo">'+icon('lock')+' <span style="color:var(--ac)">Set your password</span></div>'
+      + '<div class="sub">'+esc(user&&user.email||'')+'<br>Choose a password (at least 8 characters) — you\'ll use it with your email to sign in.</div>'
+      + '<input type="password" id="np1" placeholder="New password" autocomplete="new-password">'
+      + '<input type="password" id="np2" placeholder="Repeat new password" autocomplete="new-password" onkeydown="if(event.key===\'Enter\')submitNewPassword()">'
+      + '<label style="display:flex;align-items:center;gap:7px;font-size:.8rem;color:var(--tx2);margin:2px 0 14px;text-align:left"><input type="checkbox" onchange="toggleNpShow(this)"> Show password</label>'
+      + '<button class="btn" style="width:100%;justify-content:center" onclick="submitNewPassword()"'+(setPassBusy?' disabled':'')+'>'+(setPassBusy?'Saving…':'Save password & continue')+'</button>'
+      + '</div></div>';
+    return;
+  }
+  if (screen==='linkerr'){
+    app.innerHTML =
+      '<div class="login"><div class="box">'
+      + '<div class="logo">'+icon('lock')+' Link expired</div>'
+      + '<div class="sub">That password link has expired or was already used. Request a fresh one below — it only takes a second.</div>'
+      + '<button class="btn" style="width:100%;justify-content:center" onclick="screen=\'login\';fpMode=\'forgot\';render()">Request a new link</button>'
       + '</div></div>';
     return;
   }
@@ -419,7 +543,9 @@ function render(){
   var list = filtered();
   var h = '<div class="wrap">';
   h += '<div class="hd"><div><div class="logo">'+icon('paw')+' <span class="fp">Freshpet</span></div></div><div class="sub">Service &amp; billing</div>'
-     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span><button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
+     + '<div class="right"><span class="who">'+esc(profile.name||user.email)+'</span>'
+     + '<button class="btn o sm" onclick="openSetPass()" title="Set or change the password for email sign-in">'+icon('lock')+' Set password</button>'
+     + '<button class="btn o sm" onclick="signOut()">Sign out</button></div></div>';
 
   // Billing-type switch — shared underline-tab nav
   h += '<div class="tabs">'
