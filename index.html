@@ -203,13 +203,18 @@ function loadProgress() {
       selectedAssetIdx = d.ai;
       form = d.form || {};
       sigs = d.sigs || { store: null, tech: null };
-      photos = d.photos || [];
+      photos = (d.photos || []).map(normPhoto);
       reopenPmId = d.reopenId || null;
       addedAssetFlag = !!d.aa;
-      if (d.serial) {
-        var i = ASSETS.findIndex(function(a) { return a.serial === d.serial; });
-        if (i > -1) { selectedAssetIdx = i; }
-      }
+      // Resume strictly by serial. The saved numeric index is NOT trusted:
+      // ASSETS reloads between sessions (ties in the city/store sort are
+      // unordered, imports add/remove rows), so a stale index can silently
+      // resolve to a different store's unit — a draft's form, photos and
+      // signatures would then land on the wrong report.
+      if (!d.serial) return false;
+      var i = ASSETS.findIndex(function(a) { return a.serial === d.serial; });
+      if (i === -1) return false;
+      selectedAssetIdx = i;
       return true;
     }
   } catch(e) {}
@@ -579,25 +584,80 @@ function compressImg(file, cb) {
   reader.readAsDataURL(file);
 }
 
-function takePhoto() {
+// Photos are tagged: 'plate' (the unit's serial plate — REQUIRED to submit a
+// PM), 'unit' (the equipment in place), 'site' (storefront, exception visits),
+// 'other' (supplemental). Plate/unit/site photos come from the camera capture
+// input only — no gallery picker — and every photo is fingerprinted (SHA-256)
+// and refused if the same image bytes already back another report. Both
+// controls exist because invoice #172825 shipped 43 reports carrying 17
+// gallery images reused across stores; a plate photo must be an image of THIS
+// unit's plate, taken here, now.
+var PHOTO_KINDS = { plate: 'Serial plate', unit: 'Unit in place', site: 'Storefront / site', other: 'Other' };
+
+function normPhoto(p) { // back-compat: old drafts stored bare dataURL strings
+  return (typeof p === 'string') ? { d: p, kind: 'other', hash: null } : p;
+}
+function platePhotoCount() {
+  return photos.filter(function(p) { return normPhoto(p).kind === 'plate'; }).length;
+}
+
+// hash -> earliest {store, pm_date} that already uses that exact image
+function photoHashIndex() {
+  var idx = {};
+  completedPMs.forEach(function(pm) {
+    (pm.photo_hashes || []).forEach(function(h) {
+      if (h && !idx[h]) idx[h] = { store: pm.store, pm_date: pm.pm_date, id: pm.id };
+    });
+  });
+  return idx;
+}
+
+function sha256Hex(str) {
+  var bytes = new TextEncoder().encode(str);
+  return crypto.subtle.digest('SHA-256', bytes).then(function(buf) {
+    return Array.prototype.map.call(new Uint8Array(buf), function(b) { return b.toString(16).padStart(2, '0'); }).join('');
+  });
+}
+
+function takePhoto(kind) {
   var i = document.createElement('input');
   i.type = 'file'; i.accept = 'image/*'; i.capture = 'environment';
-  i.onchange = function() { handlePhotos(i); };
+  i.onchange = function() { handlePhotos(i, kind || 'other'); };
   i.click();
 }
 
+// Gallery upload is allowed ONLY for supplemental 'other' photos; the
+// evidentiary shots (plate/unit/site) must come through the camera.
 function uploadPhoto() {
   var i = document.createElement('input');
   i.type = 'file'; i.accept = 'image/*'; i.multiple = true;
-  i.onchange = function() { handlePhotos(i); };
+  i.onchange = function() { handlePhotos(i, 'other'); };
   i.click();
 }
 
-function handlePhotos(input) {
+function handlePhotos(input, kind) {
   var files = input.files;
   for (var j = 0; j < files.length; j++) {
     (function(f) {
-      compressImg(f, function(d) { photos.push(d); saveProgress(); render(); });
+      compressImg(f, function(d) {
+        sha256Hex(d).then(function(hash) {
+          var dupHere = photos.some(function(p) { return normPhoto(p).hash === hash; });
+          if (dupHere) { showStatus('That photo is already attached to this report', 'err'); render(); return; }
+          var prior = photoHashIndex()[hash];
+          if (prior && prior.id !== reopenPmId) {
+            showStatus('Duplicate photo refused — this exact image is already on the ' + (prior.store || 'another') + ' report from ' + (prior.pm_date || '') + '. Take a new photo of THIS unit.', 'err');
+            render();
+            return;
+          }
+          photos.push({ d: d, kind: kind || 'other', hash: hash });
+          saveProgress(); render();
+        }).catch(function() {
+          // hashing unavailable (non-secure context) — attach without a
+          // fingerprint rather than lose the photo; server keeps the record
+          photos.push({ d: d, kind: kind || 'other', hash: null });
+          saveProgress(); render();
+        });
+      });
     })(files[j]);
   }
 }
@@ -626,6 +686,7 @@ function render() {
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
   else if (screen === 'addAsset') { html += renderAddAsset(); }
+  else if (screen === 'exception') { html += renderException(); }
   if (sigModalKey) { html += renderSigModal(); }
   el.innerHTML = html;
   bindEvents();
@@ -821,6 +882,7 @@ function renderChecklist() {
   h += fld('Voltage', 'voltage', 'text', 'Voltage reading');
   h += lbl('Interior Temp');
   h += '<select name="intTemp">';
+  h += '<option value=""' + (!form.intTemp ? ' selected' : '') + '>— measure &amp; select —</option>';
   var tempVals = [];
   for (var tv = 45; tv >= 35; tv--) { tempVals.push(tv + '°F'); }
   if (form.intTemp && tempVals.indexOf(form.intTemp) === -1) { tempVals.unshift(form.intTemp); }
@@ -870,20 +932,28 @@ function renderChecklist() {
 
   h += '<h3>Signatures</h3>';
   h += fld('Store Contact', 'storeContact', 'text', 'Name');
-  h += sigPad('store', 'Store Manager Signature');
+  h += chk('noContact', 'No store contact available to sign');
+  if (form.noContact) {
+    h += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">The report will state that no store contact was available. Never sign or mark the store box yourself.</div>';
+  } else {
+    h += sigPad('store', 'Store Manager Signature');
+  }
   h += fld('Service Rep', 'serviceRep', 'text', 'Name');
   h += sigPad('tech', 'Technician Signature');
 
   h += '<h3>Photos</h3>';
+  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">The <strong>serial plate photo is required</strong> — a close-up of THIS unit’s plate, taken with the camera. Reused images are refused automatically.</div>';
   h += '<div style="display:flex;gap:8px;margin-bottom:8px">' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto()">'+icon('camera')+' Camera</button>' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="uploadPhoto()">'+icon('image')+' Upload</button>' +
+    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto(\'plate\')">'+icon('camera')+' Serial plate' + (platePhotoCount() ? ' ✓' : '') + '</button>' +
+    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto(\'unit\')">'+icon('camera')+' Unit</button>' +
+    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="uploadPhoto()">'+icon('image')+' Other</button>' +
   '</div>';
 
   if (photos.length) {
     h += '<div class="photo-grid">';
     photos.forEach(function(p, i) {
-      h += '<div><img src="' + p + '"><button class="del" onclick="removePhoto(' + i + ')" aria-label="Remove photo">×</button></div>';
+      var np = normPhoto(p);
+      h += '<div><img src="' + np.d + '"><span style="position:absolute;left:4px;bottom:4px;background:rgba(0,0,0,.65);color:#fff;font-size:10px;padding:2px 6px;border-radius:8px">' + esc(PHOTO_KINDS[np.kind] || np.kind) + '</span><button class="del" onclick="removePhoto(' + i + ')" aria-label="Remove photo">×</button></div>';
     });
     h += '</div>';
   }
@@ -897,6 +967,7 @@ function renderChecklist() {
     h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' Open Service Ticket</button>';
     if (!reopenPmId) {
       h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">'+icon('clipboard')+' PM PREV COMP (done elsewhere)</button>';
+      h += '<button class="btn btn-o" style="margin-top:8px;border-color:var(--or);color:var(--or)" onclick="startException()">'+icon('alert')+' Can\'t complete — store closed / unit missing</button>';
     }
   }
 
@@ -2386,22 +2457,18 @@ function shortTechName() {
   return parts[0] || '';
 }
 
-// Everything pre-filled for the normal case; tech only changes what's wrong
+// Identity fields only. Readings and work items start EMPTY on purpose:
+// invoice #172825 went out with 184/196 reports carrying the old prefilled
+// 38°F/41°F and pre-checked work boxes — reviewers correctly read those as
+// unexamined defaults, not observations. A reading now exists on a report
+// only because the tech entered it.
 function defaultForm() {
   var name = shortTechName();
   return {
     techName: name,
     serviceCompany: 'Freeflow Beverage Solutions',
     serviceRep: name,
-    date: new Date().toISOString().split('T')[0],
-    sp1: '41°F',
-    voltage: '120',
-    intTemp: '38°F',
-    onFloor: true, petFood: true,
-    workingArrival: true, workingDepart: true,
-    cleanInterior: true, cleanExterior: true, cleanGrill: true, cleanCondPans: true, cleanCondenser: true,
-    powerCord: true, cleanCoil: true, emptyDrain: true, cleanFans: true,
-    cleanCondPansD: true, cleanDrainLine: true, ledCheck: true
+    date: new Date().toISOString().split('T')[0]
   };
 }
 
@@ -2542,11 +2609,32 @@ function getGps() {
 async function submitForm() {
   if (submitting) return;
   if (!form.techName) { showStatus('Please enter tech name', 'err'); return; }
-  if (!sigs.store || !sigs.tech) {
-    var missingSigs = [];
-    if (!sigs.store) missingSigs.push('store manager');
-    if (!sigs.tech) missingSigs.push('technician');
-    if (!confirm('Missing ' + missingSigs.join(' and ') + ' signature. Submit anyway?')) return;
+  // Hard gates added after the invoice #172825 review (2026-08): a PM without
+  // a fresh serial-plate photo, a real temperature reading, or an honest
+  // answer on the store signature is exactly what produced that dispute.
+  if (platePhotoCount() < 1) { showStatus('Serial plate photo required — use the “Serial plate” camera button on THIS unit’s plate', 'err'); return; }
+  if (!form.intTemp) { showStatus('Measure and select the interior temperature', 'err'); return; }
+  if (!form.sp1) { showStatus('Enter Set Point 1 as read on the unit', 'err'); return; }
+  if (!form.workingArrival && !form.notWorkingArrival) { showStatus('Mark whether the unit was working on arrival', 'err'); return; }
+  if (form.noContact) {
+    sigs.store = null; // never both — the report states no contact was available
+  } else if (!sigs.store) {
+    showStatus('Get the store contact’s signature, or check “No store contact available to sign”. Never sign for the store yourself.', 'err'); return;
+  } else if (!(form.storeContact || '').trim()) {
+    showStatus('Enter the name of the store contact who signed', 'err'); return;
+  }
+  if (!sigs.tech) {
+    if (!confirm('Missing technician signature. Submit anyway?')) return;
+  }
+  // One report per unit per day: a second tap must go through the explicit
+  // reopen/edit path, not mint a duplicate row (Kelley's Pets & Target #1417
+  // each shipped doubled reports on invoice #172825).
+  if (!reopenPmId) {
+    var a0 = selectedAsset;
+    var dupPm = completedPMs.find(function(p) {
+      return p.asset_id === a0.id && p.pm_date === (form.date || new Date().toISOString().split('T')[0]) && !p.prev_comp;
+    });
+    if (dupPm) { showStatus('A report for this unit is already submitted today. Open it from PM History to edit it instead.', 'err'); return; }
   }
 
   submitting = true;
@@ -2561,19 +2649,29 @@ async function submitForm() {
     // Capture the sign time + GPS at submit (best-effort; never blocks).
     var signedAt = new Date().toISOString();
     var gps = await getGps();
+    // Record whether location was captured — every report on invoice #172825
+    // went out with GPS silently null because permission was never granted,
+    // and nothing surfaced that. The state is now part of the record.
+    form.gpsStatus = gps ? 'captured' : 'unavailable';
     var safeStore = a.store.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
     var baseName = safeStore + '_' + a.serial + '_' + (form.date || '').replace(/-/g, '');
 
     var photoPaths = [];
+    var photoHashes = [];
     for (var i = 0; i < photos.length; i++) {
-      var photoBlob = dataURLtoBlob(photos[i]);
-      var photoPath = baseName + '_photo_' + (i + 1) + '_' + timestamp + '.jpg';
+      var np = normPhoto(photos[i]);
+      var photoBlob = dataURLtoBlob(np.d);
+      // kind travels in the filename so a reopen can restore the tag
+      var photoPath = baseName + '_photo_' + (i + 1) + '_' + (np.kind || 'other') + '_' + timestamp + '.jpg';
       var { data: pData, error: pErr } = await sb.storage.from('fp-photos').upload(photoPath, photoBlob, {
         contentType: 'image/jpeg',
         upsert: false
       });
       if (pErr) { console.warn('Photo upload error:', pErr); }
-      else { photoPaths.push(photoPath); }
+      else {
+        photoPaths.push(photoPath);
+        photoHashes.push(np.hash || (await sha256Hex(np.d).catch(function(){ return null; })));
+      }
     }
 
     var pdfDoc = await new Promise(function(resolve) {
@@ -2598,6 +2696,8 @@ async function submitForm() {
       form_data: form,
       pdf_path: pdfPath,
       photo_paths: photoPaths,
+      photo_hashes: photoHashes,
+      visit_type: 'pm',
       store: a.store,
       serial: a.serial,
       signed_at: signedAt,
@@ -2708,6 +2808,164 @@ async function markPrevComp() {
   render();
 }
 
+// ===== Site-visit exception (store closed / unit missing) =====
+// Before this existed, a tech at a boarded-up store had exactly one form the
+// app would accept — a full PM checklist with prefilled readings and a
+// signature box — which is how invoice #172825 carried "completed PMs" for
+// five closed or unit-less sites. An exception visit is its own record type:
+// reason + storefront photo, no readings, no signatures, never billable as a
+// PM, always flagged for review.
+var exceptionForm = { reason: '', note: '' };
+
+function startException() {
+  exceptionForm = { reason: '', note: '' };
+  photos = [];
+  screen = 'exception';
+  render();
+}
+
+function renderException() {
+  var a = selectedAsset;
+  var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+    '<button class="btn back-btn" onclick="screen=\'checklist\';render()">←</button>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:22px">Site visit exception</h2>' +
+    '<div style="font-size:15px;color:var(--dim)">' + esc(a.store) + ' — ' + esc(a.city) + ' · S/N ' + esc(a.serial) + '</div></div>' +
+  '</div>';
+  h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--or)">This files an exception report instead of a PM: it documents that the stop could not be serviced and why. It is flagged for office review and is not billed as a PM.</div>';
+  h += '<div class="card">';
+  h += lbl('What did you find? (required)');
+  h += '<select id="excReason">' +
+    '<option value=""' + (!exceptionForm.reason ? ' selected' : '') + '>— select —</option>' +
+    [['store_closed','Store permanently closed'],['unit_missing','Store open, Freshpet unit not on site'],['no_access','Could not access the unit (refused / blocked)'],['other','Other (explain below)']].map(function(o){
+      return '<option value="' + o[0] + '"' + (exceptionForm.reason === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
+    }).join('') + '</select>';
+  h += lbl('Notes'); h += '<textarea id="excNote" placeholder="What you saw, who you spoke to...">' + esc(exceptionForm.note || '') + '</textarea>';
+  h += '<h3>Photo of the site (required)</h3>';
+  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">Photograph the storefront or the space where the unit should be — this is the proof of the visit.</div>';
+  h += '<button class="btn btn-o" style="padding:10px" onclick="captureExceptionMeta();takePhoto(\'site\')">'+icon('camera')+' Take site photo</button>';
+  if (photos.length) {
+    h += '<div class="photo-grid" style="margin-top:8px">';
+    photos.forEach(function(p, i) {
+      h += '<div><img src="' + normPhoto(p).d + '"><button class="del" onclick="removePhoto(' + i + ')" aria-label="Remove photo">×</button></div>';
+    });
+    h += '</div>';
+  }
+  h += '</div>';
+  if (submitting) {
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Filing exception report...</div>';
+  } else {
+    h += '<button class="btn btn-s" onclick="submitException()" style="font-size:17px;padding:16px">'+icon('check')+' File exception report</button>';
+    h += '<button class="btn btn-o" style="margin-top:8px" onclick="' + backFn + '">Cancel</button>';
+  }
+  return h;
+}
+
+function captureExceptionMeta() {
+  var r = document.getElementById('excReason');
+  var n = document.getElementById('excNote');
+  if (r) exceptionForm.reason = r.value;
+  if (n) exceptionForm.note = n.value;
+}
+
+async function submitException() {
+  if (submitting) return;
+  captureExceptionMeta();
+  if (!exceptionForm.reason) { showStatus('Select what you found at the site', 'err'); return; }
+  if (!photos.length) { showStatus('A site photo is required — it is the proof of the visit', 'err'); return; }
+  submitting = true;
+  render();
+  try {
+    var a = selectedAsset;
+    var timestamp = Date.now();
+    var signedAt = new Date().toISOString();
+    var gps = await getGps();
+    var safeStore = a.store.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+    var baseName = 'EXCEPTION_' + safeStore + '_' + a.serial + '_' + new Date().toISOString().split('T')[0].replace(/-/g, '');
+
+    var photoPaths = [], photoHashes = [];
+    for (var i = 0; i < photos.length; i++) {
+      var np = normPhoto(photos[i]);
+      var photoPath = baseName + '_photo_' + (i + 1) + '_site_' + timestamp + '.jpg';
+      var { error: pErr } = await sb.storage.from('fp-photos').upload(photoPath, dataURLtoBlob(np.d), { contentType: 'image/jpeg', upsert: false });
+      if (pErr) { console.warn('Photo upload error:', pErr); }
+      else { photoPaths.push(photoPath); photoHashes.push(np.hash || (await sha256Hex(np.d).catch(function(){ return null; }))); }
+    }
+
+    var pdfDoc = generateExceptionPDF(a, exceptionForm, photos, { signedAt: signedAt, gps: gps, techName: shortTechName() });
+    var pdfPath = baseName + '_' + timestamp + '.pdf';
+    var { error: pdfErr } = await sb.storage.from('fp-pdfs').upload(pdfPath, pdfDoc.output('blob'), { contentType: 'application/pdf', upsert: false });
+    if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
+
+    var { error: dbErr } = await sb.from('completed_pms').insert({
+      asset_id: a.id,
+      tech_user_id: currentUser.id,
+      tech_name: shortTechName(),
+      service_company: 'Freeflow Beverage Solutions',
+      pm_date: new Date().toISOString().split('T')[0],
+      form_data: { exception: true, exceptionReason: exceptionForm.reason, comments: exceptionForm.note || '', gpsStatus: gps ? 'captured' : 'unavailable' },
+      pdf_path: pdfPath,
+      photo_paths: photoPaths,
+      photo_hashes: photoHashes,
+      visit_type: 'exception',
+      exception_reason: exceptionForm.reason,
+      store: a.store,
+      serial: a.serial,
+      signed_at: signedAt,
+      gps_lat: gps ? gps.lat : null,
+      gps_lng: gps ? gps.lng : null,
+      gps_accuracy: gps ? gps.accuracy : null,
+      needs_review: true,
+      added_asset: false
+    });
+    if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+    await loadCompletedPMs();
+    clearProgress();
+    submitting = false;
+    if (routeFromChecklist) { routeFromChecklist = false; screen = 'routeStop'; }
+    else { screen = 'select'; }
+    showStatus('Exception report filed — flagged for office review', 'ok');
+    render();
+  } catch (err) {
+    submitting = false;
+    showStatus('Error: ' + err.message, 'err');
+    render();
+  }
+}
+
+function generateExceptionPDF(a, exc, ph, meta) {
+  var jsPDF = window.jspdf.jsPDF;
+  var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+  var W = 612, LM = 40, RM = W - 40;
+  var y = 40;
+  var REASONS = { store_closed: 'Store permanently closed', unit_missing: 'Store open — Freshpet unit not on site', no_access: 'Could not access the unit', other: 'Other' };
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
+  doc.text('Site Visit Exception Report', W/2, y, { align: 'center' }); y += 16;
+  doc.setFontSize(9); doc.setTextColor(200, 60, 10);
+  doc.text('NOT A COMPLETED PM — this visit could not be serviced. Filed for review.', W/2, y, { align: 'center' });
+  doc.setTextColor(0,0,0); y += 22;
+  doc.setFontSize(9);
+  [['Store', a.store], ['Address', a.address + ', ' + a.city + ' ' + (a.zip||'')], ['Listed serial', a.serial], ['Visit date', new Date().toISOString().split('T')[0]], ['Technician', meta.techName || ''], ['Finding', REASONS[exc.reason] || exc.reason]].forEach(function(r) {
+    doc.setFont('helvetica','bold'); doc.text(r[0] + ':', LM, y);
+    doc.setFont('helvetica','normal'); doc.text(String(r[1] || ''), LM + 90, y); y += 15;
+  });
+  y += 4; doc.setFont('helvetica','bold'); doc.text('Notes:', LM, y); y += 12;
+  doc.setFont('helvetica','normal');
+  var nt = doc.splitTextToSize(exc.note || '(none)', RM-LM); doc.text(nt, LM, y); y += nt.length * 11 + 8;
+  var stamp = [];
+  if (meta.signedAt) { try { stamp.push('Filed: ' + new Date(meta.signedAt).toLocaleString()); } catch(e) {} }
+  if (meta.gps) stamp.push('GPS: ' + meta.gps.lat.toFixed(5) + ', ' + meta.gps.lng.toFixed(5) + (meta.gps.accuracy ? ' (±' + Math.round(meta.gps.accuracy) + 'm)' : ''));
+  if (stamp.length) { doc.setFontSize(7.5); doc.text(stamp.join('     '), LM, y); y += 12; }
+  for (var i = 0; i < ph.length; i++) {
+    var pp = normPhoto(ph[i]);
+    doc.addPage(); doc.setFont('helvetica','bold'); doc.setFontSize(11);
+    doc.text('Site photo ' + (i+1) + ' of ' + ph.length + ' — ' + a.store, W/2, 30, { align: 'center' });
+    try { var ip = doc.getImageProperties(pp.d); var iw = ip.width, ih = ip.height; var sc = Math.min((RM-LM)/iw, 680/ih, 1); iw *= sc; ih *= sc; doc.addImage(pp.d, 'JPEG', LM + ((RM-LM)-iw)/2, 50, iw, ih); } catch(e) {}
+  }
+  return doc;
+}
+
 // Reopen a submitted PM for edits (pulls its data and photos back in)
 function blobToDataURL(blob) {
   return new Promise(function(res) { var r = new FileReader(); r.onload = function() { res(r.result); }; r.readAsDataURL(blob); });
@@ -2717,6 +2975,7 @@ async function reopenPM(pmId, fromRoute) {
   var pm = completedPMs.find(function(p) { return p.id === pmId; });
   if (!pm) return;
   if (pm.prev_comp) { showStatus('PREV COMP entries have no checklist to edit', 'err'); return; }
+  if (pm.visit_type === 'exception') { showStatus('Exception reports document a failed visit — file a new PM instead once the unit is serviceable', 'err'); return; }
   if (pm.tech_user_id !== currentUser.id && userRole !== 'admin') { showStatus('Only the tech who submitted this PM (or an admin) can reopen it', 'err'); return; }
   var idx = ASSETS.findIndex(function(x) { return x.id === pm.asset_id; });
   if (idx === -1) { showStatus('Asset is no longer active', 'err'); return; }
@@ -2732,12 +2991,19 @@ async function reopenPM(pmId, fromRoute) {
   screen = 'checklist';
   saveProgress();
   render();
-  // Pull existing photos back in so they stay in the regenerated PDF
+  // Pull existing photos back in so they stay in the regenerated PDF.
+  // The kind tag rides in the filename (`_photo_N_<kind>_ts.jpg`); paths from
+  // before the tagged-photo change have no tag and come back as 'other'.
   if (pm.photo_paths && pm.photo_paths.length) {
     for (var i = 0; i < pm.photo_paths.length; i++) {
       try {
         var resp = await fetch(SUPA_URL + '/storage/v1/object/public/fp-photos/' + pm.photo_paths[i]);
-        if (resp.ok) { photos.push(await blobToDataURL(await resp.blob())); }
+        if (resp.ok) {
+          var d = await blobToDataURL(await resp.blob());
+          var km = pm.photo_paths[i].match(/_photo_\d+_(plate|unit|site|other)_\d+\.jpg$/);
+          var hash = await sha256Hex(d).catch(function(){ return null; });
+          photos.push({ d: d, kind: km ? km[1] : 'other', hash: hash });
+        }
       } catch (e) {}
     }
     render();
@@ -2824,12 +3090,18 @@ function generatePDF(a, f, ph, sg, meta, cb) {
       if (sh > sigH) sigH = sh;
     } catch(e) {}
   }
-  drawSig(sg && sg.store, LM);
+  if (f.noContact) {
+    doc.setFont('helvetica','italic');doc.setFontSize(8);
+    doc.text('No store contact available at time of service — not signed by the store.', LM, y+20);
+    if (sigH < 30) sigH = 30;
+  } else {
+    drawSig(sg && sg.store, LM);
+  }
   drawSig(sg && sg.tech, COL2);
   y += sigH;
   doc.setLineWidth(.5);doc.line(LM,y+2,LM+200,y+2);doc.line(COL2,y+2,COL2+200,y+2);y+=12;
   doc.setFont('helvetica','normal');doc.setFontSize(8);
-  doc.text('Store Contact: '+(f.storeContact||''),LM,y);
+  doc.text('Store Contact: '+(f.noContact?'(none available)':(f.storeContact||'')),LM,y);
   doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=16;
 
   // Signed timestamp + GPS captured at completion.
@@ -2845,9 +3117,11 @@ function generatePDF(a, f, ph, sg, meta, cb) {
 
   if (ph && ph.length) {
     for (var i = 0; i < ph.length; i++) {
+      var pp = normPhoto(ph[i]);
+      var kindLabel = PHOTO_KINDS[pp.kind] || 'Photo';
       doc.addPage();doc.setFont('helvetica','bold');doc.setFontSize(11);
-      doc.text('Photo '+(i+1)+' of '+ph.length+' — '+a.store+' (S/N: '+a.serial+')',W/2,30,{align:'center'});
-      try{var ip=doc.getImageProperties(ph[i]);var iw=ip.width,ih=ip.height;var sc=Math.min((RM-LM)/iw,680/ih,1);iw*=sc;ih*=sc;doc.addImage(ph[i],'JPEG',LM+((RM-LM)-iw)/2,50,iw,ih);}catch(e){}
+      doc.text(kindLabel+' — photo '+(i+1)+' of '+ph.length+' — '+a.store+' (S/N: '+a.serial+')',W/2,30,{align:'center'});
+      try{var ip=doc.getImageProperties(pp.d);var iw=ip.width,ih=ip.height;var sc=Math.min((RM-LM)/iw,680/ih,1);iw*=sc;ih*=sc;doc.addImage(pp.d,'JPEG',LM+((RM-LM)-iw)/2,50,iw,ih);}catch(e){}
     }
   }
   cb(doc);
@@ -3062,6 +3336,11 @@ function bindEvents() {
             var w = document.getElementById('otherLocWrap');
             if (w) w.style.display = el.checked ? 'block' : 'none';
           }
+          if (el.name === 'noContact') {
+            // A "no contact" report must not also carry a store signature.
+            if (el.checked) { sigs.store = null; }
+            saveProgress(); render(); return;
+          }
         } else {
           form[el.name] = el.value;
         }
@@ -3099,6 +3378,7 @@ render = function() {
   else if (screen === 'route') { html += renderRoute(); }
   else if (screen === 'routeStop') { html += renderRouteStop(); }
   else if (screen === 'addAsset') { html += renderAddAsset(); }
+  else if (screen === 'exception') { html += renderException(); }
   if (sigModalKey) { html += renderSigModal(); }
   el.innerHTML = html;
   bindEvents();

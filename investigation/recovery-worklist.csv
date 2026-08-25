@@ -1,0 +1,54 @@
+action,pm_id,store,unit_serial,detail
+relabel,414,Petco #1343,226512,correct plate photo already on: pm#415 (Petco #1343)
+relabel,415,Petco #1343,226507,correct plate photo already on: pm#414 (Petco #1343)
+relabel,424,Food Maxx #453,11008872,correct plate photo already on: pm#425 (Vons #1969); pm#434 (Target #2524); pm#441 (Albertsons #3129); pm#465 (Petsmart US #3052); pm#469 (Walmart US #3140); pm#479 (Walmart US #3141)
+relabel,465,Petsmart US #3052,M032630,correct plate photo already on: pm#463 (Petsmart US #3052)
+relabel,533,Save Mart #71,10372249,correct plate photo already on: pm#534 (Save Mart #71)
+relabel,536,Save Mart #78,10874913,correct plate photo already on: pm#539 (Save Mart #635)
+relabel,545,Carters Pet Mart #56789,9637980,correct plate photo already on: pm#544 (Carters Pet Mart #56789)
+relabel,548,Petco #307,202406,correct plate photo already on: pm#549 (Petco #307)
+relabel,550,PetSmart US #81,278022,correct plate photo already on: pm#556 (Save Mart #1); pm#573 (Target #938); pm#589 (Lucky #750)
+relabel,559,Petco #307,313166,correct plate photo already on: pm#550 (PetSmart US #81)
+relabel,567,PetSmart US #1975,272479,correct plate photo already on: pm#566 (PetSmart US #1975)
+relabel,571,PetSmart US #1975,278048,correct plate photo already on: pm#567 (PetSmart US #1975)
+relabel,572,Save Mart #95,10874883,correct plate photo already on: pm#568 (Save Mart #95)
+reshoot,411,Save Mart #622,10874906,no plate photo of this unit exists in the batch
+reshoot,416,Petco #1343,20125900000422,no plate photo of this unit exists in the batch
+reshoot,423,Safeway #2263,310797,no plate photo of this unit exists in the batch
+reshoot,425,Vons #1969,294053,no plate photo of this unit exists in the batch
+reshoot,430,Albertsons #377,10671487,no plate photo of this unit exists in the batch
+reshoot,434,Target #2524,9632927,no plate photo of this unit exists in the batch
+reshoot,441,Albertsons #3129,10671490,no plate photo of this unit exists in the batch
+reshoot,446,Sam's Club #4819,M155783,no plate photo of this unit exists in the batch
+reshoot,447,Albertsons California #3364,10609622,no plate photo of this unit exists in the batch
+reshoot,452,Walmart US #3139,303346,no plate photo of this unit exists in the batch
+reshoot,453,Target #1384,9139322,no plate photo of this unit exists in the batch
+reshoot,463,Petsmart US #3052,281232,no plate photo of this unit exists in the batch
+reshoot,469,Walmart US #3140,302442,no plate photo of this unit exists in the batch
+reshoot,479,Walmart US #3141,290980,no plate photo of this unit exists in the batch
+reshoot,502,Target #1417,10540856,no plate photo of this unit exists in the batch
+reshoot,503,Target #1417,10902793,no plate photo of this unit exists in the batch
+reshoot,508,Save Mart #54,32158100000214,no plate photo of this unit exists in the batch
+reshoot,515,Walmart US #1815,9697100,no plate photo of this unit exists in the batch
+reshoot,521,Petco #1338,5232171,no plate photo of this unit exists in the batch
+reshoot,522,Petco #1338,341506031614,no plate photo of this unit exists in the batch
+reshoot,523,Petco #1338,312894,no plate photo of this unit exists in the batch
+reshoot,527,Save Mart #92,32158100000985,no plate photo of this unit exists in the batch
+reshoot,538,Save Mart #635,11157328,no plate photo of this unit exists in the batch
+reshoot,539,Save Mart #635,11157331,no plate photo of this unit exists in the batch
+reshoot,543,Safeway Northern California #1661,295403,no plate photo of this unit exists in the batch
+reshoot,544,Carters Pet Mart #56789,9723510,no plate photo of this unit exists in the batch
+reshoot,551,PetSmart US #81,246419,no plate photo of this unit exists in the batch
+reshoot,553,Save Mart #1,10567901,no plate photo of this unit exists in the batch
+reshoot,556,Save Mart #1,10637908,no plate photo of this unit exists in the batch
+reshoot,565,PetSmart US #1975,272477,no plate photo of this unit exists in the batch
+reshoot,566,PetSmart US #1975,272479 Date 21- 10- 22,no plate photo of this unit exists in the batch
+reshoot,569,Walmart US #5710,10168520,no plate photo of this unit exists in the batch
+reshoot,573,Target #938,10571802,no plate photo of this unit exists in the batch
+reshoot,574,Raley's #339,10114978,no plate photo of this unit exists in the batch
+reshoot,575,Raley's #339,10114974,no plate photo of this unit exists in the batch
+reshoot,589,Lucky #750,80090400000116,no plate photo of this unit exists in the batch
+reshoot,593,Walmart US #2161,302431,no plate photo of this unit exists in the batch
+reshoot,600,Safeway Northern California #2856,294043,no plate photo of this unit exists in the batch
+reshoot,412,Save Mart #622,10911486,no plate photo of this unit exists in the batch; report has no photos at all
+reshoot,429,Albertsons #377,10663625,no plate photo of this unit exists in the batch; report has no photos at all

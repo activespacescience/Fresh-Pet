@@ -297,7 +297,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,comments:form_data->>comments').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,comments:form_data->>comments').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store')
   ]);
@@ -825,6 +825,7 @@ function billableList(){
   var q = billSearch.trim().toLowerCase();
   return completedPMs.filter(function(p){
     if (p.prev_comp) return false;                 // done elsewhere — never billed
+    if (p.visit_type === 'exception') return false; // failed visit (closed store / missing unit) — never a billable PM
     if (!billShowBilled && p.billed) return false;
     if (!q) return true;
     return ((p.store||'')+' '+cityOf(p)+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
@@ -966,7 +967,7 @@ function renderBilling(){
   var list = billableList();
   var sel = selectedIds();
   var rate = Number(billRate)||30;
-  h += '<div class="card"><h3>Bill completed PMs to Freshpet</h3><div class="hint">Every completed service stop is listed below. Tick the ones to bill, then create a QuickBooks invoice to <strong>FRESH PET</strong> (a single summary line, qty × rate) with a per-visit report attached. The billed stops are stamped with the invoice # and surface — with their photos + signed report — in the customer portal. <span class="mono">PREV COMP</span> visits are excluded (done elsewhere).</div>';
+  h += '<div class="card"><h3>Bill completed PMs to Freshpet</h3><div class="hint">Every completed service stop is listed below. Tick the ones to bill, then create a QuickBooks invoice to <strong>FRESH PET</strong> (a single summary line, qty × rate) with a per-visit report attached. The billed stops are stamped with the invoice # and surface — with their photos + signed report — in the customer portal. <span class="mono">PREV COMP</span> visits are excluded (done elsewhere), and <span class="mono">EXCEPTION</span> reports (store closed / unit missing) are never billable as PMs.</div>';
 
   h += '<div class="row" style="align-items:flex-end">'
      + '<div style="flex:none"><label class="f">Rate / PM</label><input type="number" step="0.01" min="0" value="'+rate+'" oninput="billRate=this.value;billPreview=null" style="max-width:120px;text-align:right"></div>'
