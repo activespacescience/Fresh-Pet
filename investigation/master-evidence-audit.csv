@@ -1,0 +1,197 @@
+pm_id,store,city,unit_serial,pm_date,signed,contact,n_photos,plate_reads,status,action
+410,Bel-Air #501,Sacramento,10148895,2026-07-15,tech+store,yes,2,10148895,VERIFIED,none
+411,Save Mart #622,Sacramento,10874906,2026-07-15,tech+store,no,1,313084,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+412,Save Mart #622,Sacramento,10911486,2026-07-15,tech+store,no,0,-,NO PHOTOS,camera-roll recovery or re-shoot
+413,Petco #1343,Sacramento,313084,2026-07-15,tech+store,yes,2,313084,VERIFIED,none
+414,Petco #1343,Sacramento,226512,2026-07-15,tech+store,yes,2,226507,SWAPPED WITH SIBLING,plate on sibling report #415 — reissue from file
+415,Petco #1343,Sacramento,226507,2026-07-15,tech+store,yes,2,226512,SWAPPED WITH SIBLING,plate on sibling report #414 — reissue from file
+416,Petco #1343,Sacramento,20125900000422,2026-07-15,tech+store,no,2,10157996,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+417,Incredible Pets #24012404,Sacramento,6674060,2026-07-15,tech+store,no,1,-,SITE EXCEPTION,withdraw as PM; storefront photo documents the visit
+418,Comptons Market #14696,Sacramento,411412301019,2026-07-15,tech+store,no,1,-,SITE EXCEPTION,withdraw as PM; storefront photo documents the visit
+419,Walmart US #5982,Sacramento,M125962,2026-07-15,tech+store,yes,2,M125962,VERIFIED,none
+420,Raley's #416,Sacramento,9318060,2026-07-15,tech+store,yes,2,9318060,VERIFIED,none
+421,Target #311,Sacramento,10633828,2026-07-15,tech+store,yes,3,10633828,VERIFIED,none
+422,Walmart US #5192,Sacramento,9627102,2026-07-15,tech+store,yes,2,10162233,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+423,Safeway #2263,Sacramento,310797,2026-07-15,tech+store,yes,2,10157996,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+424,Food Maxx #453,Bakersfield,11008872,2026-07-20,tech+store,yes,1,11008876,MISFILED CROSS-STORE,plate on #425 (Vons #1969) — reissue from file
+425,Vons #1969,Bakersfield,294053,2026-07-20,tech+store,yes,1,11008872,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+426,Lassens #04,Bakersfield,9404671,2026-07-20,tech+store,yes,2,9404671,VERIFIED,none
+427,Costco #688,Bakersfield,10271100,2026-07-20,tech+store,yes,2,10271100,VERIFIED,none
+428,Albertsons #3172,Bakersfield,10671477,2026-07-20,tech+store,yes,2,10671477,VERIFIED,none
+429,Albertsons #377,Bakersfield,10663625,2026-07-20,tech+store,yes,0,-,NO PHOTOS,camera-roll recovery or re-shoot
+430,Albertsons #377,Bakersfield,10671487,2026-07-20,tech+store,yes,1,11008876,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+431,Walmart US #1624,Bakersfield,9267058,2026-07-20,tech+store,yes,2,11351592/9267058,VERIFIED,prune stray extra image
+432,Albertsons #336,Bakersfield,9325680,2026-07-20,tech+store,yes,2,10671481,SWAPPED WITH SIBLING,plate on sibling report #433 — reissue from file
+433,Albertsons #336,Bakersfield,10671481,2026-07-20,tech+store,yes,2,9325680,SWAPPED WITH SIBLING,plate on sibling report #432 — reissue from file
+434,Target #2524,Bakersfield,9632927,2026-07-20,tech+store,yes,2,11008872/11008876,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+435,PetSmart US #86,Bakersfield,246365,2026-07-20,tech+store,yes,2,278045,SWAPPED WITH SIBLING,plate on sibling report #436 — reissue from file
+436,PetSmart US #86,Bakersfield,246364,2026-07-20,tech+store,yes,2,246365,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+437,PetSmart US #86,Bakersfield,278045,2026-07-20,tech+store,yes,2,-,SWAPPED WITH SIBLING,plate on sibling report #435 — reissue from file
+438,Foods Co #365,Bakersfield,9716900,2026-07-21,tech+store,yes,1,11162,SWAPPED WITH SIBLING,plate on sibling report #439 — reissue from file
+439,Foods Co #365,Bakersfield,11162237,2026-07-21,tech+store,yes,1,9716900,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+440,Albertsons #3129,Bakersfield,9407809,2026-07-21,tech+store,yes,2,9407809,VERIFIED,none
+441,Albertsons #3129,Bakersfield,10671490,2026-07-21,tech+store,yes,1,11008872,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+442,Petco #1306,Bakersfield,227269,2026-07-21,tech+store,yes,2,306402,SWAPPED WITH SIBLING,plate on sibling report #443 — reissue from file
+443,Petco #1306,Bakersfield,227620,2026-07-21,tech+store,yes,2,227269,SWAPPED WITH SIBLING,plate on sibling report #444 — reissue from file
+444,Petco #1306,Bakersfield,306402,2026-07-21,tech+store,yes,2,227620,SWAPPED WITH SIBLING,plate on sibling report #442 — reissue from file
+445,Walmart US #5134,Bakersfield,279848,2026-07-21,tech+store,yes,0,-,NO PHOTOS,camera-roll recovery or re-shoot
+446,Sam's Club #4819,Bakersfield,M155783,2026-07-21,store only,no,1,11008876,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+447,Albertsons California #3364,Bakersfield,10609622,2026-07-21,tech+store,yes,2,10157996,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+448,Vons #2420,Bakersfield,9166246,2026-07-21,tech+store,yes,1,10671499,SWAPPED WITH SIBLING,plate on sibling report #450 — reissue from file
+449,Vons #2420,Bakersfield,10671499,2026-07-21,tech+store,yes,2,10658930,SWAPPED WITH SIBLING,plate on sibling report #448 — reissue from file
+450,Vons #2420,Bakersfield,10658930,2026-07-21,tech+store,yes,2,9166246,SWAPPED WITH SIBLING,plate on sibling report #449 — reissue from file
+451,Target #2715,Bakersfield,10633827,2026-07-21,tech+store,no,2,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+452,Walmart US #3139,Bakersfield,303346,2026-07-21,tech+store,yes,2,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+453,Target #1384,Bakersfield,9139322,2026-07-21,tech+store,yes,2,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+454,Walmart US #2557,Bakersfield,10254960,2026-07-21,tech+store,yes,2,10609651,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+455,Petco #1506,Bakersfield,192210,2026-07-21,tech+store,yes,2,-,SWAPPED WITH SIBLING,plate on sibling report #456 — reissue from file
+456,Petco #1506,Bakersfield,244270,2026-07-21,tech+store,yes,2,192210,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+457,Petco #1506,Bakersfield,312397,2026-07-21,tech+store,yes,3,312397,VERIFIED,none
+458,Vons #2033,Bakersfield,9413973,2026-07-21,tech+store,yes,2,10567891,SWAPPED WITH SIBLING,plate on sibling report #459 — reissue from file
+459,Vons #2033,Bakersfield,10567891,2026-07-21,tech+store,yes,1,9413973,SWAPPED WITH SIBLING,plate on sibling report #458 — reissue from file
+460,Albertsons #1398,Bakersfield,9413966,2026-07-21,tech+store,yes,2,9413966,VERIFIED,none
+461,Albertsons #1398,Bakersfield,10671486,2026-07-21,tech+store,yes,3,10671482,SWAPPED WITH SIBLING,plate on sibling report #462 — reissue from file
+462,Albertsons #1398,Bakersfield,10671482,2026-07-21,tech+store,yes,2,10671486,SWAPPED WITH SIBLING,plate on sibling report #461 — reissue from file
+463,Petsmart US #3052,Bakersfield,281232,2026-07-21,tech+store,yes,2,M032630,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+464,Petsmart US #3052,Bakersfield,281224,2026-07-21,tech+store,yes,3,281224,VERIFIED,none
+465,Petsmart US #3052,Bakersfield,M032630,2026-07-21,tech+store,yes,1,11008872,SWAPPED WITH SIBLING,plate on sibling report #463 — reissue from file
+466,Walmart US #3138,Bakersfield,303921,2026-07-21,tech+store,yes,2,10540885,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+467,Save Mart #96,Bakersfield,10741385,2026-07-21,tech+store,yes,2,11126725,SWAPPED WITH SIBLING,plate on sibling report #468 — reissue from file
+468,Save Mart #96,Bakersfield,11126725,2026-07-21,tech+store,yes,2,10741385,SWAPPED WITH SIBLING,plate on sibling report #467 — reissue from file
+469,Walmart US #3140,Bakersfield,302442,2026-07-21,tech+store,yes,2,11008872,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+470,Foods Co #384,Bakersfield,10602707,2026-07-21,tech+store,yes,2,10605033,SWAPPED WITH SIBLING,plate on sibling report #471 — reissue from file
+471,Foods Co #384,Bakersfield,10605033,2026-07-21,tech+store,yes,3,10602707,SWAPPED WITH SIBLING,plate on sibling report #470 — reissue from file
+472,Albertsons #358,Bakersfield,9407801,2026-07-21,tech+store,yes,2,10663638,SWAPPED WITH SIBLING,plate on sibling report #473 — reissue from file
+473,Albertsons #358,Bakersfield,10663638,2026-07-21,tech+store,yes,2,9407801,SWAPPED WITH SIBLING,plate on sibling report #472 — reissue from file
+474,Target #614,Bakersfield,9455985,2026-07-21,tech+store,yes,2,9455985,VERIFIED,none
+475,Petsmart US #84,Bakersfield,207967,2026-07-21,tech+store,yes,2,-,MISFILED CROSS-STORE,plate on #477 (Food Maxx #413) — reissue from file
+476,Petsmart US #84,Bakersfield,250475,2026-07-21,tech+store,yes,2,250475,VERIFIED,none
+477,Food Maxx #413,Bakersfield,10532359,2026-07-21,tech only,no,2,207967,SWAPPED WITH SIBLING,plate on sibling report #478 — reissue from file
+478,Food Maxx #413,Bakersfield,10528385,2026-07-21,tech+store,yes,3,10528385/10532359,VERIFIED,prune stray extra image
+479,Walmart US #3141,Bakersfield,290980,2026-07-21,tech+store,yes,2,11008872,MISFILED CROSS-STORE,plate on #481 (Food Maxx #499) — reissue from file
+480,Food Maxx #499,Fresno,11022906,2026-07-21,tech+store,yes,2,10546327,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+481,Food Maxx #499,Fresno,11022905,2026-07-21,tech+store,yes,2,290980,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+482,Target #2922,Fresno,10927323,2026-07-22,tech+store,yes,1,10927323,VERIFIED,none
+483,Walmart US #2001,Fresno,9729228,2026-07-22,tech+store,yes,3,10629523/9729228,VERIFIED,prune stray extra image
+484,Kelley's Pets #3465,Fresno,10961123,2026-07-22,tech+store,yes,2,10961123,VERIFIED,none
+485,Kelley's Pets #3465,Fresno,10961123,2026-07-22,tech+store,yes,2,10961123,VERIFIED,none
+486,Foods Co #316,Fresno,11162201,2026-07-22,tech+store,yes,2,11162201,VERIFIED,none
+487,Vons #1754,Fresno,263121,2026-07-22,tech+store,yes,2,263124,SWAPPED WITH SIBLING,plate on sibling report #488 — reissue from file
+488,Vons #1754,Fresno,263124,2026-07-22,tech+store,yes,2,263121,SWAPPED WITH SIBLING,plate on sibling report #487 — reissue from file
+489,Food Maxx #456,Fresno,11022907,2026-07-22,tech+store,yes,2,11022907,VERIFIED,none
+490,Food Maxx #456,Fresno,10998996,2026-07-22,tech+store,yes,2,11022907,MISFILED CROSS-STORE,plate on #491 (Foods Co #339) — reissue from file
+491,Foods Co #339,Fresno,11162239,2026-07-22,tech+store,yes,3,10998996,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+492,Target #314,Fresno,10624594,2026-07-22,tech+store,yes,3,10624594,VERIFIED,none
+493,Petco #269,Fresno,FPA,2026-07-22,tech+store,yes,0,-,NO PHOTOS,camera-roll recovery or re-shoot
+494,Walmart US #5632,Fresno,M125927,2026-07-22,tech+store,yes,7,11200214,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+495,Whities Pets #602468,Fresno,9986231,2026-07-22,tech+store,yes,2,9986231,VERIFIED,none
+496,Petsmart US #2487,Fresno,299301,2026-07-22,tech+store,yes,2,299342,SWAPPED WITH SIBLING,plate on sibling report #497 — reissue from file
+497,Petsmart US #2487,Fresno,299342,2026-07-22,tech+store,yes,2,299301,SWAPPED WITH SIBLING,plate on sibling report #496 — reissue from file
+498,Target #911,Fresno,10580525,2026-07-22,tech+store,yes,2,10580525,VERIFIED,none
+499,Sam's Club #4704,Fresno,M157299,2026-07-22,tech+store,yes,2,M157299,VERIFIED,none
+500,Food Maxx #414,Fresno,10521385,2026-07-22,tech+store,yes,2,10523825,SWAPPED WITH SIBLING,plate on sibling report #501 — reissue from file
+501,Food Maxx #414,Fresno,10523825-1,2026-07-22,tech+store,yes,2,10521385,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+502,Target #1417,Fresno,10540856,2026-07-22,tech+store,yes,2,M158123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+503,Target #1417,Fresno,10902793,2026-07-22,tech+store,yes,3,M158123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+504,Save Mart #651,Fresno,10362991,2026-07-22,tech+store,yes,2,11150523,SWAPPED WITH SIBLING,plate on sibling report #505 — reissue from file
+505,Save Mart #651,Fresno,11150523,2026-07-22,tech+store,yes,2,10362991,SWAPPED WITH SIBLING,plate on sibling report #504 — reissue from file
+506,Walmart US #2985,Fresno,M098901,2026-07-23,tech+store,yes,4,10571808/M098901,VERIFIED,prune stray extra image
+507,The Market #13675,Fresno,10613013,2026-07-23,tech+store,yes,2,10613013,VERIFIED,none
+508,Save Mart #54,Fresno,32158100000214,2026-07-23,tech+store,yes,3,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+509,PetSmart US #82,Fresno,269642,2026-07-23,tech+store,yes,2,M032645,SWAPPED WITH SIBLING,plate on sibling report #510 — reissue from file
+510,PetSmart US #82,Fresno,M032645,2026-07-23,tech+store,yes,3,269642,SWAPPED WITH SIBLING,plate on sibling report #509 — reissue from file
+511,Target #275,Fresno,10902784,2026-07-23,tech+store,yes,2,10902784,VERIFIED,none
+512,Food Maxx #403,Fresno,11014453,2026-07-23,tech+store,yes,2,10998989,SWAPPED WITH SIBLING,plate on sibling report #513 — reissue from file
+513,Food Maxx #403,Fresno,10998989,2026-07-23,tech+store,yes,2,11014453,SWAPPED WITH SIBLING,plate on sibling report #512 — reissue from file
+514,Foods Co #784,Fresno,11162238,2026-07-23,tech+store,no,1,-,SITE EXCEPTION,withdraw as PM; storefront photo documents the visit
+515,Walmart US #1815,Fresno,9697100,2026-07-23,tech+store,yes,2,M153303,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+516,Costco #31,Fresno,317027,2026-07-23,tech+store,yes,1,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+517,Save Mart #93,Fresno,11133293,2026-07-23,tech+store,yes,2,11133295,SWAPPED WITH SIBLING,plate on sibling report #518 — reissue from file
+518,Save Mart #93,Fresno,11133295,2026-07-23,tech+store,yes,2,11133293,SWAPPED WITH SIBLING,plate on sibling report #517 — reissue from file
+519,Petco #1338,Fresno,233671,2026-07-23,tech+store,yes,2,233671,VERIFIED,none
+520,Petco #1338,Fresno,244380,2026-07-23,tech+store,yes,2,244380,VERIFIED,none
+521,Petco #1338,Fresno,5232171,2026-07-23,tech+store,yes,2,11008876/M158123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+522,Petco #1338,Fresno,341506031614,2026-07-23,tech+store,yes,1,M153303,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+523,Petco #1338,Fresno,312894,2026-07-23,tech+store,yes,2,10961123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+524,Target #2744,Fresno,9318085,2026-07-23,tech+store,yes,2,9318085,VERIFIED,none
+525,Save Mart #65,Fresno,10564803,2026-07-23,tech+store,yes,2,10564803,VERIFIED,none
+526,Whole Foods Market #10122-FRS,Fresno,11096711,2026-07-23,tech+store,yes,2,11096711,VERIFIED,none
+527,Save Mart #92,Fresno,32158100000985,2026-07-23,tech+store,yes,1,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+528,Save Mart #650,Fresno,10874889,2026-07-23,tech+store,yes,2,10874889,VERIFIED,none
+529,Save Mart #650,Fresno,10874911,2026-07-23,tech+store,yes,2,10874911,VERIFIED,none
+530,Petco #1350,Fresno,197934,2026-07-23,tech+store,yes,2,240067,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+531,Petco #1350,Fresno,244067,2026-07-23,tech+store,yes,2,197834,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+532,Petco #1350,Fresno,313062,2026-07-23,tech+store,yes,2,313062,VERIFIED,none
+533,Save Mart #71,Fresno,10372249,2026-07-23,tech+store,yes,2,M158123,SWAPPED WITH SIBLING,plate on sibling report #534 — reissue from file
+534,Save Mart #71,Fresno,11157343,2026-07-23,tech+store,yes,3,10372249/11157343,VERIFIED,prune stray extra image
+535,Vons #2188,Fresno,311477,2026-07-23,tech+store,yes,2,311477,VERIFIED,none
+536,Save Mart #78,Fresno,10874913,2026-07-23,tech+store,yes,2,M153303,MISFILED CROSS-STORE,plate on #539 (Save Mart #635) — reissue from file
+537,Save Mart #78,Fresno,10874841,2026-07-23,tech+store,yes,2,10874841,VERIFIED,none
+538,Save Mart #635,Ceres,11157328,2026-07-23,tech+store,yes,2,10874841,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+539,Save Mart #635,Ceres,11157331,2026-07-23,tech+store,yes,2,10874913,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+540,Walmart US #1983,Ceres,9681570,2026-07-24,tech+store,no,1,-,SITE EXCEPTION,withdraw as PM; storefront photo documents the visit
+541,Raley's #308,Modesto,9318070,2026-07-24,tech+store,yes,2,295403,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+542,Safeway Northern California #1661,Modesto,295380,2026-07-24,tech+store,yes,2,295380,VERIFIED,none
+543,Safeway Northern California #1661,Modesto,295403,2026-07-24,tech+store,yes,2,M153303,MISFILED CROSS-STORE,plate on #541 (Raley's #308) — reissue from file
+544,Carters Pet Mart #56789,Modesto,9723510,2026-07-24,tech+store,yes,2,9637980,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+545,Carters Pet Mart #56789,Modesto,9637980,2026-07-24,tech+store,yes,2,M158123,SWAPPED WITH SIBLING,plate on sibling report #544 — reissue from file
+546,Cost Less Foods #13953,Modesto,9885006,2026-07-24,tech+store,yes,2,9885006,VERIFIED,none
+547,O'Brien's Market #4402,Modesto,8140289,2026-07-24,tech+store,yes,2,8140289,VERIFIED,none
+548,Petco #307,Modesto,202406,2026-07-24,tech+store,yes,2,-,SWAPPED WITH SIBLING,plate on sibling report #549 — reissue from file
+549,Petco #307,Modesto,243062,2026-07-24,tech+store,yes,3,202406/243062,VERIFIED,prune stray extra image
+550,PetSmart US #81,Modesto,278022,2026-07-24,tech+store,yes,2,313166,MISFILED CROSS-STORE,plate on #556 (Save Mart #1) — reissue from file
+551,PetSmart US #81,Modesto,246419,2026-07-24,tech+store,yes,2,10961123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+552,PetSmart US #81,Modesto,246414,2026-07-24,tech+store,yes,2,246414,VERIFIED,none
+553,Save Mart #1,Modesto,10567901,2026-07-24,tech+store,yes,2,10961123,MISFILED CROSS-STORE,plate on #555 (Save Mart #49) — reissue from file
+554,Save Mart #49,Modesto,11133289,2026-07-24,tech+store,yes,2,10637908,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+555,Save Mart #49,Modesto,11126733,2026-07-24,tech+store,yes,2,10567901,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+556,Save Mart #1,Modesto,10637908,2026-07-24,tech+store,yes,2,278022,MISFILED CROSS-STORE,plate on #554 (Save Mart #49) — reissue from file
+557,Target #273,Modesto,9632923,2026-07-29,tech+store,yes,2,9632923,VERIFIED,none
+558,Walmart US #1587,Modesto,277481,2026-07-29,tech+store,yes,2,277481,VERIFIED,none
+559,Petco #307,Modesto,313166,2026-07-29,tech+store,yes,2,M153303,MISFILED CROSS-STORE,plate on #550 (PetSmart US #81) — reissue from file
+560,Cost Less Foods #11062,Modesto,11240706,2026-07-29,tech+store,yes,2,11240706,VERIFIED,none
+561,Cost Less Foods #13952,Modesto,10588791,2026-07-29,tech+store,yes,2,10878244,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+562,Food Maxx #410,Modesto,10092086,2026-07-29,tech+store,yes,2,10092086,VERIFIED,none
+563,Food Maxx #410,Modesto,10374779,2026-07-29,tech+store,yes,2,10374779,VERIFIED,none
+564,O'Brien's Market #4559,Modesto,8140302,2026-07-29,tech+store,no,2,8140302,VERIFIED,none
+565,PetSmart US #1975,Modesto,272477,2026-07-29,tech only,yes,1,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+566,PetSmart US #1975,Modesto,272479 Date 21- 10- 22,2026-07-29,tech+store,yes,1,272479,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+567,PetSmart US #1975,Modesto,272479,2026-07-29,tech+store,no,2,278048,SWAPPED WITH SIBLING,plate on sibling report #566 — reissue from file
+568,Save Mart #95,Modesto,10377426,2026-07-29,tech+store,yes,4,10377426/10874883,VERIFIED,prune stray extra image
+569,Walmart US #5710,Modesto,10168520,2026-07-29,tech+store,yes,2,10961123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+570,Costco #661,Modesto,10702119,2026-07-29,tech+store,yes,2,M2503082,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+571,PetSmart US #1975,Modesto,278048,2026-07-29,tech+store,yes,2,10961123,SWAPPED WITH SIBLING,plate on sibling report #567 — reissue from file
+572,Save Mart #95,Modesto,10874883,2026-07-29,tech+store,yes,2,10961123,SWAPPED WITH SIBLING,plate on sibling report #568 — reissue from file
+573,Target #938,Modesto,10571802,2026-07-29,tech+store,yes,2,278022,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+574,Raley's #339,Modesto,10114978,2026-07-29,tech+store,yes,2,M158123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+575,Raley's #339,Modesto,10114974,2026-07-29,tech+store,yes,2,10961123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+576,Save Mart #86,Modesto,10874858,2026-07-29,tech+store,yes,2,10874893,SWAPPED WITH SIBLING,plate on sibling report #577 — reissue from file
+577,Save Mart #86,Modesto,10874893,2026-07-29,tech+store,yes,2,10874858,SWAPPED WITH SIBLING,plate on sibling report #576 — reissue from file
+578,Walmart US #3046,Modesto,M116647,2026-07-30,tech+store,yes,4,11200211/M116647,VERIFIED,prune stray extra image
+579,Walmart US #3046,Modesto,11200211,2026-07-30,tech+store,no,2,-,SWAPPED WITH SIBLING,plate on sibling report #578 — reissue from file
+580,Safeway #55,Mountain House,291749,2026-07-30,tech+store,yes,2,291749,VERIFIED,none
+581,Target #828,Livermore,9627188,2026-07-30,tech+store,yes,2,9627188,VERIFIED,none
+582,Walmart US #1972,Livermore,262650,2026-07-30,tech+store,yes,5,10213740/262650,VERIFIED,prune stray extra image
+583,Lucky #721,Livermore,10874873,2026-07-30,tech+store,no,2,10874873,VERIFIED,none
+584,Safeway Northern California #910,Livermore,304967,2026-07-30,tech+store,yes,3,304967/304968,VERIFIED,prune stray extra image
+585,Safeway Northern California #910,Livermore,304968,2026-07-30,tech+store,yes,2,304968,VERIFIED,none
+586,Nob Hill #631,Livermore,9325681,2026-07-30,tech+store,yes,2,9325681,VERIFIED,none
+587,Lucky #722,Livermore,10896679,2026-07-30,tech+store,yes,2,10896679,VERIFIED,none
+588,Costco #146,Livermore,10702123,2026-07-30,tech+store,yes,3,M2502943,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+589,Lucky #750,Dublin,80090400000116,2026-07-30,tech+store,yes,2,278022,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+590,Target #2771,Dublin,9380266,2026-07-30,tech+store,yes,2,9380266,VERIFIED,none
+591,Gene's Fine Foods #16047,Pleasanton,341505301549,2026-07-30,tech+store,yes,2,341505301549PBSG,VERIFIED,none
+592,Pet Supplies Plus #4132,Pleasanton,9404655,2026-07-30,tech+store,yes,2,9404655,VERIFIED,none
+593,Walmart US #2161,Pleasanton,302431,2026-07-30,tech+store,yes,2,M158123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+594,Lucky #744,Pleasanton,10874870,2026-07-30,tech+store,yes,2,10105120,SWAPPED WITH SIBLING,plate on sibling report #595 — reissue from file
+595,Lucky #744,Pleasanton,10105120,2026-07-30,tech+store,yes,2,10874870,SWAPPED WITH SIBLING,plate on sibling report #594 — reissue from file
+596,Murphys Paw #1910,Pleasanton,7567529,2026-07-30,tech+store,yes,1,-,SITE EXCEPTION,withdraw as PM; storefront photo documents the visit
+597,Raley's #316,Pleasanton,9335646,2026-07-30,tech+store,yes,2,9335646,VERIFIED,none
+598,Safeway Northern California #1502,Pleasanton,304913,2026-07-30,tech+store,yes,2,304913,VERIFIED,none
+599,Safeway Northern California #1502,Pleasanton,305407,2026-07-30,tech+store,yes,2,305407,VERIFIED,none
+600,Safeway Northern California #2856,Pleasanton,294043,2026-07-30,tech+store,yes,2,M158123,"WRONG PLATE, unit undocumented",camera-roll recovery or re-shoot
+601,Safeway Northern California #1211,Danville,276954,2026-07-30,tech+store,yes,2,-,NO LEGIBLE PLATE,camera-roll recovery or re-shoot
+602,Safeway Northern California #1211,Danville,304440,2026-07-30,tech+store,yes,2,276973,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+603,Lunardis #9,Danville,411409150336,2026-07-30,tech+store,yes,2,8220161006162,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
+604,Safeway Northern California #969,Moraga,311982,2026-07-31,tech+store,yes,2,311982,VERIFIED,none
+605,Safeway Northern California #1195,Clayton,309097,2026-07-31,tech+store,yes,2,305983,PLATE≠ASSET LIST (unique shot — likely list error),confirm serial with Freshpet / on site
