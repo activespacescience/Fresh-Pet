@@ -41,22 +41,33 @@ Machine verification: every row's live `photo_paths`, `photo_hashes`, `visit_typ
 
 ## Corrected report PDFs (REISSUED)
 
-60 reissued PDFs were generated (original checklist + signature pages preserved,
-red `REISSUED 2026-08-25` stamp, corrected photo pages with labels) and are staged for
-upload to the `fp-pdfs` bucket under `<original name>_CORRECTED_20260825.pdf`.
+144 reissued PDFs were generated (60 July + 84 June/August; original checklist + signature pages preserved,
+red `REISSUED` stamp, corrected photo pages with labels) and published to
+the `fp-pdfs` bucket as `<original name>_CORRECTED_<YYYYMMDD>.pdf`.
 
-**Status: pending one manual step.** The automation session was not permitted to push
-file bytes out, so the files are being handed to Sky. To finish:
+**Status: COMPLETE (2026-08-26).** All 144 corrected PDFs (60 July + 84 June/August)
+were uploaded to `fp-pdfs` by the owner and both flip scripts
+([`pdf_flip.sql`](pdf_flip.sql), [`pdf_flip_junaug.sql`](pdf_flip_junaug.sql)) were
+applied live. Verified afterward:
 
-1. Supabase dashboard → project `mmkncrsaijexezmhfmiw` → Storage → `fp-pdfs` → Upload —
-   drag all 60 `*_CORRECTED_20260825.pdf` files in (root of the bucket, no folder).
-2. Run [`pdf_flip.sql`](pdf_flip.sql) (SQL editor or ask Claude) — it points each of the
-   60 rows' `pdf_path` at its corrected PDF, guarded so it only flips rows whose
-   `corrected_pdf_path` matches. Until then rows keep serving the original PDF, which
-   is valid but carries the old photos.
+| Check | Result |
+|---|---|
+| Files present in `fp-pdfs` | 144 / 144 (60 × `_CORRECTED_20260825`, 84 × `_CORRECTED_20260826`) |
+| Uploaded bytes match generated files | exact — per-file size + content hash, 47,088,229 bytes total |
+| Rows whose `pdf_path` points at its intended corrected PDF | 144 / 144 |
+| Flipped `pdf_path` values that resolve to a real object | 144 / 144 (0 dangling) |
+| Original PDF path preserved in `form_data` | 144 / 144 |
+| Original PDF objects still in storage | 144 / 144 (0 deleted or overwritten) |
 
-## Temporary infrastructure to clean up after the upload
+Note on verification method: Supabase's storage eTag for these uploads is
+`md5(md5_digest(content))` (single-part multipart form), **not** a plain content MD5 —
+comparing against a plain MD5 produces a false mismatch.
 
-Edge function `audit-storage-helper` (token-gated, can only create new
-`*_CORRECTED_*.pdf` objects, cannot overwrite anything) is still deployed —
-neuter or delete it once the PDFs are published.
+## Temporary infrastructure — RETIRED
+
+Edge function `audit-storage-helper` (token-gated, could only create new
+`*_CORRECTED_*.pdf` objects, never overwrite) was **neutered on 2026-08-26**: it is
+redeployed as a stub that returns HTTP 410 for every request and performs no action.
+Verified by calling it with the original valid audit token, including a file-write
+attempt — both refused with 410. The token is now inert; do not revive this function,
+write a new purpose-scoped one if a future audit needs the capability.
