@@ -1,5 +1,23 @@
 # Corrections executed — 2026-08-25/26 (authorized by Sky Pace)
 
+> **2026-08-26 — the sweep now covers everything.** The same correction pass was run
+> over the June batch (invoice #170015) and the August not-yet-invoiced work: **84 more
+> plate photographs recovered** (65 June + 19 August receivers; see
+> [`corrections-log-junaug.csv`](corrections-log-junaug.csv)), audit notes on every
+> June/August card with a finding, `photo_hashes` populated on all 331 rows, 84 more
+> REISSUED PDFs generated (`pdf_flip_junaug.sql` flips them once uploaded). Three
+> negative findings closed along the way: **(1)** all 66 orphaned photo uploads in the
+> bucket are byte-identical duplicates of photos already attached to their own reports —
+> abandoned retry attempts; the app never lost a photo and no visit went unsaved
+> ([`orphan_hashes.json`](orphan_hashes.json)); **(2)** upload timestamps verify clean on
+> all 592 app reports — every originally-submitted photo was uploaded inside its report's
+> signing window (the only 2 outliers are this audit's own documented donor recoveries);
+> **(3)** the definitive after-all-recoveries missing-picture list is
+> [`missing-pictures.md`](missing-pictures.md) — 196 reports (167 need a plate photo,
+> 29 need a Freshpet asset-list confirmation). New June-only finding:
+> [`june-duplicate-billings.csv`](june-duplicate-billings.csv) — 17 units billed 2+
+> times on #170015 (19 extra reports), the row-save analog of the retry defect.
+
 Everything below ran against the live project `mmkncrsaijexezmhfmiw` after PR #53 and
 apbg-billing #409 merged, and was verified row-by-row afterward. The submitted
 originals are preserved: no photo or PDF object was deleted or overwritten, and every

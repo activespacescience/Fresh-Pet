@@ -1,0 +1,730 @@
+[
+ {
+  "orphan": "Food_Maxx__483_11003469_20260613_photo_1_1781393658346.jpg",
+  "hash": "522a33073bf1906fa87b5c8feae65fe6cf9af3d4ffeff53c688321fa5ae4c516",
+  "created_at": "2026-06-13 23:34:26.495616+00",
+  "group": "Food_Maxx__483_11003469_20260613",
+  "photo_n": 1,
+  "attempt_ts": 1781393658346,
+  "dupe_of_attached": [
+   "Food_Maxx__483_11003469_20260613_photo_1_1781393776061.jpg"
+  ]
+ },
+ {
+  "orphan": "Food_Maxx__483_11003469_20260613_photo_2_1781393658346.jpg",
+  "hash": "4119781b8a23d85d4813642f9994ebdfc6a50ba18865b37fa1917b41af2ad0fb",
+  "created_at": "2026-06-13 23:34:29.762845+00",
+  "group": "Food_Maxx__483_11003469_20260613",
+  "photo_n": 2,
+  "attempt_ts": 1781393658346,
+  "dupe_of_attached": [
+   "Food_Maxx__483_11003469_20260613_photo_2_1781393776061.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway_Northern_California__2_305004_20260614_photo_1_1781397120009.jpg",
+  "hash": "1791cac8e3783ba4ae95c1560615a6792b0452dc52b287fb62f5ea6129b22f68",
+  "created_at": "2026-06-14 00:36:50.948733+00",
+  "group": "Safeway_Northern_California__2_305004_20260614",
+  "photo_n": 1,
+  "attempt_ts": 1781397120009,
+  "dupe_of_attached": [
+   "Safeway_Northern_California__2_305004_20260614_photo_1_1781397431146.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway_Northern_California__2_305004_20260614_photo_2_1781397120009.jpg",
+  "hash": "4042c8af88c8096cbbb615957351e0ff938bb425a2d89c1011834ade8ccc6651",
+  "created_at": "2026-06-14 00:36:53.435067+00",
+  "group": "Safeway_Northern_California__2_305004_20260614",
+  "photo_n": 2,
+  "attempt_ts": 1781397120009,
+  "dupe_of_attached": [
+   "Safeway_Northern_California__2_305004_20260614_photo_2_1781397431146.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway_Northern_California__2_305004_20260614_photo_3_1781397120009.jpg",
+  "hash": "4680bde97518d28a772fbc0a7f5601b3472830095cb4f78559708ea847e750fa",
+  "created_at": "2026-06-14 00:36:54.53919+00",
+  "group": "Safeway_Northern_California__2_305004_20260614",
+  "photo_n": 3,
+  "attempt_ts": 1781397120009,
+  "dupe_of_attached": [
+   "Safeway_Northern_California__2_305004_20260614_photo_3_1781397431146.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway_Northern_California__2_305004_20260614_photo_4_1781397120009.jpg",
+  "hash": "2b1979c44c57f71a308b1b2adfc892adcfda2e9779a634f6db96d94f3ae7c2e5",
+  "created_at": "2026-06-14 00:36:56.258333+00",
+  "group": "Safeway_Northern_California__2_305004_20260614",
+  "photo_n": 4,
+  "attempt_ts": 1781397120009,
+  "dupe_of_attached": [
+   "Safeway_Northern_California__2_305004_20260614_photo_4_1781397431146.jpg"
+  ]
+ },
+ {
+  "orphan": "Incredible_Pets__2401392_10186474_20260625_photo_1_1782410766265.jpg",
+  "hash": "4b27af13638a51260417c53dde9d5d228587806686559e13437a91f68d184acb",
+  "created_at": "2026-06-25 18:06:06.925761+00",
+  "group": "Incredible_Pets__2401392_10186474_20260625",
+  "photo_n": 1,
+  "attempt_ts": 1782410766265,
+  "dupe_of_attached": [
+   "Incredible_Pets__2401392_10186474_20260625_photo_1_1782410874035.jpg"
+  ]
+ },
+ {
+  "orphan": "Incredible_Pets__2401392_10186474_20260625_photo_2_1782410766265.jpg",
+  "hash": "e3939a7672d65c7da90526c687107464cf9609e2e11f2c86506193d049e563e4",
+  "created_at": "2026-06-25 18:06:07.195993+00",
+  "group": "Incredible_Pets__2401392_10186474_20260625",
+  "photo_n": 2,
+  "attempt_ts": 1782410766265,
+  "dupe_of_attached": [
+   "Incredible_Pets__2401392_10186474_20260625_photo_2_1782410874035.jpg"
+  ]
+ },
+ {
+  "orphan": "Incredible_Pets__2401392_10186474_20260625_photo_3_1782410766265.jpg",
+  "hash": "c146f048887440c19160122d1756f87840ef84ca21a4848534231d100bb272c2",
+  "created_at": "2026-06-25 18:06:07.444973+00",
+  "group": "Incredible_Pets__2401392_10186474_20260625",
+  "photo_n": 3,
+  "attempt_ts": 1782410766265,
+  "dupe_of_attached": [
+   "Incredible_Pets__2401392_10186474_20260625_photo_3_1782410874035.jpg"
+  ]
+ },
+ {
+  "orphan": "Incredible_Pets__2401392_10186474_20260625_photo_4_1782410766265.jpg",
+  "hash": "350c166fac178aaaa1d155af392c36d5a9056af0666c1fe2484bdaa0b79881f7",
+  "created_at": "2026-06-25 18:06:07.701697+00",
+  "group": "Incredible_Pets__2401392_10186474_20260625",
+  "photo_n": 4,
+  "attempt_ts": 1782410766265,
+  "dupe_of_attached": [
+   "Incredible_Pets__2401392_10186474_20260625_photo_4_1782410874035.jpg"
+  ]
+ },
+ {
+  "orphan": "Incredible_Pets__2401392_10186474_20260625_photo_5_1782410766265.jpg",
+  "hash": "8803ea91f2c5653273d4658e44f67132b8cdda519c7083394eef423ac0da11a0",
+  "created_at": "2026-06-25 18:06:07.970257+00",
+  "group": "Incredible_Pets__2401392_10186474_20260625",
+  "photo_n": 5,
+  "attempt_ts": 1782410766265,
+  "dupe_of_attached": [
+   "Incredible_Pets__2401392_10186474_20260625_photo_5_1782410874035.jpg"
+  ]
+ },
+ {
+  "orphan": "Petco__1343_313084_20260715_photo_1_1784144734473.jpg",
+  "hash": "41a32a98a8b1f9f0a9a102dc8166cdef4af8902ac6928278ca037e853ca3d62e",
+  "created_at": "2026-07-15 19:45:35.357235+00",
+  "group": "Petco__1343_313084_20260715",
+  "photo_n": 1,
+  "attempt_ts": 1784144734473,
+  "dupe_of_attached": [
+   "Petco__1343_313084_20260715_photo_1_1784144818938.jpg"
+  ]
+ },
+ {
+  "orphan": "Petco__1343_313084_20260715_photo_2_1784144734473.jpg",
+  "hash": "c820225ea6d2cc5ec965cdc2bdf05018666e4ac9576f0989ad25a70aa824b0d1",
+  "created_at": "2026-07-15 19:45:36.744401+00",
+  "group": "Petco__1343_313084_20260715",
+  "photo_n": 2,
+  "attempt_ts": 1784144734473,
+  "dupe_of_attached": [
+   "Petco__1343_313084_20260715_photo_2_1784144818938.jpg"
+  ]
+ },
+ {
+  "orphan": "Albertsons__1398_10671486_20260721_photo_1_1784657059909.jpg",
+  "hash": "ac4cc9fae920e28c98e95c478fec92b88809c627d8e6ecbba0dadfd2b4988709",
+  "created_at": "2026-07-21 18:04:27.894485+00",
+  "group": "Albertsons__1398_10671486_20260721",
+  "photo_n": 1,
+  "attempt_ts": 1784657059909,
+  "dupe_of_attached": [
+   "Albertsons__1398_10671486_20260721_photo_1_1784657597896.jpg"
+  ]
+ },
+ {
+  "orphan": "Albertsons__1398_10671486_20260721_photo_2_1784657059909.jpg",
+  "hash": "2c0e610f65f3aa059d2e9e6c0fa7bb934cdd6e64a3f74e93170a378e12d885fe",
+  "created_at": "2026-07-21 18:04:34.771531+00",
+  "group": "Albertsons__1398_10671486_20260721",
+  "photo_n": 2,
+  "attempt_ts": 1784657059909,
+  "dupe_of_attached": [
+   "Albertsons__1398_10671486_20260721_photo_2_1784657597896.jpg"
+  ]
+ },
+ {
+  "orphan": "Vons__1754_263121_20260722_photo_1_1784740515218.jpg",
+  "hash": "61d1f7a96588cb17fd39fb2407d5e471058f612880b27bc723228871216ba740",
+  "created_at": "2026-07-22 17:15:23.411675+00",
+  "group": "Vons__1754_263121_20260722",
+  "photo_n": 1,
+  "attempt_ts": 1784740515218,
+  "dupe_of_attached": [
+   "Vons__1754_263121_20260722_photo_1_1784740591341.jpg"
+  ]
+ },
+ {
+  "orphan": "Vons__1754_263121_20260722_photo_2_1784740515218.jpg",
+  "hash": "b96facec2a8284746c08be65b04eb13171b049a05a9a0358cada11c9a8df3868",
+  "created_at": "2026-07-22 17:15:27.902713+00",
+  "group": "Vons__1754_263121_20260722",
+  "photo_n": 2,
+  "attempt_ts": 1784740515218,
+  "dupe_of_attached": [
+   "Vons__1754_263121_20260722_photo_2_1784740591341.jpg"
+  ]
+ },
+ {
+  "orphan": "Food_Maxx__414_10521385_20260722_photo_1_1784762991616.jpg",
+  "hash": "3235398a5efd02c1dc718f432fb84a6caa35d6c8934214aff293d837bf522b03",
+  "created_at": "2026-07-22 23:29:53.423719+00",
+  "group": "Food_Maxx__414_10521385_20260722",
+  "photo_n": 1,
+  "attempt_ts": 1784762991616,
+  "dupe_of_attached": [
+   "Food_Maxx__414_10521385_20260722_photo_1_1784763158353.jpg"
+  ]
+ },
+ {
+  "orphan": "Food_Maxx__414_10521385_20260722_photo_2_1784762991616.jpg",
+  "hash": "3c59e124d96f7ff422727945afe758a0c67df76da72ea965632ecaff732cfff5",
+  "created_at": "2026-07-22 23:29:55.318224+00",
+  "group": "Food_Maxx__414_10521385_20260722",
+  "photo_n": 2,
+  "attempt_ts": 1784762991616,
+  "dupe_of_attached": [
+   "Food_Maxx__414_10521385_20260722_photo_2_1784763158353.jpg"
+  ]
+ },
+ {
+  "orphan": "Target__2744_9318085_20260723_photo_1_1784832849487.jpg",
+  "hash": "802ea1a436005de4e19934227f60ee712bbf88ec6b78c19b336291d11c575bcd",
+  "created_at": "2026-07-23 18:54:09.83687+00",
+  "group": "Target__2744_9318085_20260723",
+  "photo_n": 1,
+  "attempt_ts": 1784832849487,
+  "dupe_of_attached": [
+   "Target__2744_9318085_20260723_photo_1_1784833310816.jpg"
+  ]
+ },
+ {
+  "orphan": "Target__2744_9318085_20260723_photo_2_1784832849487.jpg",
+  "hash": "3ba0e003289d1e9c57897ba1a0e835f2662fc9de70c59ff579a115bec073c454",
+  "created_at": "2026-07-23 18:54:10.127172+00",
+  "group": "Target__2744_9318085_20260723",
+  "photo_n": 2,
+  "attempt_ts": 1784832849487,
+  "dupe_of_attached": [
+   "Target__2744_9318085_20260723_photo_2_1784833310816.jpg"
+  ]
+ },
+ {
+  "orphan": "Whole_Foods_Market__10122_FRS_11096711_20260723_photo_1_1784839510229.jpg",
+  "hash": "311bce7a1e3369fcf559a97faa762d489df92b2cea434cb364b8e16188a5ec82",
+  "created_at": "2026-07-23 20:45:10.682967+00",
+  "group": "Whole_Foods_Market__10122_FRS_11096711_20260723",
+  "photo_n": 1,
+  "attempt_ts": 1784839510229,
+  "dupe_of_attached": [
+   "Whole_Foods_Market__10122_FRS_11096711_20260723_photo_1_1784839604595.jpg"
+  ]
+ },
+ {
+  "orphan": "Whole_Foods_Market__10122_FRS_11096711_20260723_photo_2_1784839510229.jpg",
+  "hash": "5b32c7d46bc3dc7adbb5c23512021b70ee1dd16258725181f2c8ddb4518c3968",
+  "created_at": "2026-07-23 20:45:10.9914+00",
+  "group": "Whole_Foods_Market__10122_FRS_11096711_20260723",
+  "photo_n": 2,
+  "attempt_ts": 1784839510229,
+  "dupe_of_attached": [
+   "Whole_Foods_Market__10122_FRS_11096711_20260723_photo_2_1784839604595.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__78_10874841_20260723_photo_1_1784847646307.jpg",
+  "hash": "5418e4fa310e8f9e5bbd3c3838d4e16a7ac9419027013debe738c3d01891c8b5",
+  "created_at": "2026-07-23 23:00:47.424915+00",
+  "group": "Save_Mart__78_10874841_20260723",
+  "photo_n": 1,
+  "attempt_ts": 1784847646307,
+  "dupe_of_attached": [
+   "Save_Mart__78_10874841_20260723_photo_1_1784847880674.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__78_10874841_20260723_photo_2_1784847646307.jpg",
+  "hash": "3fe09951a39d74f39c7b6b8adb35d496f63014e4a8c83173b3f0d2404105760f",
+  "created_at": "2026-07-23 23:00:48.364343+00",
+  "group": "Save_Mart__78_10874841_20260723",
+  "photo_n": 2,
+  "attempt_ts": 1784847646307,
+  "dupe_of_attached": [
+   "Save_Mart__78_10874841_20260723_photo_2_1784847880674.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__78_10874841_20260723_photo_1_1784847796264.jpg",
+  "hash": "5418e4fa310e8f9e5bbd3c3838d4e16a7ac9419027013debe738c3d01891c8b5",
+  "created_at": "2026-07-23 23:03:18.175681+00",
+  "group": "Save_Mart__78_10874841_20260723",
+  "photo_n": 1,
+  "attempt_ts": 1784847796264,
+  "dupe_of_attached": [
+   "Save_Mart__78_10874841_20260723_photo_1_1784847880674.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__78_10874841_20260723_photo_2_1784847796264.jpg",
+  "hash": "3fe09951a39d74f39c7b6b8adb35d496f63014e4a8c83173b3f0d2404105760f",
+  "created_at": "2026-07-23 23:03:20.392603+00",
+  "group": "Save_Mart__78_10874841_20260723",
+  "photo_n": 2,
+  "attempt_ts": 1784847796264,
+  "dupe_of_attached": [
+   "Save_Mart__78_10874841_20260723_photo_2_1784847880674.jpg"
+  ]
+ },
+ {
+  "orphan": "PetSmart_US__81_278022_20260724_photo_1_1784860452787.jpg",
+  "hash": "90ba9d5b8464bea5ed6cddcde9d7bb7584ee733d736195f65146ee9a088a0f3b",
+  "created_at": "2026-07-24 02:34:13.263153+00",
+  "group": "PetSmart_US__81_278022_20260724",
+  "photo_n": 1,
+  "attempt_ts": 1784860452787,
+  "dupe_of_attached": [
+   "PetSmart_US__81_278022_20260724_photo_1_1784861843257.jpg"
+  ]
+ },
+ {
+  "orphan": "PetSmart_US__81_278022_20260724_photo_2_1784860452787.jpg",
+  "hash": "51aa69773eae35dd4879fb0da48b4a9bee9df89e6897f7a1faa044de0ea039ae",
+  "created_at": "2026-07-24 02:34:13.637348+00",
+  "group": "PetSmart_US__81_278022_20260724",
+  "photo_n": 2,
+  "attempt_ts": 1784860452787,
+  "dupe_of_attached": [
+   "PetSmart_US__81_278022_20260724_photo_2_1784861843257.jpg"
+  ]
+ },
+ {
+  "orphan": "PetSmart_US__1975_272477_20260729_photo_1_1785362550862.jpg",
+  "hash": "40a71ec1c3559a1505fbcb7a167429e8a36cf678789543be34a5a815e05f1122",
+  "created_at": "2026-07-29 22:02:31.647423+00",
+  "group": "PetSmart_US__1975_272477_20260729",
+  "photo_n": 1,
+  "attempt_ts": 1785362550862,
+  "dupe_of_attached": [
+   "PetSmart_US__1975_272477_20260729_photo_1_1785362620050.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_1_1785364900324.jpg",
+  "hash": "cb2fdd1d609e2b1d3be92fbbac05186246b001f37132890621ca6305c7217e90",
+  "created_at": "2026-07-29 22:41:40.887955+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 1,
+  "attempt_ts": 1785364900324,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_1_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_2_1785364900324.jpg",
+  "hash": "982fb80e9a6213ea0ff35b676984a06a79b8727a47029e7a16bc00501750d599",
+  "created_at": "2026-07-29 22:41:41.403771+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 2,
+  "attempt_ts": 1785364900324,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_2_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_1_1785364982046.jpg",
+  "hash": "cb2fdd1d609e2b1d3be92fbbac05186246b001f37132890621ca6305c7217e90",
+  "created_at": "2026-07-29 22:43:02.600417+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 1,
+  "attempt_ts": 1785364982046,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_1_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_2_1785364982046.jpg",
+  "hash": "982fb80e9a6213ea0ff35b676984a06a79b8727a47029e7a16bc00501750d599",
+  "created_at": "2026-07-29 22:43:03.080033+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 2,
+  "attempt_ts": 1785364982046,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_2_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_3_1785364982046.jpg",
+  "hash": "4d8f9b09460c3f1a1c4dc3b5088592bc30769f46fddf7dad79b8dff04aeb6fff",
+  "created_at": "2026-07-29 22:43:03.658321+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 3,
+  "attempt_ts": 1785364982046,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_3_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_4_1785364982046.jpg",
+  "hash": "842580701c38dd020401fc76798cd43c88be8729167ca6aa27fb53bb0c97805f",
+  "created_at": "2026-07-29 22:43:04.18745+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 4,
+  "attempt_ts": 1785364982046,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_4_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_1_1785365020283.jpg",
+  "hash": "cb2fdd1d609e2b1d3be92fbbac05186246b001f37132890621ca6305c7217e90",
+  "created_at": "2026-07-29 22:43:41.564282+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 1,
+  "attempt_ts": 1785365020283,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_1_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_2_1785365020283.jpg",
+  "hash": "982fb80e9a6213ea0ff35b676984a06a79b8727a47029e7a16bc00501750d599",
+  "created_at": "2026-07-29 22:43:42.830365+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 2,
+  "attempt_ts": 1785365020283,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_2_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_3_1785365020283.jpg",
+  "hash": "4d8f9b09460c3f1a1c4dc3b5088592bc30769f46fddf7dad79b8dff04aeb6fff",
+  "created_at": "2026-07-29 22:43:44.070604+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 3,
+  "attempt_ts": 1785365020283,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_3_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Save_Mart__95_10377426_20260729_photo_4_1785365020283.jpg",
+  "hash": "842580701c38dd020401fc76798cd43c88be8729167ca6aa27fb53bb0c97805f",
+  "created_at": "2026-07-29 22:43:45.098972+00",
+  "group": "Save_Mart__95_10377426_20260729",
+  "photo_n": 4,
+  "attempt_ts": 1785365020283,
+  "dupe_of_attached": [
+   "Save_Mart__95_10377426_20260729_photo_4_1785365577795.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__1972_262650_20260730_photo_1_1785436788241.jpg",
+  "hash": "c239bc8788e918818c36953fb89d987db4553bf6f84eb5d3513c013471174c5c",
+  "created_at": "2026-07-30 18:39:48.892778+00",
+  "group": "Walmart_US__1972_262650_20260730",
+  "photo_n": 1,
+  "attempt_ts": 1785436788241,
+  "dupe_of_attached": [
+   "Walmart_US__1972_262650_20260730_photo_1_1785437686543.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__1972_262650_20260730_photo_2_1785436788241.jpg",
+  "hash": "48e45fbfe84bba9c8dff08383392b2b69c3ad8508ff62c9cbb367ebc93786087",
+  "created_at": "2026-07-30 18:39:49.164954+00",
+  "group": "Walmart_US__1972_262650_20260730",
+  "photo_n": 2,
+  "attempt_ts": 1785436788241,
+  "dupe_of_attached": [
+   "Walmart_US__1972_262650_20260730_photo_2_1785437686543.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__1972_262650_20260730_photo_1_1785436825664.jpg",
+  "hash": "c239bc8788e918818c36953fb89d987db4553bf6f84eb5d3513c013471174c5c",
+  "created_at": "2026-07-30 18:40:25.96063+00",
+  "group": "Walmart_US__1972_262650_20260730",
+  "photo_n": 1,
+  "attempt_ts": 1785436825664,
+  "dupe_of_attached": [
+   "Walmart_US__1972_262650_20260730_photo_1_1785437686543.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__1972_262650_20260730_photo_2_1785436825664.jpg",
+  "hash": "48e45fbfe84bba9c8dff08383392b2b69c3ad8508ff62c9cbb367ebc93786087",
+  "created_at": "2026-07-30 18:40:26.186882+00",
+  "group": "Walmart_US__1972_262650_20260730",
+  "photo_n": 2,
+  "attempt_ts": 1785436825664,
+  "dupe_of_attached": [
+   "Walmart_US__1972_262650_20260730_photo_2_1785437686543.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__1972_262650_20260730_photo_3_1785436825664.jpg",
+  "hash": "79f831c423d702775657fadddbde0ac05faca17d2093baf57ac879b09506d801",
+  "created_at": "2026-07-30 18:40:26.507269+00",
+  "group": "Walmart_US__1972_262650_20260730",
+  "photo_n": 3,
+  "attempt_ts": 1785436825664,
+  "dupe_of_attached": [
+   "Walmart_US__1972_262650_20260730_photo_3_1785437686543.jpg"
+  ]
+ },
+ {
+  "orphan": "Costco__146_10702123_20260730_photo_1_1785442950754.jpg",
+  "hash": "2fbdcc3faf0e4f9457466bd5a1a135435efbc5688389b82a97a564cc610a4108",
+  "created_at": "2026-07-30 20:22:31.328793+00",
+  "group": "Costco__146_10702123_20260730",
+  "photo_n": 1,
+  "attempt_ts": 1785442950754,
+  "dupe_of_attached": [
+   "Costco__146_10702123_20260730_photo_1_1785443172822.jpg"
+  ]
+ },
+ {
+  "orphan": "Costco__146_10702123_20260730_photo_2_1785442950754.jpg",
+  "hash": "1e2c2a2f0c74c5ecf9a33956d9b9ab03023b6f6349fe050b83401e6c4c63e0e2",
+  "created_at": "2026-07-30 20:22:31.796914+00",
+  "group": "Costco__146_10702123_20260730",
+  "photo_n": 2,
+  "attempt_ts": 1785442950754,
+  "dupe_of_attached": [
+   "Costco__146_10702123_20260730_photo_2_1785443172822.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway_Northern_California__1_276954_20260730_photo_1_1785452759914.jpg",
+  "hash": "ca51ffb84ae647a7d3f9333b953621eb198cd8ab9232a7f018ab4dd6d7a46bad",
+  "created_at": "2026-07-30 23:06:00.217487+00",
+  "group": "Safeway_Northern_California__1_276954_20260730",
+  "photo_n": 1,
+  "attempt_ts": 1785452759914,
+  "dupe_of_attached": [
+   "Target__1417_10902793_20260722_photo_3_1784763882120.jpg",
+   "Safeway_Northern_California__1_276954_20260730_photo_1_1785454365016.jpg",
+   "Target__2088_9879100_20260821_photo_2_1787346154848.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_1_1787343894486.jpg",
+  "hash": "1e4822ffb311d7a2fad9d5b731da80d505482bf5fa5e5c612946e082f89eaf2a",
+  "created_at": "2026-08-21 20:24:55.282693+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 1,
+  "attempt_ts": 1787343894486,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_1_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_2_1787343894486.jpg",
+  "hash": "6dff5afcf7389ab19c204a24b3a895924e79bdefdecf946e34cccbda008737ed",
+  "created_at": "2026-08-21 20:24:55.602182+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 2,
+  "attempt_ts": 1787343894486,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_2_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_3_1787343894486.jpg",
+  "hash": "b859057efc18800d9b3eb40b26a4233c2fab12b817ecfd1f557a3fc80f1e9274",
+  "created_at": "2026-08-21 20:24:55.850244+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 3,
+  "attempt_ts": 1787343894486,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_3_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_1_1787343948656.jpg",
+  "hash": "1e4822ffb311d7a2fad9d5b731da80d505482bf5fa5e5c612946e082f89eaf2a",
+  "created_at": "2026-08-21 20:25:48.977837+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 1,
+  "attempt_ts": 1787343948656,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_1_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_2_1787343948656.jpg",
+  "hash": "6dff5afcf7389ab19c204a24b3a895924e79bdefdecf946e34cccbda008737ed",
+  "created_at": "2026-08-21 20:25:49.340952+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 2,
+  "attempt_ts": 1787343948656,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_2_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_3_1787343948656.jpg",
+  "hash": "b859057efc18800d9b3eb40b26a4233c2fab12b817ecfd1f557a3fc80f1e9274",
+  "created_at": "2026-08-21 20:25:49.832036+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 3,
+  "attempt_ts": 1787343948656,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_3_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_1_1787343979978.jpg",
+  "hash": "1e4822ffb311d7a2fad9d5b731da80d505482bf5fa5e5c612946e082f89eaf2a",
+  "created_at": "2026-08-21 20:26:20.192988+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 1,
+  "attempt_ts": 1787343979978,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_1_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_2_1787343979978.jpg",
+  "hash": "6dff5afcf7389ab19c204a24b3a895924e79bdefdecf946e34cccbda008737ed",
+  "created_at": "2026-08-21 20:26:20.496325+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 2,
+  "attempt_ts": 1787343979978,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_2_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_3_1787343979978.jpg",
+  "hash": "b859057efc18800d9b3eb40b26a4233c2fab12b817ecfd1f557a3fc80f1e9274",
+  "created_at": "2026-08-21 20:26:20.833257+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 3,
+  "attempt_ts": 1787343979978,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_3_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_1_1787344146812.jpg",
+  "hash": "1e4822ffb311d7a2fad9d5b731da80d505482bf5fa5e5c612946e082f89eaf2a",
+  "created_at": "2026-08-21 20:29:07.017709+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 1,
+  "attempt_ts": 1787344146812,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_1_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_2_1787344146812.jpg",
+  "hash": "6dff5afcf7389ab19c204a24b3a895924e79bdefdecf946e34cccbda008737ed",
+  "created_at": "2026-08-21 20:29:07.323066+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 2,
+  "attempt_ts": 1787344146812,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_2_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_3_1787344146812.jpg",
+  "hash": "b859057efc18800d9b3eb40b26a4233c2fab12b817ecfd1f557a3fc80f1e9274",
+  "created_at": "2026-08-21 20:29:07.613285+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 3,
+  "attempt_ts": 1787344146812,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_3_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Walmart_US__4174_302471_20260821_photo_4_1787344146812.jpg",
+  "hash": "f2cb99035b6a56d1864448678efe641ba28481a0926b7f11dcb992f5518473a6",
+  "created_at": "2026-08-21 20:29:07.874462+00",
+  "group": "Walmart_US__4174_302471_20260821",
+  "photo_n": 4,
+  "attempt_ts": 1787344146812,
+  "dupe_of_attached": [
+   "Walmart_US__4174_302471_20260821_photo_4_1787344266299.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway_Northern_California__6_311970_20260824_photo_1_1787541454741.jpg",
+  "hash": "ee59c076a14e76a1d16e7af492d2a35b680dc45b1c9b8c9e3acebb20ee11fdb4",
+  "created_at": "2026-08-24 03:17:39.945275+00",
+  "group": "Safeway_Northern_California__6_311970_20260824",
+  "photo_n": 1,
+  "attempt_ts": 1787541454741,
+  "dupe_of_attached": [
+   "Safeway_Northern_California__6_311970_20260824_photo_1_1787541690216.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway_Northern_California__6_311970_20260824_photo_2_1787541454741.jpg",
+  "hash": "9d52e109288fbcfecde67b09f812d39cd973c24c4cbb86ddce503a2fae7cee6f",
+  "created_at": "2026-08-24 03:17:43.103931+00",
+  "group": "Safeway_Northern_California__6_311970_20260824",
+  "photo_n": 2,
+  "attempt_ts": 1787541454741,
+  "dupe_of_attached": [
+   "Safeway_Northern_California__6_311970_20260824_photo_2_1787541690216.jpg"
+  ]
+ },
+ {
+  "orphan": "Oceana_Market__604221_4900424_20260824_photo_1_1787611257684.jpg",
+  "hash": "9367bdc65d23741f93219f056f03498d5b39c195ffd28966e1003b01bbc0d93b",
+  "created_at": "2026-08-24 22:41:04.42064+00",
+  "group": "Oceana_Market__604221_4900424_20260824",
+  "photo_n": 1,
+  "attempt_ts": 1787611257684,
+  "dupe_of_attached": [
+   "Oceana_Market__604221_4900424_20260824_photo_1_1787611346580.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway__2318_310789_20260825_photo_1_1787622649661.jpg",
+  "hash": "e76690b58e0a41602e0d783e91fb6038368c5ddf6e771869b38ed0f0efb15c89",
+  "created_at": "2026-08-25 01:50:49.957539+00",
+  "group": "Safeway__2318_310789_20260825",
+  "photo_n": 1,
+  "attempt_ts": 1787622649661,
+  "dupe_of_attached": [
+   "Safeway__2318_310789_20260825_photo_1_1787622829516.jpg"
+  ]
+ },
+ {
+  "orphan": "Safeway__2318_310789_20260825_photo_2_1787622649661.jpg",
+  "hash": "bafa9076be137b77b5b0406f5d1421be29ed07ae8b0eb99c586c895188c0cc02",
+  "created_at": "2026-08-25 01:50:50.255777+00",
+  "group": "Safeway__2318_310789_20260825",
+  "photo_n": 2,
+  "attempt_ts": 1787622649661,
+  "dupe_of_attached": [
+   "Safeway__2318_310789_20260825_photo_2_1787622829516.jpg"
+  ]
+ }
+]
