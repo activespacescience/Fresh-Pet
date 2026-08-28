@@ -43,9 +43,23 @@ could not be relied on.
 | Photographs removed because they documented a different unit | 76 |
 | Reports reissued with corrected photo pages and a visible correction stamp | 217 |
 
-Every serial you listed now appears on exactly one report — the report for the unit that
-plate actually belongs to. Nothing was deleted: the original submission is preserved on
-every record, and each corrected report carries a stamp explaining what changed and why.
+**Verified result.** We re-checked every photograph in the system after the correction.
+Eight of the nine serials you listed now appear on exactly one report — the report for the
+unit that plate actually belongs to. Two of them (M153303 and M158123) turned out not to
+match any unit on your asset list at all and no longer appear on any report.
+
+The ninth, **S/N 10961123**, still appears on two reports — and that is the Kelley's Pets
+#3465 duplicate you identified yourself. Both reports are for the same single unit, so the
+plate photograph is correct on both; the problem there is the duplicate submission, not the
+photograph. That report is flagged for credit.
+
+Corpus-wide, only three serials now appear on more than one report, and in every case it is
+the same physical unit with more than one report filed against it — the duplicate-submission
+issue, which we address below. **No photograph of one store's unit is presented as
+documentation of another store's unit anywhere in the system.**
+
+Nothing was deleted: the original submission is preserved on every record, and each
+corrected report carries a stamp explaining what changed and why.
 
 **Where a report lost its evidence, we say so.** Six reports had every photograph removed
 because every one showed a different unit. Those reports now state plainly that no
@@ -113,8 +127,13 @@ the new reports as they are completed.
 - Site Visit Exception, described above, with a hard block on invoicing.
 - One report per unit per day, which prevents the duplicate submissions you noted.
 
-**3. Kelley's Pets #3465.** You are right that this location has one unit and received two
-reports. The duplicate is flagged for credit.
+**3. Duplicate submissions.** You are right about Kelley's Pets #3465 — one unit, two
+reports. The duplicate is flagged for credit. Our own audit found the same pattern
+elsewhere and we are raising it rather than waiting to be asked: on invoice **#170015**
+(June), 17 units received two or more reports, 19 extra reports in total. The cause was the
+same retry behaviour — a technician who was not sure a submission had gone through pressed
+submit again. The app now refuses more than one report per unit per day. We will provide the
+list and expect to credit these.
 
 **4. A full audit trail.** Every corrected record carries a note stating what was changed,
 when, and why, with the original submission preserved. We can supply this record for any
