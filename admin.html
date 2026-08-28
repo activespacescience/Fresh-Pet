@@ -190,6 +190,11 @@ var ISSUE_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-iss
 var riSel = {};              // { pm id: true } selected for the report
 var riFilter = 'issues';     // issues | added | review | all
 var rvBusy = false;          // re-visit request in flight
+var incidents = [], incidentEntries = [];
+var incOpen = null;          // incident id being viewed
+var incBusy = false;
+var incDraft = { kind:'note', body:'' };
+var incNew = null;           // new-incident draft, or null
 var riSearch = '';
 var riNote = '';             // free-text note included at the top of the email
 var riPicked = { 'roparaku@Freshpet.com': true };  // quick-pick recipients (Freshpet contact pre-checked)
@@ -302,11 +307,15 @@ async function loadAll(){
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
     sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,comments:form_data->>comments').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
-    sb.from('reactive_assets').select('*').order('store')
+    sb.from('reactive_assets').select('*').order('store'),
+    sb.from('incidents').select('*').order('opened_at', { ascending:false }),
+    sb.from('incident_entries').select('*').order('entry_at')
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
   rvBatches = r[5].data || [];
+  incidents = r[7] ? (r[7].data || []) : [];
+  incidentEntries = r[8] ? (r[8].data || []) : [];
   rvSaved = r[6].data || [];
   if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
 }
@@ -428,6 +437,8 @@ function render(){
         return '<button class="tab '+(tab==='issues'?'on':'')+'" onclick="tab=\'issues\';render()">'+icon('alert')+' Report Issues'+(n?' <span class="pill am" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">'+icon('download')+' Upload / Reactive</button>'
      + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">'+icon('mail')+' Send Invoice</button>'
+     + (function(){ var n=incidents.filter(function(i){ return i.status!=='closed'; }).length;
+        return '<button class="tab '+(tab==='incidents'?'on':'')+'" onclick="tab=\'incidents\';render()">'+icon('alert')+' Incident Log'+(n?' <span class="pill pu" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '</div>';
   h += tab==='overview' ? renderOverview()
      : tab==='routes' ? renderRoutes()
@@ -436,6 +447,7 @@ function render(){
      : tab==='issues' ? renderReportIssues()
      : tab==='reactive' ? renderReactive()
      : tab==='send' ? renderSendInvoice()
+     : tab==='incidents' ? renderIncidents()
      : renderBilling();
   h += '</div>';
   app.innerHTML = h;
@@ -1199,6 +1211,212 @@ function renderAddedAssets(){
     h+='</tbody></table></div>';
   }
   h+='</div>';
+  return h;
+}
+
+// ═══ Incident Log ═══
+// A durable record of what went wrong, why, what was done, and what stops it recurring.
+// Kept in the app so the record lives beside the data it describes.
+var INC_STATUS = ['open','investigating','remediating','monitoring','closed'];
+var INC_SEV    = ['low','medium','high','critical'];
+var INC_KIND   = ['note','finding','action','decision','communication'];
+var SEV_PILL   = { low:'dim', medium:'am', high:'rd', critical:'rd' };
+var STATUS_PILL= { open:'rd', investigating:'am', remediating:'pu', monitoring:'am', closed:'gn' };
+
+function incEntriesFor(id){
+  return incidentEntries.filter(function(e){ return e.incident_id === id; })
+    .sort(function(a,b){ return String(a.entry_at).localeCompare(String(b.entry_at)); });
+}
+function fmtWhen(t){
+  if(!t) return '';
+  var d = new Date(t);
+  return isNaN(d) ? String(t).slice(0,16) : d.toLocaleString(undefined,{ dateStyle:'medium', timeStyle:'short' });
+}
+function nl2br(t){ return esc(t||'').replace(/\n/g,'<br>'); }
+
+async function incAddEntry(id){
+  var body = (incDraft.body||'').trim();
+  if(!body) return toast('Write something first','err');
+  incBusy = true; render();
+  try{
+    var { error } = await sb.from('incident_entries').insert({
+      incident_id: id, kind: incDraft.kind, body: body,
+      author: (user && user.email) || 'admin'
+    });
+    if(error) throw error;
+    await sb.from('incidents').update({ updated_at: new Date().toISOString() }).eq('id', id);
+    incDraft = { kind:'note', body:'' };
+    await loadAll();
+    toast('Entry added','ok');
+  }catch(e){ toast('Could not add the entry: '+e.message,'err'); }
+  incBusy = false; render();
+}
+
+async function incSetStatus(id, status){
+  var inc = incidents.filter(function(i){ return i.id===id; })[0];
+  if(!inc) return;
+  if(status==='closed' && !confirm('Close this incident?\n\nClosing records that the corrective and preventive work is finished. The log stays readable and entries can still be added.')) return;
+  incBusy = true; render();
+  try{
+    var patch = { status: status, updated_at: new Date().toISOString() };
+    if(status==='closed') patch.closed_at = new Date().toISOString(); else patch.closed_at = null;
+    var { error } = await sb.from('incidents').update(patch).eq('id', id);
+    if(error) throw error;
+    await sb.from('incident_entries').insert({ incident_id:id, kind:'decision',
+      author:(user && user.email)||'admin', body:'Status changed to '+status+'.' });
+    await loadAll();
+    toast('Status updated','ok');
+  }catch(e){ toast('Could not update: '+e.message,'err'); }
+  incBusy = false; render();
+}
+
+function incStartNew(){
+  incNew = { title:'', severity:'medium', category:'data_integrity', reported_by:'', summary:'', customer_facing:false };
+  render();
+}
+async function incCreate(){
+  if(!incNew || !(incNew.title||'').trim()) return toast('Give the incident a title','err');
+  incBusy = true; render();
+  try{
+    var year = new Date().getFullYear();
+    var n = incidents.filter(function(i){ return (i.ref||'').indexOf('INC-'+year)===0; }).length + 1;
+    var ref = 'INC-'+year+'-'+String(n).padStart(3,'0');
+    var { data, error } = await sb.from('incidents').insert({
+      ref: ref, title: incNew.title.trim(), severity: incNew.severity, category: incNew.category,
+      reported_by: incNew.reported_by || null, summary: incNew.summary || null,
+      customer_facing: !!incNew.customer_facing, status: 'open',
+      owner: (user && user.email) || null, created_by: (user && user.email) || null
+    }).select('id').single();
+    if(error) throw error;
+    await sb.from('incident_entries').insert({ incident_id:data.id, kind:'note',
+      author:(user && user.email)||'admin', body:'Incident opened.' });
+    incNew = null; await loadAll(); incOpen = data.id;
+    toast('Incident '+ref+' opened','ok');
+  }catch(e){ toast('Could not open the incident: '+e.message,'err'); }
+  incBusy = false; render();
+}
+
+function renderIncidentDetail(inc){
+  var entries = incEntriesFor(inc.id);
+  var h = '<div class="card">';
+  h += '<div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">'
+    + '<button class="btn o sm" onclick="incOpen=null;render()">← All incidents</button>'
+    + '<div style="flex:1;min-width:240px">'
+      + '<div class="mono" style="font-size:.75rem;color:var(--tx2)">'+esc(inc.ref||'')+'</div>'
+      + '<h3 style="margin:2px 0 0">'+esc(inc.title)+'</h3></div>'
+    + '<span class="pill '+(SEV_PILL[inc.severity]||'dim')+'">'+esc(inc.severity)+'</span>'
+    + '<span class="pill '+(STATUS_PILL[inc.status]||'dim')+'">'+esc(inc.status)+'</span>'
+    + (inc.customer_facing?'<span class="pill am">customer-facing</span>':'')
+    + '</div>';
+
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:14px">';
+  [['Opened', fmtWhen(inc.opened_at)],['Reported by', inc.reported_by||'—'],['Owner', inc.owner||'—'],
+   ['Category',(inc.category||'—').replace(/_/g,' ')],
+   ['Reports affected', inc.reports_affected!=null?String(inc.reports_affected):'—'],
+   ['Financial impact', inc.financial_impact!=null?('$'+Number(inc.financial_impact).toLocaleString()):'—']]
+  .forEach(function(kv){
+    h += '<div><div class="f" style="margin:0">'+esc(kv[0])+'</div><div style="font-size:.9rem">'+esc(kv[1])+'</div></div>';
+  });
+  h += '</div>';
+
+  [['What happened', inc.summary],['Root cause', inc.root_cause],['Impact', inc.impact],
+   ['Corrective action — the damage', inc.corrective],['Preventive action — stopping a repeat', inc.preventive]]
+  .forEach(function(sec){
+    if(!sec[1]) return;
+    h += '<div style="margin-top:16px"><div class="f">'+esc(sec[0])+'</div>'
+       + '<div style="font-size:.88rem;line-height:1.6">'+nl2br(sec[1])+'</div></div>';
+  });
+  if(inc.evidence){
+    h += '<div style="margin-top:16px"><div class="f">Working papers</div>'
+       + '<div class="mono" style="font-size:.78rem;color:var(--tx2)">'+esc(inc.evidence)+'</div></div>';
+  }
+
+  h += '<div style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<span class="f" style="margin:0">Status</span>'
+    + INC_STATUS.map(function(st){
+        return '<button class="btn '+(inc.status===st?'':'o')+' sm" onclick="incSetStatus('+inc.id+',\''+st+'\')" '+(incBusy?'disabled':'')+'>'+esc(st)+'</button>';
+      }).join('')
+    + '</div></div>';
+
+  // timeline
+  h += '<div class="card"><h3>'+icon('alert')+' Timeline <span class="muted" style="font-weight:400;font-size:.8rem">'+entries.length+' entr'+(entries.length===1?'y':'ies')+'</span></h3>';
+  if(!entries.length) h += '<div class="empty">No entries yet.</div>';
+  else {
+    h += '<div style="border-left:2px solid var(--bd);margin-left:6px;padding-left:16px">';
+    entries.forEach(function(e){
+      var col = e.kind==='finding' ? 'var(--rd)' : e.kind==='action' ? 'var(--gn)'
+              : e.kind==='decision' ? 'var(--pu)' : e.kind==='communication' ? 'var(--ac)' : 'var(--tx2)';
+      h += '<div style="position:relative;margin-bottom:16px">'
+        + '<div style="position:absolute;left:-23px;top:5px;width:9px;height:9px;border-radius:50%;background:'+col+'"></div>'
+        + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+          + '<strong style="font-size:.76rem;text-transform:uppercase;letter-spacing:.04em;color:'+col+'">'+esc(e.kind)+'</strong>'
+          + '<span class="muted" style="font-size:.75rem">'+esc(fmtWhen(e.entry_at))+(e.author?' · '+esc(e.author):'')+'</span>'
+        + '</div>'
+        + '<div style="font-size:.88rem;line-height:1.6;margin-top:3px">'+nl2br(e.body)+'</div>'
+        + '</div>';
+    });
+    h += '</div>';
+  }
+  // add entry
+  h += '<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:14px">'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
+      + '<span class="f" style="margin:0">Add an entry</span>'
+      + '<select onchange="incDraft.kind=this.value" style="padding:4px 8px;font-size:.8rem">'
+      + INC_KIND.map(function(k){ return '<option value="'+k+'"'+(incDraft.kind===k?' selected':'')+'>'+k+'</option>'; }).join('')
+      + '</select></div>'
+    + '<textarea rows="3" style="width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:.88rem;font-family:inherit;resize:vertical" '
+      + 'placeholder="What happened, what you found, or what you decided…" oninput="incDraft.body=this.value">'+esc(incDraft.body)+'</textarea>'
+    + '<div style="margin-top:8px"><button class="btn sm" onclick="incAddEntry('+inc.id+')" '+(incBusy?'disabled':'')+'>'+icon('save')+' Add entry</button></div>'
+    + '</div></div>';
+  return h;
+}
+
+function renderIncidents(){
+  if(incOpen){
+    var inc = incidents.filter(function(i){ return i.id===incOpen; })[0];
+    if(inc) return renderIncidentDetail(inc);
+    incOpen = null;
+  }
+  var h = '<div class="card"><h3>'+icon('alert')+' Incident Log</h3>'
+    + '<div class="hint">A durable record of anything that went wrong with the service or the data — what happened, why, what was done about the damage, and what stops it happening again. Kept here so the record lives beside the data it describes rather than in somebody\'s inbox.</div>';
+
+  if(incNew){
+    h += '<div class="card" style="background:var(--sf2);margin:12px 0 0"><h3>Open a new incident</h3>'
+      + '<div class="col"><label class="f">Title</label><input type="text" value="'+esc(incNew.title)+'" oninput="incNew.title=this.value" placeholder="Short description of what went wrong"></div>'
+      + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px">'
+        + '<div><label class="f">Severity</label><select onchange="incNew.severity=this.value" style="padding:6px 10px">'+INC_SEV.map(function(x){return '<option'+(incNew.severity===x?' selected':'')+'>'+x+'</option>';}).join('')+'</select></div>'
+        + '<div><label class="f">Category</label><select onchange="incNew.category=this.value" style="padding:6px 10px">'
+          + ['data_integrity','billing','safety','customer','system'].map(function(x){return '<option value="'+x+'"'+(incNew.category===x?' selected':'')+'>'+x.replace(/_/g,' ')+'</option>';}).join('')+'</select></div>'
+        + '<div style="flex:1;min-width:160px"><label class="f">Reported by</label><input type="text" value="'+esc(incNew.reported_by)+'" oninput="incNew.reported_by=this.value" placeholder="Customer, technician, internal…"></div>'
+      + '</div>'
+      + '<div style="margin-top:10px"><label class="f">What happened</label>'
+      + '<textarea rows="3" style="width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:.88rem;font-family:inherit" oninput="incNew.summary=this.value">'+esc(incNew.summary)+'</textarea></div>'
+      + '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.85rem;cursor:pointer"><input type="checkbox" '+(incNew.customer_facing?'checked':'')+' onchange="incNew.customer_facing=this.checked" style="width:auto;accent-color:var(--ac)"> The customer saw this</label>'
+      + '<div style="margin-top:12px;display:flex;gap:8px"><button class="btn gn sm" onclick="incCreate()" '+(incBusy?'disabled':'')+'>Open incident</button>'
+      + '<button class="btn o sm" onclick="incNew=null;render()">Cancel</button></div></div>';
+  } else {
+    h += '<div style="margin-top:10px"><button class="btn sm" onclick="incStartNew()">'+icon('plus')+' Log an incident</button></div>';
+  }
+
+  if(!incidents.length){ h += '<div class="empty" style="margin-top:12px">No incidents logged.</div>'; }
+  else {
+    h += '<div style="overflow-x:auto;margin-top:14px"><table><thead><tr>'
+      + '<th>Ref</th><th>Incident</th><th>Severity</th><th>Status</th><th class="hide">Opened</th><th class="hide">Reported by</th><th>Entries</th><th></th>'
+      + '</tr></thead><tbody>';
+    incidents.forEach(function(i){
+      h += '<tr>'
+        + '<td class="mono" style="font-size:.78rem">'+esc(i.ref||'')+'</td>'
+        + '<td style="max-width:340px">'+esc(i.title)+(i.customer_facing?' <span class="pill am">customer-facing</span>':'')+'</td>'
+        + '<td><span class="pill '+(SEV_PILL[i.severity]||'dim')+'">'+esc(i.severity)+'</span></td>'
+        + '<td><span class="pill '+(STATUS_PILL[i.status]||'dim')+'">'+esc(i.status)+'</span></td>'
+        + '<td class="hide">'+esc(String(i.opened_at||'').slice(0,10))+'</td>'
+        + '<td class="hide">'+esc(i.reported_by||'')+'</td>'
+        + '<td>'+incEntriesFor(i.id).length+'</td>'
+        + '<td><button class="btn o sm" onclick="incOpen='+i.id+';render()">Open</button></td></tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
   return h;
 }
 
