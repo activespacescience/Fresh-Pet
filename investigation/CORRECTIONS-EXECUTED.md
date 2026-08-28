@@ -71,3 +71,26 @@ redeployed as a stub that returns HTTP 410 for every request and performs no act
 Verified by calling it with the original valid audit token, including a file-write
 attempt — both refused with 410. The token is now inert; do not revive this function,
 write a new purpose-scoped one if a future audit needs the capability.
+
+## Paper field forms recovered (2026-08-26)
+
+Five paper *Preventative Maintenance Service Checklist* sheets were supplied by the owner
+and filed. Scans are in [`field-forms/`](field-forms/) and each one is referenced from its
+report card (`form_data.field_form_scan`) with a note. **They must also be uploaded to the
+`fp-photos` bucket** under the same filenames for the app to display them — an automated
+session cannot write to that bucket (uploads require an authenticated session).
+
+They are evidence in the opposite direction from the invoice review: at three of the five
+stores the technician recorded **more units on site than the Freshpet asset list carries**,
+two of them attested by a store employee's signature. Notably this explains report #494
+(Walmart #5632), previously flagged only as "plate reads a serial not on the asset list".
+
+Full cross-batch analysis: [`asset-list-undercount.md`](asset-list-undercount.md) /
+[`.csv`](asset-list-undercount.csv) — 34 locations in three evidence tiers (5 paper forms,
+20 plate mismatches at single-unit stores, 9 at multi-unit stores).
+
+⚠ Two cautions carried into the report and onto the cards: the Walmart #2001 sheet is a
+**field note, not a service record** (no date, no checklist marks, no signatures — no PM is
+billed from it), and the second serial on the Walmart #1972 form (read as **10213740**,
+absent from the system entirely) is a handwriting reading that needs confirming against the
+physical plate.
