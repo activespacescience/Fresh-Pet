@@ -1,0 +1,8 @@
+begin;
+update completed_pms set pdf_path = 'Walmart_US__1983_9681570_20260724_1784853957162_CORRECTED_20260828.pdf' where id = 540 and (form_data->>'corrected_pdf_path') = 'Walmart_US__1983_9681570_20260724_1784853957162_CORRECTED_20260828.pdf';
+update completed_pms set pdf_path = 'Foods_Co__784_11162238_20260723_1784772866482_CORRECTED_20260828.pdf' where id = 514 and (form_data->>'corrected_pdf_path') = 'Foods_Co__784_11162238_20260723_1784772866482_CORRECTED_20260828.pdf';
+update completed_pms set pdf_path = 'Incredible_Pets__24012404_6674060_20260715_1784146476646_CORRECTED_20260828.pdf' where id = 417 and (form_data->>'corrected_pdf_path') = 'Incredible_Pets__24012404_6674060_20260715_1784146476646_CORRECTED_20260828.pdf';
+update completed_pms set pdf_path = 'Comptons_Market__14696_411412301019_20260715_1784147246600_CORRECTED_20260828.pdf' where id = 418 and (form_data->>'corrected_pdf_path') = 'Comptons_Market__14696_411412301019_20260715_1784147246600_CORRECTED_20260828.pdf';
+update completed_pms set pdf_path = 'Murphys_Paw__1910_7567529_20260730_1785450740410_CORRECTED_20260828.pdf' where id = 596 and (form_data->>'corrected_pdf_path') = 'Murphys_Paw__1910_7567529_20260730_1785450740410_CORRECTED_20260828.pdf';
+update completed_pms set pdf_path = 'Walmart_US__3046_11200211_20260730_1785371096947_CORRECTED_20260828.pdf' where id = 579 and (form_data->>'corrected_pdf_path') = 'Walmart_US__3046_11200211_20260730_1785371096947_CORRECTED_20260828.pdf';
+commit;
