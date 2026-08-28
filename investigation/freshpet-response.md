@@ -143,15 +143,61 @@ report you want to examine.
 
 ## What we would like to ask of you
 
-**Asset list reconciliation.** During the audit we found the opposite problem in several
-places: locations where our technician documented **more units on site than the asset list
-carries**. At three stores this is recorded on a paper checklist signed by store staff —
-Walmart #5632 and Walmart #1972 both carry a store employee's signature attesting that two
-assets are present where the list shows one. In a further 20 cases, a plate photograph at a
-store your list shows as single-unit reads a serial that is not on the list.
+**Asset list reconciliation.** The audit turned up the opposite problem from the one you
+raised: coolers on site that are **not on the asset list**. We are not billing for any of
+these and we are not asking you to take our word for the count. We are giving you the
+evidence we hold for each one, separated by how strong it is.
 
-We are not billing for these and we are not asking you to accept our count. We would like
-to reconcile the list with you, because it affects both of us: if a second unit exists and
-is not on the list, it is not being maintained.
+### Confirmed — 5 units
 
-We have prepared this as a separate schedule and can send it whenever you would like it.
+For each of these we hold **two independent pieces of evidence**: a photograph of the
+cooler's serial plate taken at that store, and the technician's written note recorded in
+the app at the time of the visit. Three also carry a paper checklist signed by a store
+employee. None of these five serial numbers appears anywhere on the asset list, and none
+has ever been reported at any store.
+
+| Store | Serial on the plate | Units on your list | Technician's note, written at the time | Also signed by store staff |
+|---|---|---|---|---|
+| Walmart US #1624 | 11351592 | 1 | "1 of 2 at this location. Shown on list as 1 asset ..needs to be 2 assets AlERT!!!!" | — |
+| Walmart US #1972 | 10213740 | 1 | "New asset found at this location. 2 assets total !!!!" | Yes — Andrea Lopez |
+| Walmart US #2001 | 10629523 | 1 | "This location has 2 units. SHOWING 1 ON PROGRAM!!!" | Yes |
+| Walmart US #2985 | 10571808 | 1 | "This location has 2 units not 1 / ALERT EXTRA UNIT HERE !!!!!" | — |
+| Walmart US #5632 | 11200214 | 1 | "This location has 2 assets. Says 1 ON PROGRAM ALERT !!!!!" | Yes — manager signature line |
+
+Two further locations were already resolved: **Walmart US #3046** (S/N 11200211), which the
+technician added in the field and which carries a serial-plate photograph and two unit
+photographs, and **PetSmart US #1975**, where the list now carries three units.
+
+### Unidentified — 12 coolers
+
+At these stores a serial plate was photographed that matches no unit on the list. Each is a
+distinct photograph of a distinct serial; none is a reused image and none is a near-match of
+another. But unlike the five above there is no technician's note, so **we cannot tell you
+what these are** — and we would rather say that than overstate it.
+
+| Store | Serial read from the plate | Store | Serial read from the plate |
+|---|---|---|---|
+| Cost Less Foods #13952 | 10878244 | Petco #271 | 244374 |
+| Food Maxx #499 | 10546327 | Petco #1311 | 219069 |
+| Lunardis #9 | 8220161006162 | Petco #1327 | 313314 |
+| Pet Club #M70 | 7329088 | Safeway Northern California #1211 | 276973 |
+| PetSmart US #59 | 283403 | Walmart US #3138 | 10540885 |
+| Walmart US #5192 | 10162233 | Walmart US #5435 | 10555907 |
+
+Any one of these could be an unlisted Freshpet cooler, a Freshpet cooler assigned to another
+service provider's route, a second plate on a cooler already on the list, or equipment that
+is not Freshpet's at all. **The fastest way to settle it is on your side:** if you run these
+twelve serials against your master asset list, the ones that come back as yours are the real
+finding and the rest we drop.
+
+We would also note what we excluded, so you can judge the quality of the list above. Forty
+plate serials were photographed that do not appear on the asset list. We discarded
+twenty-three of them: sixteen were misreads of the unit's own serial, seven were a second
+plate carrying a different number format on a cooler already on the list, and one was the
+unit's own serial with extra characters. Only the seventeen above survived.
+
+### Why we are raising it
+
+A cooler that is not on the list is not on anyone's PM schedule. That is a maintenance
+exposure for you, not a billing opportunity for us — we have not invoiced for a single one
+of these and will not until the list is agreed.
