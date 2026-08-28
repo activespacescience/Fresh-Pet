@@ -23,7 +23,7 @@
   --bg:#FFF8F0; --sf:#FFFFFF; --sf2:#F6EEE3; --bd:#EEE0CF; --bd2:#DCC8AC;
   --line:rgba(42,37,33,.07);
   --tx:#2A2521; --tx2:#786B5E; --dim:#8A7A66;
-  --ac:#E56A15; --ac2:#C85A0E; --gn:#2FA24C; --am:#CF8A17; --rd:#DB4A44;
+  --ac:#E56A15; --ac2:#C85A0E; --gn:#2FA24C; --am:#CF8A17; --rd:#DB4A44; --pu:#7C3ABE; --pu2:#66309E;
   --shadow:0 1px 2px rgba(42,37,33,.04),0 4px 16px rgba(191,120,58,.08);
   --font:'Helvetica Neue',Helvetica,Arial,'Segoe UI',Roboto,system-ui,sans-serif;
   --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
@@ -56,6 +56,8 @@ input,select{font-family:inherit;color:inherit}
 .btn.o:hover{border-color:var(--bd2);background:var(--sf2)}
 .btn.sm{padding:6px 11px;font-size:.78rem;border-radius:8px}
 .btn.gn{background:var(--gn)}.btn.rd{background:var(--rd)}
+.btn.pu{background:var(--pu)}.btn.pu:hover{background:var(--pu2)}
+.pill.pu{color:var(--pu);border-color:var(--pu);background:rgba(124,58,190,.12)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 /* Tabs — clean underline nav (shared look with the portal) */
 .tabs{display:flex;gap:2px;margin:18px 0 22px;flex-wrap:wrap;border-bottom:1px solid var(--bd)}
@@ -187,6 +189,7 @@ var aaPayResult = null;       // vendor payout bill result
 var ISSUE_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-issue-report';
 var riSel = {};              // { pm id: true } selected for the report
 var riFilter = 'issues';     // issues | added | review | all
+var rvBusy = false;          // re-visit request in flight
 var riSearch = '';
 var riNote = '';             // free-text note included at the top of the email
 var riPicked = { 'roparaku@Freshpet.com': true };  // quick-pick recipients (Freshpet contact pre-checked)
@@ -297,7 +300,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,comments:form_data->>comments').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,comments:form_data->>comments').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store')
   ]);
@@ -1199,6 +1202,128 @@ function renderAddedAssets(){
   return h;
 }
 
+// ═══ RE-VISIT — disconnect untrustworthy documentation and redo the stop ═══
+// A re-visit says: whatever photographs are on this report cannot be relied on to
+// document this unit. The images are NEVER deleted — they are moved aside into
+// form_data.revisit_cleared_photos so the original submission stays intact — but they
+// stop being presented as evidence, and the stop goes back on the route to be redone.
+var REVISIT_REASONS = {
+  no_plate_photo:  'No serial-plate photograph on file',
+  wrong_unit_photo:'Photograph(s) showed another unit',
+  unverifiable:    'Documentation cannot be verified',
+  customer_dispute:'Disputed by the customer'
+};
+
+async function requestRevisit(id, reason){
+  var p = completedPMs.filter(function(x){ return x.id === id; })[0];
+  if(!p) return;
+  var nPh = Array.isArray(p.photo_paths) ? p.photo_paths.length : 0;
+  var msg = 'Order a RE-VISIT for this stop?\n\n'
+    + (p.store||'') + '  ·  S/N ' + (p.serial||'') + '  ·  ' + (p.pm_date||'') + '\n'
+    + 'Reason: ' + (REVISIT_REASONS[reason] || reason) + '\n\n'
+    + 'This will:\n'
+    + '  • disconnect ' + (nPh ? nPh + ' photograph' + (nPh===1?'':'s') : 'the photo evidence') + ' from this report\n'
+    + '  • flag the stop to be serviced and documented again\n'
+    + '  • keep the original submission on file (nothing is deleted)\n\n'
+    + (p.billed ? 'NOTE: this PM has already been invoiced (' + (p.invoice_doc_number||'') + ').\nThe re-visit does not credit the invoice — handle that separately.\n\n' : '')
+    + 'Continue?';
+  if(!confirm(msg)) return;
+  rvBusy = true; render();
+  try{
+    var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
+    var note = 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': '
+      + (REVISIT_REASONS[reason] || reason)
+      + '. The photograph(s) previously filed on this report have been disconnected and are no longer '
+      + 'presented as documentation of this unit; they remain on file (revisit_cleared_photos). '
+      + 'This stop is scheduled to be serviced and photographed again.';
+    var { data: cur, error: readErr } = await sb.from('completed_pms')
+      .select('form_data').eq('id', id).single();
+    if(readErr) throw readErr;
+    var fd = cur && cur.form_data ? cur.form_data : {};
+    if(cleared.length) fd.revisit_cleared_photos = cleared;
+    fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '') + note);
+    var { error } = await sb.from('completed_pms').update({
+      photo_paths: [], photo_hashes: [],
+      revisit_requested_at: new Date().toISOString(),
+      revisit_requested_by: (user && user.email) || 'admin',
+      revisit_reason: reason,
+      needs_review: true,
+      form_data: fd,
+      modified_at: new Date().toISOString(),
+      modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
+    }).eq('id', id);
+    if(error) throw error;
+    await loadAll();
+    toast('Re-visit ordered — evidence disconnected, stop queued for redo','ok');
+  }catch(e){ toast('Could not order the re-visit: ' + e.message, 'err'); }
+  rvBusy = false; render();
+}
+
+async function cancelRevisit(id){
+  if(!confirm('Cancel this re-visit?\n\nThe stop goes back to normal. Photographs that were disconnected are NOT automatically re-attached — they stay on file under revisit_cleared_photos.')) return;
+  rvBusy = true; render();
+  try{
+    var { error } = await sb.from('completed_pms').update({
+      revisit_requested_at: null, revisit_requested_by: null, revisit_reason: null
+    }).eq('id', id);
+    if(error) throw error;
+    await loadAll();
+    toast('Re-visit cancelled','ok');
+  }catch(e){ toast('Could not cancel: ' + e.message, 'err'); }
+  rvBusy = false; render();
+}
+
+function revisitPicker(p){
+  if(p.revisit_requested_at && !p.revisit_done_at){
+    return '<span class="pill pu" title="Ordered by ' + esc(p.revisit_requested_by||'') + '">RE-VISIT</span> '
+      + '<button class="btn o sm" onclick="cancelRevisit(' + p.id + ')" ' + (rvBusy?'disabled':'') + '>Cancel</button>';
+  }
+  var opts = Object.keys(REVISIT_REASONS).map(function(k){
+    return '<option value="' + k + '">' + esc(REVISIT_REASONS[k]) + '</option>'; }).join('');
+  return '<button class="btn pu sm" onclick="var r=document.getElementById(\'rvr_' + p.id + '\').value; requestRevisit(' + p.id + ', r)" '
+    + (rvBusy?'disabled':'') + ' title="Disconnect this report\'s photo evidence and redo the stop">' + icon('refresh') + ' RE-VISIT</button>'
+    + '<select id="rvr_' + p.id + '" style="margin-left:6px;padding:3px 6px;font-size:.72rem;max-width:150px">' + opts + '</select>';
+}
+
+function bulkRevisit(){
+  var ids = riSelectedIds();
+  if(!ids.length) return toast('Select the stops to re-visit','err');
+  var reason = document.getElementById('rvBulkReason').value;
+  if(!confirm('Order a RE-VISIT for ' + ids.length + ' stop' + (ids.length===1?'':'s') + '?\n\n'
+    + 'Reason: ' + (REVISIT_REASONS[reason]||reason) + '\n\n'
+    + 'Each one has its photo evidence disconnected (kept on file) and goes back on the route to be redone.')) return;
+  (async function(){
+    rvBusy = true; render();
+    var ok = 0, fail = 0;
+    for(var i=0;i<ids.length;i++){
+      var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
+      if(!p || (p.revisit_requested_at && !p.revisit_done_at)) continue;
+      try{
+        var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
+        var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
+        var fd = cur && cur.form_data ? cur.form_data : {};
+        if(cleared.length) fd.revisit_cleared_photos = cleared;
+        fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
+          + 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': ' + (REVISIT_REASONS[reason]||reason)
+          + '. Photograph(s) disconnected and kept on file; the stop is scheduled to be serviced and photographed again.');
+        var { error } = await sb.from('completed_pms').update({
+          photo_paths: [], photo_hashes: [],
+          revisit_requested_at: new Date().toISOString(),
+          revisit_requested_by: (user && user.email) || 'admin',
+          revisit_reason: reason, needs_review: true, form_data: fd,
+          modified_at: new Date().toISOString(),
+          modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
+        }).eq('id', p.id);
+        if(error) throw error; ok++;
+      }catch(e){ fail++; }
+    }
+    riSel = {};
+    await loadAll();
+    toast(ok + ' stop' + (ok===1?'':'s') + ' queued for re-visit' + (fail ? ' · ' + fail + ' failed' : ''), fail ? 'err' : 'ok');
+    rvBusy = false; render();
+  })();
+}
+
 // ═══ Report Issues to Freshpet ═══
 function riList(){
   var q=(riSearch||'').trim().toLowerCase();
@@ -1207,6 +1332,7 @@ function riList(){
     if(riFilter==='issues' && !(p.added_asset || p.needs_review)) return false;
     if(riFilter==='added' && !p.added_asset) return false;
     if(riFilter==='review' && !p.needs_review) return false;
+    if(riFilter==='revisit' && !(p.revisit_requested_at && !p.revisit_done_at)) return false;
     if(q && ((p.store||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)<0) return false;
     return true;
   });
@@ -1255,6 +1381,7 @@ function renderReportIssues(){
   var allIssues=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset||p.needs_review); });
   var addedN=completedPMs.filter(function(p){ return !p.prev_comp && p.added_asset; }).length;
   var reviewN=completedPMs.filter(function(p){ return !p.prev_comp && p.needs_review; }).length;
+  var revisitN=completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; }).length;
 
   var h='<div class="card"><h3>'+icon('alert')+' Report issues to Freshpet</h3>'
     +'<div class="hint">Email Freshpet a list of extra coolers found in the field and coolers with service issues so they can record them. Each selected unit\'s <strong>photos</strong> and <strong>signed PM report PDF</strong> are attached to the email (very large batches auto-trim to stay under email size limits — send in smaller batches if files get skipped). Sent units are stamped so you can see what Freshpet already has.</div>';
@@ -1265,6 +1392,7 @@ function renderReportIssues(){
       +'<button class="'+(riFilter==='issues'?'on':'')+'" onclick="riFilter=\'issues\';render()">Issues ('+allIssues.length+')</button>'
       +'<button class="'+(riFilter==='added'?'on':'')+'" onclick="riFilter=\'added\';render()">Added assets ('+addedN+')</button>'
       +'<button class="'+(riFilter==='review'?'on':'')+'" onclick="riFilter=\'review\';render()">Needs review ('+reviewN+')</button>'
+      +'<button class="'+(riFilter==='revisit'?'on':'')+'" onclick="riFilter=\'revisit\';render()">Re-visits ('+revisitN+')</button>'
       +'<button class="'+(riFilter==='all'?'on':'')+'" onclick="riFilter=\'all\';render()">All PMs</button>'
     +'</div>'
     +'<input type="search" placeholder="Search store, serial, tech…" value="'+esc(riSearch)+'" oninput="riSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
@@ -1272,13 +1400,25 @@ function renderReportIssues(){
     +'<span class="muted" style="font-size:.8rem">'+sel.length+' selected</span>'
     +'</div>';
 
+  if(sel.length){
+    h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 12px;padding:10px 12px;border:1px solid var(--pu);border-radius:10px;background:rgba(124,58,190,.06)">'
+      +'<strong style="font-size:.82rem;color:var(--pu)">Re-visit '+sel.length+' selected stop'+(sel.length===1?'':'s')+'</strong>'
+      +'<select id="rvBulkReason" style="padding:5px 8px;font-size:.8rem;max-width:230px">'
+      +Object.keys(REVISIT_REASONS).map(function(k){ return '<option value="'+k+'">'+esc(REVISIT_REASONS[k])+'</option>'; }).join('')
+      +'</select>'
+      +'<button class="btn pu sm" onclick="bulkRevisit()" '+(rvBusy?'disabled':'')+'>'+icon('refresh')+' Order re-visits</button>'
+      +'<span class="muted" style="font-size:.76rem">Disconnects each report\'s photo evidence (kept on file) and puts the stop back on the route.</span>'
+    +'</div>';
+  }
+
   // list
   if(!list.length){ h+='<div class="empty">No '+(riFilter==='all'?'completed PMs':'matching issues')+'.</div>'; }
   else {
-    h+='<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Type</th><th class="hide">Files</th><th>Sent</th></tr></thead><tbody>';
+    h+='<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Type</th><th class="hide">Files</th><th>Sent</th><th>Re-visit</th></tr></thead><tbody>';
     list.forEach(function(p){
       var nPh=Array.isArray(p.photo_paths)?p.photo_paths.length:0;
       var type=(p.added_asset?'<span class="pill ac">Added asset</span> ':'')+(p.needs_review?'<span class="pill rd">Needs review</span>':'')||'<span class="pill dim">PM</span>';
+      if(p.revisit_requested_at && !p.revisit_done_at) type='<span class="pill pu">Re-visit ordered</span>';
       h+='<tr>'
         +'<td><input type="checkbox" '+(riSel[p.id]?'checked':'')+' onclick="riToggle('+p.id+')"></td>'
         +'<td>'+esc(p.store||'')+(p.comments?'<div class="muted" style="font-size:.72rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(p.comments)+'">'+esc(p.comments)+'</div>':'')+'</td>'
@@ -1287,7 +1427,8 @@ function renderReportIssues(){
         +'<td class="hide">'+esc(p.tech_name||'')+'</td>'
         +'<td>'+type+'</td>'
         +'<td class="hide">'+(nPh?nPh+' photo'+(nPh===1?'':'s'):'')+(p.pdf_path?(nPh?' + ':'')+'PDF':'')+'</td>'
-        +'<td>'+(p.issue_emailed_at?'<span class="pill gn" title="'+esc(p.issue_emailed_to||'')+'">✓ '+esc(String(p.issue_emailed_at).slice(0,10))+'</span>':'<span class="pill dim">—</span>')+'</td></tr>';
+        +'<td>'+(p.issue_emailed_at?'<span class="pill gn" title="'+esc(p.issue_emailed_to||'')+'">✓ '+esc(String(p.issue_emailed_at).slice(0,10))+'</span>':'<span class="pill dim">—</span>')+'</td>'
+        +'<td style="white-space:nowrap">'+revisitPicker(p)+'</td></tr>';
     });
     h+='</tbody></table></div>';
   }
