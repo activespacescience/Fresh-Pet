@@ -94,3 +94,44 @@ Full cross-batch analysis: [`asset-list-undercount.md`](asset-list-undercount.md
 billed from it), and the second serial on the Walmart #1972 form (read as **10213740**,
 absent from the system entirely) is a handwriting reading that needs confirming against the
 physical plate.
+
+
+## Round 2 — foreign plate photos removed, exception and new-asset reports restamped (2026-08-28)
+
+The first correction pass attached each unit's correct plate photograph but did not
+**detach** the foreign one, so a report could still display another store's equipment.
+That is closed:
+
+| Change | Count |
+|---|---|
+| Reports from which a photograph of another unit was removed | 73 (32 June, 27 July, 14 August) |
+| Photographs detached (kept on file, nothing deleted from storage) | 76 |
+| Reports left with no photograph, which now say so explicitly | 6 |
+| Closed-store / unit-not-found reports rebuilt as a single stamped page | 5 |
+| Field-added asset reissued with a green NEW ASSET cover | 1 |
+| Corrected PDFs published and `pdf_path` flipped | 79 |
+
+Verified after the flip: `unflipped = 0`, `dangling = 0` — every row carrying a
+`corrected_pdf_path` points at it, and every path resolves to a real object.
+
+**Note on the corrected-PDF count.** The bucket now holds three generations
+(53 × `_20260825`, 72 × `_20260826`, 79 × `_20260828`) totalling **204** current corrected
+reports, not 223. Nineteen reports were corrected twice — once for the plate reassignment
+and again for the foreign-photo removal — and correctly hold only their latest PDF.
+
+**Result on the customer's central complaint:** eight of the nine serials Freshpet listed
+now appear on exactly one report. The ninth (10961123) is their own Kelley's Pets duplicate
+submission — the same unit with two reports, so the plate photograph is correct on both.
+Corpus-wide only three serials appear on more than one report and every one is the same
+physical unit with duplicate reports, not a misfiled photograph.
+
+## Temporary infrastructure — BOTH RETIRED
+
+`audit-storage-helper` (retired 2026-08-26) and `audit-pdf-publish` (retired 2026-08-28)
+are both redeployed as stubs returning HTTP 410. Verified by calling each with its own
+valid token, including a write attempt — both refused. Both tokens are inert.
+
+`audit-pdf-publish` assembled PDFs inside the project from objects already in the buckets,
+so no document bytes were transferred from the audit session. It could only create names
+matching `*_CORRECTED_<yyyymmdd>.pdf` with `upsert:false`, so it could never overwrite an
+original report.
