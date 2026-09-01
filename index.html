@@ -644,7 +644,7 @@ function compressImg(file, cb) {
 // controls exist because invoice #172825 shipped 43 reports carrying 17
 // gallery images reused across stores; a plate photo must be an image of THIS
 // unit's plate, taken here, now.
-var PHOTO_KINDS = { unit: 'Full pic of unit', plate: 'Serial plate', bottom: 'Bottom of unit', site: 'Storefront / site', other: 'Other' };
+var PHOTO_KINDS = { unit: 'Full pic of unit', plate: 'Serial plate', bottom: 'Bottom of unit', interior: 'Inside of cooler (no serial plate)', site: 'Storefront / site', other: 'Other' };
 // The three shots every PM must carry, in the order they are asked for. 'site'
 // belongs to exception reports and 'other' is supplemental — neither is part of
 // the required set. Older reports carry 'other' photos from before the tags
@@ -654,6 +654,14 @@ var REQUIRED_PHOTOS = [
   { kind: 'plate',  label: 'Serial plate',     hint: 'close enough to read the serial' },
   { kind: 'bottom', label: 'Bottom of unit',   hint: 'underneath — condenser and floor' }
 ];
+// When there is no plate to photograph, the shot that replaces it is the inside
+// of the cooler. The count stays at three: a unit we cannot identify needs MORE
+// evidence of what was actually serviced, not less.
+var NO_PLATE_SHOT = { kind: 'interior', label: 'Inside of cooler', hint: 'shelves and interior — this stands in for the plate' };
+function requiredPhotos() {
+  if (!form || !form.noSerialPlate) return REQUIRED_PHOTOS;
+  return REQUIRED_PHOTOS.map(function(r) { return r.kind === 'plate' ? NO_PLATE_SHOT : r; });
+}
 
 function normPhoto(p) { // back-compat: old drafts stored bare dataURL strings
   return (typeof p === 'string') ? { d: p, kind: 'other', hash: null } : p;
@@ -664,7 +672,7 @@ function photoCount(kind) {
 function platePhotoCount() { return photoCount('plate'); }
 // Which of the three required shots are still missing, in ask order.
 function missingPhotos() {
-  return REQUIRED_PHOTOS.filter(function(r) { return !photoCount(r.kind); });
+  return requiredPhotos().filter(function(r) { return !photoCount(r.kind); });
 }
 
 // hash -> earliest {store, pm_date} that already uses that exact image
@@ -1065,8 +1073,18 @@ function renderChecklist() {
     + '<strong>All three are required</strong> on every unit, taken here with the camera. Reused images are refused automatically.</div>';
   // One button per required shot, each showing whether it is done — a tech can
   // see what is left without counting thumbnails.
+  // The mark sits directly above the plate button, where a tech looks when the
+  // plate is not there — and checking it swaps that slot for the interior shot.
+  h += '<div class="card" style="padding:10px 12px;margin-bottom:8px' + (form.noSerialPlate ? ';border-left:4px solid var(--rd)' : '') + '">';
+  h += chk('noSerialPlate', 'NO SERIAL NUMBER — plate missing or unreadable');
+  if (form.noSerialPlate) {
+    h += '<div style="font-size:13px;color:var(--rd);margin-top:6px">'
+      + 'The report will say <strong>NO SERIAL NUMBER FOUND</strong> and is filed as a <strong>REPORT ISSUE</strong> automatically. '
+      + 'Photograph the inside of the cooler instead of the plate.</div>';
+  }
+  h += '</div>';
   h += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">';
-  REQUIRED_PHOTOS.forEach(function(r) {
+  requiredPhotos().forEach(function(r) {
     var got = photoCount(r.kind);
     h += '<button class="btn btn-o" style="padding:12px;text-align:left;display:flex;align-items:center;gap:10px'
       + (got ? ';border-color:var(--gn);color:var(--gn)' : '') + '" onclick="takePhoto(\'' + r.kind + '\')">'
@@ -2184,7 +2202,9 @@ function unitCard(a, stopIdx) {
   var h = '<div class="' + cls + '" onclick="' + act + '">';
   h += '<div style="flex:1;min-width:0">';
   h += '<div class="mdl">' + esc([a.manufacturer, a.model].filter(Boolean).join(' ') || 'Unit') + '</div>';
-  h += '<div class="sn">S/N ' + esc(a.serial || '\u2014') + '</div>';
+  h += a.no_serial
+    ? '<div class="sn" style="color:var(--rd)">NO SERIAL NUMBER</div>'
+    : '<div class="sn">S/N ' + esc(a.serial || '\u2014') + '</div>';
   if (rv) {
     h += '<div class="tag" style="color:#155E9B">SECONDARY VISIT AUDIT \u2014 ' + esc(revisitReason(a.serial)) + '</div>';
   } else if (done) {
@@ -2334,6 +2354,7 @@ function goAddAssetForStop(i) {
   var stops = getRouteStops();
   var stop = stops[i];
   if (!stop) return;
+  addAssetNoSerial = false;
   currentStopIdx = i;
   addAssetStop = stop;
   screen = 'addAsset';
@@ -2357,7 +2378,16 @@ function renderAddAsset() {
   h += '<div class="card">';
   h += lbl('Manufacturer') + '<input type="text" id="naMan" placeholder="e.g. AHT, MTL, TRUE">';
   h += lbl('Model') + '<input type="text" id="naModel" placeholder="Model">';
-  h += lbl('Serial Number (required)') + '<input type="text" id="naSerial" placeholder="S/N on the unit">';
+  h += lbl('Serial Number') + '<input type="text" id="naSerial" placeholder="S/N on the unit"' + (addAssetNoSerial ? ' disabled' : '') + '>';
+  // A unit with no readable plate still has to be reportable, otherwise the
+  // honest answer ("there is a third cooler here and I cannot identify it") has
+  // nowhere to go and the unit simply goes unrecorded.
+  h += '<label style="display:flex;align-items:center;gap:8px;margin:-4px 0 10px;cursor:pointer">'
+    + '<input type="checkbox" id="naNoSerial"' + (addAssetNoSerial ? ' checked' : '') + ' onchange="addAssetNoSerial=this.checked;render()">'
+    + ' <span>NO SERIAL NUMBER — plate missing or unreadable</span></label>';
+  if (addAssetNoSerial) {
+    h += '<div style="font-size:13px;color:var(--rd);margin:-4px 0 10px">The unit is filed under a placeholder that reads NO-SERIAL-… so nobody mistakes it for a real serial. Its PM will be flagged for the office automatically.</div>';
+  }
   h += lbl('Warranty');
   h += '<select id="naWarranty"><option value="OUT" selected>OUT (not in Freshpet records)</option><option value="UNDER">UNDER warranty</option></select>';
   h += '</div>';
@@ -2377,7 +2407,16 @@ async function saveNewAsset() {
   var model = ((document.getElementById('naModel') || {}).value || '').trim();
   var serial = ((document.getElementById('naSerial') || {}).value || '').trim();
   var warranty = ((document.getElementById('naWarranty') || {}).value || 'OUT');
-  if (!serial) { showStatus('Enter the serial number', 'err'); return; }
+  var noSerial = !!addAssetNoSerial;
+  if (noSerial) {
+    // Visibly not a manufacturer serial. assets.serial is NOT NULL and every
+    // lookup joins on it, so the row needs a value — but the value must never
+    // be mistakable for the real thing, and no_serial is what code reads.
+    serial = 'NO-SERIAL-' + new Date().toISOString().split('T')[0].replace(/-/g,'') + '-' +
+             Math.random().toString(36).slice(2,6).toUpperCase();
+  } else if (!serial) {
+    showStatus('Enter the serial number, or tick NO SERIAL NUMBER', 'err'); return;
+  }
   var dup = ASSETS.find(function(a) { return (a.serial || '').toUpperCase() === serial.toUpperCase(); });
   if (dup) { showStatus('S/N ' + serial + ' already exists (' + dup.store + ')', 'err'); return; }
 
@@ -2388,6 +2427,7 @@ async function saveNewAsset() {
     var { data: newAsset, error } = await sb.from('assets').insert({
       store: ref.store, address: ref.address, city: ref.city, state: ref.state, zip: ref.zip,
       phone: ref.phone || '', manufacturer: man, model: model, serial: serial, warranty: warranty,
+      no_serial: noSerial,
       pm_fee: ref.pm_fee || 0, lat: ref.lat, lng: ref.lng,
       active: true, source: 'field', reported: false,
       added_by: currentUser.email, added_at: new Date().toISOString()
@@ -2661,6 +2701,9 @@ function startChecklist(idx) {
   addedAssetFlag = false;
   var rs = openRevisitPm(ASSETS[idx].serial);
   form = rs ? reshootFormFrom(rs) : defaultForm();
+  // A unit recorded as having no plate starts already marked. Asking the tech
+  // to tick it every visit is asking them to re-discover the same fact.
+  if (ASSETS[idx].no_serial) form.noSerialPlate = true;
   photos = [];
   sigs = { store: null, tech: mySig || null };
   screen = 'checklist';
@@ -2812,6 +2855,10 @@ async function submitForm() {
   // Hard gates added after the invoice #172825 review (2026-08): a PM without
   // a fresh serial-plate photo, a real temperature reading, or an honest
   // answer on the store signature is exactly what produced that dispute.
+  // No serial means nobody can prove which machine this report is about, which
+  // is precisely the thing the office has to chase. Flag it here rather than
+  // trusting the tech to also remember to press REPORT ISSUE.
+  if (form.noSerialPlate) { ticketFlag = true; }
   var missing = missingPhotos();
   if (missing.length) {
     showStatus('Still needed: ' + missing.map(function(r){ return r.label; }).join(', ')
@@ -2930,6 +2977,7 @@ async function submitForm() {
       photo_hashes: photoHashes,
       visit_type: openRevisit ? 'reshoot' : 'pm',
       revisit_of: openRevisit ? openRevisit.id : null,
+      no_serial_plate: !!form.noSerialPlate,
       store: a.store,
       serial: a.serial,
       signed_at: signedAt,
@@ -3064,6 +3112,7 @@ async function markPrevComp() {
 // five closed or unit-less sites. An exception visit is its own record type:
 // reason + storefront photo, no readings, no signatures, never billable as a
 // PM, always flagged for review.
+var addAssetNoSerial = false;   // ticked on the Add Asset form when the unit has no readable plate
 var exceptionForm = { reason: '', note: '' };
 // Which kind of exception is being filed, and — for a store-level one — which
 // stop it covers. A closed store is not a fact about one cooler, so it is filed
@@ -3443,6 +3492,18 @@ function generatePDF(a, f, ph, sg, meta, cb) {
     doc.setTextColor(0, 0, 0); y += 14;
   }
 
+  // A report nobody can tie to a specific machine has to say so on its face.
+  if (f.noSerialPlate) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(179, 38, 30);
+    doc.text('NO SERIAL NUMBER FOUND \u2014 serial plate missing or unreadable', W/2, y, { align: 'center' });
+    y += 11;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    var nsw = doc.splitTextToSize('The serial below is the one on the Freshpet asset list; it could NOT be confirmed against the plate on this machine. An interior photograph is included in place of the plate photograph. Filed as a reported issue.', RM - LM - 40);
+    doc.text(nsw, W/2, y, { align: 'center' });
+    y += nsw.length * 9 + 4;
+    doc.setTextColor(0, 0, 0); doc.setFontSize(9);
+  }
+
   // Say what this document is before anyone reads a number off it.
   if (isReshootDoc) {
     doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(21, 94, 155);
@@ -3478,7 +3539,16 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   doc.setFont('helvetica','bold');doc.text('City:',LM,y);doc.setFont('helvetica','normal');doc.text(a.city,LM+28,y);
   doc.setFont('helvetica','bold');doc.text('State:',240,y);doc.setFont('helvetica','normal');doc.text(a.state,276,y);
   doc.setFont('helvetica','bold');doc.text('Zip:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.zip,COL2+24,y);y+=17;
-  doc.setFont('helvetica','bold');doc.text('Serial:',LM,y);doc.setFont('helvetica','normal');doc.text(a.serial,LM+42,y);
+  doc.setFont('helvetica','bold');doc.text('Serial:',LM,y);
+  if (f.noSerialPlate) {
+    doc.setTextColor(179,38,30);
+    doc.setFont('helvetica','bold');doc.text('NO SERIAL NUMBER FOUND',LM+42,y);
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);
+    doc.text('(listed as ' + (a.serial || '\u2014') + ')', LM+42, y+9);
+    doc.setFontSize(9);doc.setTextColor(0,0,0);
+  } else {
+    doc.setFont('helvetica','normal');doc.text(a.serial,LM+42,y);
+  }
   doc.setFont('helvetica','bold');doc.text('Model:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.model,COL2+42,y);y+=17;
   doc.setFont('helvetica','bold');doc.text('Manufacturer:',LM,y);doc.setFont('helvetica','normal');doc.text(a.manufacturer,LM+78,y);
   doc.setFont('helvetica','bold');doc.text('Warranty:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.warranty,COL2+56,y);y+=10;
@@ -3581,7 +3651,9 @@ function generatePDF(a, f, ph, sg, meta, cb) {
       var pp = normPhoto(ph[i]);
       var kindLabel = PHOTO_KINDS[pp.kind] || 'Photo';
       doc.addPage();doc.setFont('helvetica','bold');doc.setFontSize(11);
-      doc.text(kindLabel+' — photo '+(i+1)+' of '+ph.length+' — '+a.store+' (S/N: '+a.serial+')',W/2,30,{align:'center'});
+      // Never caption a photo with a placeholder as if it were a serial.
+      var snLabel = f.noSerialPlate ? '(NO SERIAL NUMBER)' : '(S/N: '+a.serial+')';
+      doc.text(kindLabel+' — photo '+(i+1)+' of '+ph.length+' — '+a.store+' '+snLabel,W/2,30,{align:'center'});
       try{var ip=doc.getImageProperties(pp.d);var iw=ip.width,ih=ip.height;var sc=Math.min((RM-LM)/iw,680/ih,1);iw*=sc;ih*=sc;doc.addImage(pp.d,'JPEG',LM+((RM-LM)-iw)/2,50,iw,ih);}catch(e){}
     }
   }
@@ -3800,6 +3872,13 @@ function bindEvents() {
           if (el.name === 'noContact') {
             // A "no contact" report must not also carry a store signature.
             if (el.checked) { sigs.store = null; }
+            saveProgress(); render(); return;
+          }
+          if (el.name === 'noSerialPlate') {
+            // A report cannot both carry a plate photo and claim there is no
+            // plate. Drop the plate shot so the two can never contradict.
+            if (el.checked) { photos = photos.filter(function(p) { return normPhoto(p).kind !== 'plate'; }); }
+            else { photos = photos.filter(function(p) { return normPhoto(p).kind !== 'interior'; }); }
             saveProgress(); render(); return;
           }
           if (el.name === 'noMeter') {

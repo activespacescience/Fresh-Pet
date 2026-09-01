@@ -305,7 +305,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,no_serial_plate,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
@@ -1576,6 +1576,7 @@ function riList(){
     if(riFilter==='review' && !p.needs_review) return false;
     if(riFilter==='revisit' && !(p.revisit_requested_at && !p.revisit_done_at)) return false;
     if(riFilter==='needphoto' && p.audit_flag!=='needs_plate_photo') return false;
+    if(riFilter==='noserial' && !p.no_serial_plate) return false;
     if(riFilter==='assetlist' && p.audit_flag!=='asset_list_confirm') return false;
     if(q && ((p.store||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)<0) return false;
     return true;
@@ -1627,6 +1628,7 @@ function renderReportIssues(){
   var reviewN=completedPMs.filter(function(p){ return !p.prev_comp && p.needs_review; }).length;
   var revisitN=completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; }).length;
   var needPhotoN=completedPMs.filter(function(p){ return p.audit_flag==='needs_plate_photo'; }).length;
+  var noSerialN=completedPMs.filter(function(p){ return p.no_serial_plate; }).length;
   var assetListN=completedPMs.filter(function(p){ return p.audit_flag==='asset_list_confirm'; }).length;
 
   var h='<div class="card"><h3>'+icon('alert')+' Report issues to Freshpet</h3>'
@@ -1636,6 +1638,7 @@ function renderReportIssues(){
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
     +'<div class="seg">'
       +'<button class="'+(riFilter==='needphoto'?'on':'')+'" onclick="riFilter=\'needphoto\';render()" title="No photograph of this unit\'s own serial plate exists - a re-visit is required">Needs photo ('+needPhotoN+')</button>'
+      +'<button class="'+(riFilter==='noserial'?'on':'')+'" onclick="riFilter=\'noserial\';render()" title="The tech could not find or read a serial plate on this unit - it cannot be tied to a listed asset">No serial ('+noSerialN+')</button>'
       +'<button class="'+(riFilter==='assetlist'?'on':'')+'" onclick="riFilter=\'assetlist\';render()" title="The plate photographed reads a serial that is not on the Freshpet asset list">Asset list ('+assetListN+')</button>'
       +'<button class="'+(riFilter==='issues'?'on':'')+'" onclick="riFilter=\'issues\';render()">Issues ('+allIssues.length+')</button>'
       +'<button class="'+(riFilter==='added'?'on':'')+'" onclick="riFilter=\'added\';render()">Added assets ('+addedN+')</button>'
@@ -1672,7 +1675,9 @@ function renderReportIssues(){
       h+='<tr>'
         +'<td><input type="checkbox" '+(riSel[p.id]?'checked':'')+' onclick="riToggle('+p.id+')"></td>'
         +'<td>'+esc(p.store||'')+(p.comments?'<div class="muted" style="font-size:.72rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(p.comments)+'">'+esc(p.comments)+'</div>':'')+(p.audit_note?'<div class="muted" style="font-size:.7rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic" title="'+esc(p.audit_note)+'">'+esc(p.audit_note)+'</div>':'')+'</td>'
-        +'<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
+        +'<td class="mono" style="font-size:.8rem">'+(p.no_serial_plate
+            ? '<span class="pill rd">NO SERIAL</span><div class="muted" style="font-size:.68rem;margin-top:2px">listed '+esc(p.serial||'—')+'</div>'
+            : esc(p.serial||''))+'</td>'
         +'<td>'+esc(p.pm_date||'')+'</td>'
         +'<td class="hide">'+esc(p.tech_name||'')+'</td>'
         +'<td>'+type+'</td>'
