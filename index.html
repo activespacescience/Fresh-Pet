@@ -46,6 +46,19 @@ label input[type=checkbox]{width:26px;height:26px;accent-color:var(--ac)}
 .asset-btn:active{opacity:.7}
 .asset-btn .ser{color:rgba(255,255,255,.85);font-size:15px;font-weight:500}
 .asset-btn.done{background:var(--gn)}
+/* Asset sub-card, shown inside its store card on the route page. Model and
+   serial ride on the face so a tech standing at the cooler can match the card
+   to the machine without opening anything. */
+.unit{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:13px 14px;border-radius:12px;
+  background:var(--sf2);border:1px solid var(--bd);margin-top:8px;cursor:pointer;font-family:inherit;color:var(--tx)}
+.unit:active{opacity:.7}
+.unit.done{background:transparent;border-style:dashed}
+.unit.rv{border-color:#8FC4EA;border-left:4px solid #155E9B;background:#E2EFF9}
+body.dark .unit.rv{background:#152836}
+.unit .mdl{font-size:17px;font-weight:700;line-height:1.25}
+.unit .sn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;color:var(--tx2);margin-top:2px}
+.unit .tag{font-size:12px;font-weight:700;letter-spacing:.03em;margin-top:3px}
+.unit .go{flex:none;font-size:22px;color:var(--dim)}
 .photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
 .photo-grid div{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden}
 .photo-grid img{width:100%;height:100%;object-fit:cover}
@@ -627,13 +640,27 @@ function compressImg(file, cb) {
 // controls exist because invoice #172825 shipped 43 reports carrying 17
 // gallery images reused across stores; a plate photo must be an image of THIS
 // unit's plate, taken here, now.
-var PHOTO_KINDS = { plate: 'Serial plate', unit: 'Unit in place', site: 'Storefront / site', other: 'Other' };
+var PHOTO_KINDS = { unit: 'Full pic of unit', plate: 'Serial plate', bottom: 'Bottom of unit', site: 'Storefront / site', other: 'Other' };
+// The three shots every PM must carry, in the order they are asked for. 'site'
+// belongs to exception reports and 'other' is supplemental — neither is part of
+// the required set. Older reports carry 'other' photos from before the tags
+// existed; PHOTO_KINDS still labels them so history keeps reading correctly.
+var REQUIRED_PHOTOS = [
+  { kind: 'unit',   label: 'Full pic of unit', hint: 'the whole cabinet where it stands' },
+  { kind: 'plate',  label: 'Serial plate',     hint: 'close enough to read the serial' },
+  { kind: 'bottom', label: 'Bottom of unit',   hint: 'underneath — condenser and floor' }
+];
 
 function normPhoto(p) { // back-compat: old drafts stored bare dataURL strings
   return (typeof p === 'string') ? { d: p, kind: 'other', hash: null } : p;
 }
-function platePhotoCount() {
-  return photos.filter(function(p) { return normPhoto(p).kind === 'plate'; }).length;
+function photoCount(kind) {
+  return photos.filter(function(p) { return normPhoto(p).kind === kind; }).length;
+}
+function platePhotoCount() { return photoCount('plate'); }
+// Which of the three required shots are still missing, in ask order.
+function missingPhotos() {
+  return REQUIRED_PHOTOS.filter(function(r) { return !photoCount(r.kind); });
 }
 
 // hash -> earliest {store, pm_date} that already uses that exact image
@@ -719,7 +746,6 @@ function render() {
   else if (screen === 'pay') { html += renderPay(); }
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
-  else if (screen === 'routeStop') { html += renderRouteStop(); }
   else if (screen === 'addAsset') { html += renderAddAsset(); }
   else if (screen === 'exception') { html += renderException(); }
   if (sigModalKey) { html += renderSigModal(); }
@@ -731,6 +757,13 @@ function render() {
     screen === 'checklist' && !!(form && form.reshoot_of_pm_id));
   el.innerHTML = html;
   bindEvents();
+  // Coming back from a PM, put the store you were at back under your thumb
+  // instead of at the top of a twenty-stop list.
+  if (scrollToStopIdx != null && screen === 'route') {
+    var target = document.getElementById('stop' + scrollToStopIdx);
+    if (target) target.scrollIntoView({ block: 'start' });
+    scrollToStopIdx = null;
+  }
 }
 
 // Freshpet logo as inline SVG (sun + hills + two-tone wordmark). If a real
@@ -1023,12 +1056,22 @@ function renderChecklist() {
   }
 
   h += '<h3>Photos</h3>';
-  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">The <strong>serial plate photo is required</strong> — a close-up of THIS unit’s plate, taken with the camera. Reused images are refused automatically.</div>';
-  h += '<div style="display:flex;gap:8px;margin-bottom:8px">' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto(\'plate\')">'+icon('camera')+' Serial plate' + (platePhotoCount() ? ' ✓' : '') + '</button>' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto(\'unit\')">'+icon('camera')+' Unit</button>' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="uploadPhoto()">'+icon('image')+' Other</button>' +
-  '</div>';
+  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">'
+    + '<strong>All three are required</strong> on every unit, taken here with the camera. Reused images are refused automatically.</div>';
+  // One button per required shot, each showing whether it is done — a tech can
+  // see what is left without counting thumbnails.
+  h += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">';
+  REQUIRED_PHOTOS.forEach(function(r) {
+    var got = photoCount(r.kind);
+    h += '<button class="btn btn-o" style="padding:12px;text-align:left;display:flex;align-items:center;gap:10px'
+      + (got ? ';border-color:var(--gn);color:var(--gn)' : '') + '" onclick="takePhoto(\'' + r.kind + '\')">'
+      + icon(got ? 'check' : 'camera')
+      + '<span style="flex:1">' + esc(r.label) + (got > 1 ? ' (' + got + ')' : '')
+      + '<span style="display:block;font-size:12px;color:var(--dim);font-weight:400">' + esc(r.hint) + '</span></span>'
+      + '</button>';
+  });
+  h += '<button class="btn btn-o" style="padding:10px" onclick="uploadPhoto()">'+icon('image')+' Another photo (optional)</button>';
+  h += '</div>';
 
   if (photos.length) {
     h += '<div class="photo-grid">';
@@ -1045,7 +1088,7 @@ function renderChecklist() {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Uploading PM...</div>';
   } else {
     h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">'+icon('check')+' ' + (reopenPmId ? 'Update PM' : (reshootPm ? 'Submit Re-Shoot' : 'Submit PM')) + '</button>';
-    h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' Open Service Ticket</button>';
+    h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' REPORT ISSUE</button>';
     if (!reopenPmId) {
       h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">'+icon('clipboard')+' PM PREV COMP (done elsewhere)</button>';
       h += '<button class="btn btn-o" style="margin-top:8px;border-color:var(--or);color:var(--or)" onclick="startException()">'+icon('alert')+' Can\'t complete — store closed / unit missing</button>';
@@ -2122,6 +2165,32 @@ async function runImport() {
 }
 
 // ===== TECH ROUTE VIEW =====
+// One asset, drawn as a sub-card on its store's card. Model and serial are on
+// the face because that is what a tech matches against the machine in front of
+// them; everything else is secondary.
+function unitCard(a, stopIdx) {
+  var idx = ASSETS.indexOf(a);
+  var done = isCompleted(a.serial);
+  var rv = isRevisit(a.serial);
+  var cls = 'unit' + (done ? ' done' : '') + (rv ? ' rv' : '');
+  var act = done
+    ? 'reopenLatestPM(\'' + esc(a.serial).replace(/'/g, "\\'") + '\')'
+    : 'startChecklistFromRoute(' + idx + ', ' + stopIdx + ')';
+  var h = '<div class="' + cls + '" onclick="' + act + '">';
+  h += '<div style="flex:1;min-width:0">';
+  h += '<div class="mdl">' + esc([a.manufacturer, a.model].filter(Boolean).join(' ') || 'Unit') + '</div>';
+  h += '<div class="sn">S/N ' + esc(a.serial || '\u2014') + '</div>';
+  if (rv) {
+    h += '<div class="tag" style="color:#155E9B">SECONDARY VISIT AUDIT \u2014 ' + esc(revisitReason(a.serial)) + '</div>';
+  } else if (done) {
+    h += '<div class="tag" style="color:var(--gn)">' + icon('check') + ' Done \u2014 tap to re-open</div>';
+  }
+  h += '</div>';
+  h += '<span class="go">' + (done ? icon('pencil') : '\u203A') + '</span>';
+  h += '</div>';
+  return h;
+}
+
 function renderRoute() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="goHome()">←</button>' +
@@ -2188,18 +2257,10 @@ function renderRoute() {
     var cls = s.allDone ? 'completed' : (isCurrent ? 'current' : '');
     var numCls = s.allDone ? 'done' : (isCurrent ? 'current' : 'pending');
 
-    h += '<div class="stop-card ' + cls + '">';
-    if (s.hasRevisit) {
-      var rvUnits = s.assets.filter(function(a){ return isRevisit(a.serial); });
-      h += '<div style="margin:-2px 0 10px;padding:8px 10px;border:1px solid #7C3ABE;border-left-width:4px;'
-        + 'border-radius:8px;background:rgba(124,58,190,.10)">'
-        + '<div style="font-weight:700;font-size:13px;color:#7C3ABE;letter-spacing:.02em">RE-VISIT</div>'
-        + '<div style="font-size:12px;color:var(--dim);margin-top:2px">'
-        + rvUnits.map(function(a){ return 'S/N ' + a.serial + ' — ' + revisitReason(a.serial); }).join('<br>')
-        + '</div>'
-        + '<div style="font-size:12px;margin-top:5px">Service this unit again and take a clear photo of the serial plate.</div>'
-        + '</div>';
-    }
+    h += '<div class="stop-card ' + cls + '" id="stop' + i + '">';
+    // No store-level re-visit banner: each unit carries its own audit flag on
+    // its sub-card now, in the same blue as the form and the report. Saying it
+    // twice in two different colours reads as two different things.
     h += '<div style="display:flex;align-items:flex-start;gap:4px">';
     h += '<span class="stop-num ' + numCls + '">' + (s.allDone ? '✓' : (i+1)) + '</span>';
     h += '<div style="flex:1">';
@@ -2211,19 +2272,21 @@ function renderRoute() {
     if (doneSoFar > 0 && !s.allDone) { h += ' &bull; ' + doneSoFar + ' done'; }
     h += '</span>';
 
-    if (isCurrent || !s.allDone) {
-      h += '<div style="display:flex;gap:8px;margin-top:8px">';
-      h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate</button>';
-      h += '<button class="btn btn-p" style="display:inline-flex;align-items:center;padding:10px 16px;width:auto;margin-top:0" onclick="goRouteStop(' + i + ')">'+icon('clipboard')+' PMs</button>';
-      h += '</div>';
-    } else {
-      // Closed stop: re-open & modify a submitted PM, or add a NEW asset
-      // found at this store (does the full PM on it).
-      h += '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">';
-      h += '<button class="btn btn-o" style="display:inline-flex;align-items:center;gap:6px;width:auto;padding:10px 14px;margin-top:0;font-size:15px" onclick="goRouteStop(' + i + ')">'+icon('pencil')+' Re-open &amp; modify</button>';
-      h += '<button class="btn btn-o" style="display:inline-flex;align-items:center;gap:6px;width:auto;padding:10px 14px;margin-top:0;font-size:15px" onclick="goAddAssetForStop(' + i + ')">'+icon('plus')+' Add asset to this store</button>';
-      h += '</div>';
-    }
+    h += '<div style="margin-top:8px">';
+    h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate</button>';
+    h += '</div>';
+
+    // Every unit at this store, on the store card. The tech picks the next one
+    // from here instead of walking back out to a stop screen — at a store with
+    // three coolers that was a screen change per unit for no reason.
+    s.assets.forEach(function(a) {
+      h += unitCard(a, i);
+    });
+
+    // Adding a unit belongs to the STORE, not to any one machine on it — the
+    // unit being added is by definition not on the list yet.
+    h += '<button class="btn btn-o" style="margin-top:10px;padding:11px;font-size:15px" onclick="goAddAssetForStop(' + i + ')">'
+      + icon('plus') + ' Add an asset found at ' + esc(s.store) + '</button>';
 
     h += '</div></div></div>';
   });
@@ -2231,58 +2294,10 @@ function renderRoute() {
   return h;
 }
 
-function renderRouteStop() {
-  // Show assets at the current route stop
-  var stops = getRouteStops();
-  var stop = stops[currentStopIdx];
-  if (!stop) { screen = 'route'; return renderRoute(); }
-
-  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn back-btn" onclick="goRoute()">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:21px">Stop ' + (currentStopIdx + 1) + ': ' + esc(stop.store) + '</h2>' +
-    '<div style="font-size:17px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">' + esc(stop.address) + ', ' + esc(stop.city) + '</div></div>' +
-  '</div>';
-
-  h += '<button class="nav-btn" style="width:100%;justify-content:center;margin-bottom:12px" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate to This Stop</button>';
-
-  var stopClosed = stop.assets.every(function(a) { return isCompleted(a.serial); });
-  if (stopClosed) {
-    h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--gn)">'+icon('check')+' This stop is closed. Re-open a PM below to modify it, or add a new asset you found at this store.</div>';
-  }
-
-  h += '<h3>Assets at This Stop</h3>';
-  stop.assets.forEach(function(a) {
-    var done = isCompleted(a.serial);
-    var idx = ASSETS.indexOf(a);
-    if (done) {
-      // Completed unit: modifying goes through re-open (updates + timestamps
-      // the existing PM) instead of starting a duplicate PM.
-      h += '<div class="asset-btn done">' +
-        esc(a.manufacturer) + ' ' + esc(a.model) + ' ' + icon('check') +
-        '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
-        '<button class="btn" style="width:auto;padding:9px 14px;font-size:14px;margin-top:8px;background:rgba(255,255,255,.24);color:#fff;box-shadow:none" onclick="reopenLatestPM(\'' + esc(a.serial).replace(/'/g, "\\'") + '\')">'+icon('pencil')+' Re-open &amp; modify</button>' +
-      '</div>';
-    } else {
-      h += '<div class="asset-btn" style="cursor:pointer" onclick="startChecklistFromRoute(' + idx + ')">' +
-        esc(a.manufacturer) + ' ' + esc(a.model) + ' →' +
-        '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
-      '</div>';
-    }
-  });
-
-  h += '<button class="btn btn-o" style="margin-top:12px" onclick="goAddAssetForStop(' + currentStopIdx + ')">'+icon('plus')+' Add an asset found at this store</button>';
-
-  // Next stop button
-  if (currentStopIdx < stops.length - 1) {
-    var allDone = stop.assets.every(function(a) { return isCompleted(a.serial); });
-    if (allDone) {
-      h += '<button class="btn btn-s" style="margin-top:12px" onclick="goRouteStop(' + (currentStopIdx + 1) + ')">Next Stop →</button>';
-    }
-  }
-
-  return h;
-}
-
+// The old per-stop screen lived here. The route page now carries each store's
+// units on the store card itself, so it had no way in and no reason to exist —
+// left in place it would have been a second copy of the asset list to drift
+// against the real one, which is how render() ended up declared twice.
 // ===== Add a field-found asset to a stop =====
 function goAddAssetForStop(i) {
   var stops = getRouteStops();
@@ -2298,7 +2313,7 @@ function renderAddAsset() {
   var s = addAssetStop;
   if (!s) { screen = 'route'; return renderRoute(); }
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn back-btn" onclick="screen=\'routeStop\';render()">←</button>' +
+    '<button class="btn back-btn" onclick="backToRoute(currentStopIdx)">←</button>' +
     '<div style="flex:1"><h2 style="margin:0;font-size:21px">'+icon('plus')+' Add Asset</h2>' +
     '<div style="font-size:15px;color:var(--dim)">' + esc(s.store) + ' — ' + esc(s.address) + ', ' + esc(s.city) + '</div></div>' +
   '</div>';
@@ -2320,7 +2335,7 @@ function renderAddAsset() {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Saving asset...</div>';
   } else {
     h += '<button class="btn btn-s" onclick="saveNewAsset()">'+icon('check')+' Save Asset &amp; Start PM</button>';
-    h += '<button class="btn btn-o" style="margin-top:8px" onclick="screen=\'routeStop\';render()">Cancel</button>';
+    h += '<button class="btn btn-o" style="margin-top:8px" onclick="backToRoute(currentStopIdx)">Cancel</button>';
   }
   return h;
 }
@@ -2364,11 +2379,10 @@ async function saveNewAsset() {
     var idx = ASSETS.findIndex(function(a) { return a.id === newAsset.id; });
     if (idx === -1) {
       showStatus('Asset saved — find it under Browse All Assets to run the PM', 'err');
-      screen = 'routeStop';
-      render();
+      backToRoute(currentStopIdx);
       return;
     }
-    startChecklistFromRoute(idx);
+    startChecklistFromRoute(idx, currentStopIdx);
     addedAssetFlag = true;
     saveProgress();
     showStatus('Asset added — now complete the full PM', 'ok');
@@ -2530,17 +2544,9 @@ async function goRoute() {
   render();
 }
 
-function goRouteStop(idx) {
-  currentStopIdx = idx;
-  screen = 'routeStop';
-  render();
-}
+function goRouteStop(idx) { backToRoute(idx); }
 
-function goBackToRouteStop() {
-  routeFromChecklist = false;
-  screen = 'routeStop';
-  render();
-}
+function goBackToRouteStop() { backToRoute(currentStopIdx); }
 
 // "First L." from the tech profile / Google account
 function shortTechName() {
@@ -2637,9 +2643,21 @@ function reshootCarriesSignature() {
   return !!(form && form.reshoot_of_pm_id && form.original_store_contact);
 }
 
-function startChecklistFromRoute(idx) {
+function startChecklistFromRoute(idx, stopIdx) {
   routeFromChecklist = true;
+  if (stopIdx != null) currentStopIdx = stopIdx;
   startChecklist(idx);
+}
+
+// Coming back from a PM lands on the route page beside the store you were just
+// at, with its other units right there. Walking out to a stop screen to pick
+// the next cooler was a screen change per unit for nothing.
+var scrollToStopIdx = null;
+function backToRoute(stopIdx) {
+  routeFromChecklist = false;
+  if (stopIdx != null) { currentStopIdx = stopIdx; scrollToStopIdx = stopIdx; }
+  screen = 'route';
+  render();
 }
 
 // Drop straight back into an unfinished PM (used on every app start)
@@ -2763,7 +2781,12 @@ async function submitForm() {
   // Hard gates added after the invoice #172825 review (2026-08): a PM without
   // a fresh serial-plate photo, a real temperature reading, or an honest
   // answer on the store signature is exactly what produced that dispute.
-  if (platePhotoCount() < 1) { showStatus('Serial plate photo required — use the “Serial plate” camera button on THIS unit’s plate', 'err'); return; }
+  var missing = missingPhotos();
+  if (missing.length) {
+    showStatus('Still needed: ' + missing.map(function(r){ return r.label; }).join(', ')
+      + ' \u2014 take them here with the camera on THIS unit', 'err');
+    return;
+  }
   if (!form.intTemp) { showStatus('Measure and select the interior temperature', 'err'); return; }
   if (!form.sp1) { showStatus('Enter Set Point 1 as read on the unit', 'err'); return; }
   // Voltage read as 120 on all 511 reports that carried one, because it was a
@@ -2935,10 +2958,10 @@ async function submitForm() {
     clearProgress();
     submitting = false;
 
-    // If came from route, go back to route stop
     if (routeFromChecklist) {
       routeFromChecklist = false;
-      screen = 'routeStop';
+      scrollToStopIdx = currentStopIdx;
+      screen = 'route';
     } else {
       screen = 'home';
     }
@@ -2955,7 +2978,7 @@ async function submitForm() {
 }
 
 function openServiceTicket() {
-  if (!confirm('Open a service ticket?\n\nThe PM will be ' + (reopenPmId ? 'updated' : 'submitted') + ', flagged NEEDS REVIEW, and the PDF emailed to service@brixbev.com.')) return;
+  if (!confirm('Report an issue with this unit?\n\nThe PM will be ' + (reopenPmId ? 'updated' : 'submitted') + ', flagged NEEDS REVIEW, and the report emailed to service@brixbev.com.')) return;
   ticketFlag = true;
   submitForm();
 }
@@ -2997,7 +3020,7 @@ async function markPrevComp() {
   if (error) { showStatus('Error: ' + error.message, 'err'); return; }
   await loadCompletedPMs();
   clearProgress();
-  if (routeFromChecklist) { routeFromChecklist = false; screen = 'routeStop'; }
+  if (routeFromChecklist) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
   else { screen = 'select'; }
   showStatus('Marked PM PREV COMP ✓', 'ok');
   render();
@@ -3127,7 +3150,7 @@ async function submitException() {
     await loadCompletedPMs();
     clearProgress();
     submitting = false;
-    if (routeFromChecklist) { routeFromChecklist = false; screen = 'routeStop'; }
+    if (routeFromChecklist) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
     else { screen = 'select'; }
     showStatus('Exception report filed — flagged for office review', 'ok');
     render();
