@@ -55,10 +55,11 @@ label input[type=checkbox]{width:26px;height:26px;accent-color:var(--ac)}
 .unit.done{background:transparent;border-style:dashed}
 .unit.rv{border-color:#8FC4EA;border-left:4px solid #155E9B;background:#E2EFF9}
 body.dark .unit.rv{background:#152836}
-.unit .mdl{font-size:17px;font-weight:700;line-height:1.25}
-.unit .sn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:15px;color:var(--tx2);margin-top:2px}
-.unit .tag{font-size:12px;font-weight:700;letter-spacing:.03em;margin-top:3px}
-.unit .go{flex:none;font-size:22px;color:var(--dim)}
+.unit .mdl{font-size:21px;font-weight:800;line-height:1.2}
+.unit .sn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;font-weight:700;color:var(--tx);margin-top:3px;letter-spacing:.02em;overflow-wrap:anywhere}
+.unit .go{flex:none;font-size:24px;color:var(--dim)}
+.unit.done .mdl,.unit.done .sn{color:var(--dim);font-weight:600}
+.unit.done .go{color:var(--gn)}
 .photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
 .photo-grid div{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden}
 .photo-grid img{width:100%;height:100%;object-fit:cover}
@@ -761,6 +762,7 @@ function render() {
   else if (screen === 'addAsset') { html += renderAddAsset(); }
   else if (screen === 'exception') { html += renderException(); }
   if (sigModalKey) { html += renderSigModal(); }
+  if (missingPickStop != null) { html += renderMissingPick(); }
   // The paper is light blue and so is the screen. A tech filling this in should
   // know from across the van that they are on an audit form and not an ordinary
   // PM \u2014 the ask behind this whole re-shoot list was documentation nobody
@@ -2199,27 +2201,18 @@ function unitCard(a, stopIdx) {
   var act = done
     ? 'reopenLatestPM(\'' + esc(a.serial).replace(/'/g, "\\'") + '\')'
     : 'startChecklistFromRoute(' + idx + ', ' + stopIdx + ')';
+  // Model and serial, big, and nothing else. This card is read at arm's length
+  // against a machine in a cold aisle — an audit flag is colour, a finished
+  // stop is a tick, and the reasons live on the form you are about to open.
   var h = '<div class="' + cls + '" onclick="' + act + '">';
   h += '<div style="flex:1;min-width:0">';
   h += '<div class="mdl">' + esc([a.manufacturer, a.model].filter(Boolean).join(' ') || 'Unit') + '</div>';
   h += a.no_serial
     ? '<div class="sn" style="color:var(--rd)">NO SERIAL NUMBER</div>'
-    : '<div class="sn">S/N ' + esc(a.serial || '\u2014') + '</div>';
-  if (rv) {
-    h += '<div class="tag" style="color:#155E9B">SECONDARY VISIT AUDIT \u2014 ' + esc(revisitReason(a.serial)) + '</div>';
-  } else if (done) {
-    h += '<div class="tag" style="color:var(--gn)">' + icon('check') + ' Done \u2014 tap to re-open</div>';
-  }
+    : '<div class="sn">' + esc(a.serial || '\u2014') + '</div>';
   h += '</div>';
-  h += '<span class="go">' + (done ? icon('pencil') : '\u203A') + '</span>';
+  h += '<span class="go">' + (done ? icon('check') : '\u203A') + '</span>';
   h += '</div>';
-  // One machine gone from an open store is a fact about the UNIT, so it hangs
-  // off the unit. stopPropagation keeps it from opening the PM behind it.
-  if (!done) {
-    h += '<button class="btn btn-o" style="margin:4px 0 0;padding:8px;font-size:13px;border-color:var(--rd);color:var(--rd)" '
-      + 'onclick="event.stopPropagation();startUnitMissing(' + idx + ', ' + stopIdx + ')">'
-      + icon('alert') + ' MISSING ASSET \u2014 not on site</button>';
-  }
   return h;
 }
 
@@ -2295,14 +2288,9 @@ function renderRoute() {
     // which machine; this says "this stop is not a normal stop" before you have
     // read a single sub-card.
     if (s.hasRevisit) {
-      var rvUnits = s.assets.filter(function(a){ return isRevisit(a.serial); });
-      h += '<div style="margin:-2px 0 10px;padding:9px 11px;border:1px solid #8FC4EA;border-left-width:4px;'
-        + 'border-left-color:#155E9B;border-radius:8px;background:#E2EFF9">'
-        + '<div style="font-weight:700;font-size:13px;color:#155E9B;letter-spacing:.02em">SECONDARY VISIT AUDIT</div>'
-        + '<div style="font-size:12px;color:#41708F;margin-top:2px">'
-        + rvUnits.length + ' unit' + (rvUnits.length === 1 ? '' : 's') + ' at this store must be serviced and photographed again. '
-        + 'Not billed to Freshpet; paid to you as normal.</div>'
-        + '</div>';
+      h += '<div style="margin:-2px 0 10px;padding:8px 11px;border:1px solid #8FC4EA;border-left-width:4px;'
+        + 'border-left-color:#155E9B;border-radius:8px;background:#E2EFF9;'
+        + 'font-weight:800;font-size:14px;color:#155E9B;letter-spacing:.03em">SECONDARY VISIT AUDIT</div>';
     }
     h += '<div style="display:flex;align-items:flex-start;gap:4px">';
     h += '<span class="stop-num ' + numCls + '">' + (s.allDone ? '✓' : (i+1)) + '</span>';
@@ -2328,16 +2316,22 @@ function renderRoute() {
 
     // Adding a unit belongs to the STORE, not to any one machine on it — the
     // unit being added is by definition not on the list yet.
-    h += '<button class="btn btn-o" style="margin-top:10px;padding:11px;font-size:15px" onclick="goAddAssetForStop(' + i + ')">'
-      + icon('plus') + ' Add an asset found at ' + esc(s.store) + '</button>';
-
-    // A closed store is a fact about the STORE, so the button lives on the store
-    // card. It answers every unit here at once — a tech should not have to open
-    // three coolers' worth of forms to say the door was locked.
+    // Everything that is NOT "service this unit" collects on one strip at the
+    // bottom. Hung off each unit these buttons doubled the height of the card
+    // and buried the only thing a tech is looking for, which is the machine.
+    h += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bd);display:flex;flex-wrap:wrap;gap:8px">';
+    h += '<button class="btn btn-o" style="flex:1 1 100%;margin:0;padding:10px;font-size:14px" onclick="goAddAssetForStop(' + i + ')">'
+      + icon('plus') + ' Add an asset</button>';
     if (!s.allDone) {
-      h += '<button class="btn btn-o" style="margin-top:8px;padding:11px;font-size:15px;border-color:var(--rd);color:var(--rd)" '
-        + 'onclick="startStoreClosed(' + i + ')">' + icon('alert') + ' STORE CLOSED \u2014 no asset serviced</button>';
+      // Per-unit, but reached from here: pickUnitMissing goes straight to the
+      // form when only one unit could be the answer, and asks when several can.
+      h += '<button class="btn btn-o" style="flex:1;min-width:120px;margin:0;padding:10px;font-size:14px;border-color:var(--rd);color:var(--rd)" '
+        + 'onclick="pickUnitMissing(' + i + ')">' + icon('alert') + ' Missing asset</button>';
+      // A closed door is a fact about the STORE and answers every unit at once.
+      h += '<button class="btn btn-o" style="flex:1;min-width:120px;margin:0;padding:10px;font-size:14px;border-color:var(--rd);color:var(--rd)" '
+        + 'onclick="startStoreClosed(' + i + ')">' + icon('alert') + ' Store closed</button>';
     }
+    h += '</div>';
 
     h += '</div></div></div>';
   });
@@ -3112,6 +3106,7 @@ async function markPrevComp() {
 // five closed or unit-less sites. An exception visit is its own record type:
 // reason + storefront photo, no readings, no signatures, never billable as a
 // PM, always flagged for review.
+var missingPickStop = null;    // stop whose 'which unit is missing?' chooser is open
 var addAssetNoSerial = false;   // ticked on the Add Asset form when the unit has no readable plate
 var exceptionForm = { reason: '', note: '' };
 // Which kind of exception is being filed, and — for a store-level one — which
@@ -3147,6 +3142,41 @@ function startStoreClosed(stopIdx) {
   selectedAsset = stop.assets[0] || null;   // the report names every unit; this is just the anchor
   startException('store_closed');
 }
+
+// Reached from the store card's action strip. With one candidate there is
+// nothing to ask; with several the tech says which machine is gone rather than
+// every unit carrying its own button.
+function renderMissingPick() {
+  var stop = getRouteStops()[missingPickStop];
+  if (!stop) return '';
+  var open = stop.assets.filter(function(a) { return !isCompleted(a.serial); });
+  var h = '<div class="sig-modal"><div class="sig-modal-head">' + icon('alert') + ' Which unit is missing?</div>';
+  h += '<div style="padding:12px;overflow-y:auto;flex:1">';
+  h += '<div style="font-size:14px;color:var(--dim);margin-bottom:10px">' + esc(stop.store) + ' — pick the machine that is not on site.</div>';
+  open.forEach(function(a) {
+    h += '<div class="unit" onclick="closeMissingPick();startUnitMissing(' + ASSETS.indexOf(a) + ', ' + missingPickStop + ')">'
+      + '<div style="flex:1;min-width:0">'
+      + '<div class="mdl">' + esc([a.manufacturer, a.model].filter(Boolean).join(' ') || 'Unit') + '</div>'
+      + (a.no_serial ? '<div class="sn" style="color:var(--rd)">NO SERIAL NUMBER</div>'
+                     : '<div class="sn">' + esc(a.serial || '\u2014') + '</div>')
+      + '</div><span class="go">\u203A</span></div>';
+  });
+  h += '</div>';
+  h += '<div style="padding:12px"><button class="btn btn-o" style="margin:0" onclick="closeMissingPick()">Cancel</button></div>';
+  h += '</div>';
+  return h;
+}
+
+function pickUnitMissing(stopIdx) {
+  var stop = getRouteStops()[stopIdx];
+  if (!stop) return;
+  var open = stop.assets.filter(function(a) { return !isCompleted(a.serial); });
+  if (!open.length) { showStatus('Every unit at this store is already done', 'err'); return; }
+  if (open.length === 1) { startUnitMissing(ASSETS.indexOf(open[0]), stopIdx); return; }
+  missingPickStop = stopIdx;
+  render();
+}
+function closeMissingPick() { missingPickStop = null; render(); }
 
 // Unit-level: the store is open, this one machine is gone.
 function startUnitMissing(assetIdx, stopIdx) {
