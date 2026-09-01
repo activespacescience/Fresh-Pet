@@ -298,9 +298,22 @@ function foundAssets(){
   Object.keys(assets).forEach(function(k){
     var a = assets[k];
     if(a.source !== 'field') return;
-    var pm = null;
-    for(var i=0;i<pms.length;i++){ if(pms[i].asset_id === a.id){ pm = pms[i]; break; } }
-    out.push({ asset:a, pm:pm, settled: a.reported === true });
+    // A unit our own admin has retired must not be presented to the customer as
+    // "please add this to your list". The admin console only ever loads active
+    // assets, so showing an inactive one here would put a row in front of
+    // Freshpet that nobody on our side can even see to answer for.
+    if(a.active === false) return;
+    // Its own PM if it has had one; otherwise the report it was NOTED on —
+    // several of these units were spotted while servicing the unit beside them
+    // and have never been serviced themselves, which is a different fact and
+    // the page says so rather than showing a blank.
+    var own = null, found = null;
+    for(var i=0;i<pms.length;i++){
+      if(!own && pms[i].asset_id === a.id) own = pms[i];
+      if(!found && a.found_on_pm_id && pms[i].id === a.found_on_pm_id) found = pms[i];
+    }
+    out.push({ asset:a, pm: own || found, serviced: !!own, noted: !own && !!found,
+               settled: a.reported === true });
   });
   return out.sort(function(x,y){ return String(y.asset.added_at||'').localeCompare(String(x.asset.added_at||'')); });
 }
@@ -511,7 +524,7 @@ async function signOut(){ await sb.auth.signOut(); }
 async function loadData(){
   var r = await Promise.all([
     sb.from('completed_pms').select('*').order('pm_date', { ascending:false }).order('created_at', { ascending:false }),
-    sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial,source,no_serial,active,reported,reported_at,added_at,added_by'),
+    sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial,source,no_serial,active,reported,reported_at,added_at,added_by,found_on_pm_id'),
     sb.from('reactive_batches').select('*').eq('status','invoiced').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store')
   ]);
@@ -760,10 +773,13 @@ function assetRowCard(r, kind){
         ? (r.settled
             ? '<span class="pill gn">On your list'+(a.reported_at?' · '+esc(fmtDate(String(a.reported_at).slice(0,10))):'')+'</span>'
             : '<span class="pill hold">Not on your list</span>')
+          + (r.noted?'<div class="ct" style="font-size:.74rem;margin-top:3px">Noted while servicing the unit beside it — not serviced itself</div>':'')
         : (r.settled
             ? '<span class="pill gn">Removed from your list</span>'
             : '<span class="pill hold">'+esc(EXC_LABEL[p&&p.exception_reason] || 'Not found on site')+'</span>'))+'</td>'
-    + '<td>'+(p ? '<a href="#" onclick="openCall('+p.id+');return false">Open the report &rarr;</a>' : '<span class="ct">—</span>')+'</td>'
+    + '<td>'+(p ? '<a href="#" onclick="openCall('+p.id+');return false">'
+        + (kind==='found' && r.noted ? 'The report that found it' : 'Open the report') + ' &rarr;</a>'
+      : '<span class="ct">—</span>')+'</td>'
     + '</tr>';
 }
 
@@ -794,8 +810,12 @@ function renderAssetList(){
   if(fOpen.length){
     h += '<div class="inv"><div class="inv-h open"><div class="inv-t">'
       + '<div class="ttl">Coolers we found that are not on your list</div>'
-      + '<div class="sub">'+fOpen.length+' unit'+(fOpen.length===1?'':'s')+' · added by the technician on site, '
-      + 'fully serviced and documented · <strong>please add them to your asset list</strong></div></div></div>'
+      + '<div class="sub">'+fOpen.length+' unit'+(fOpen.length===1?'':'s')+' · found by the technician on site · '
+      + '<strong>please add them to your asset list</strong>'
+      + (fOpen.filter(function(x){ return x.noted; }).length
+          ? ' · '+fOpen.filter(function(x){ return x.noted; }).length+' of them have no serial plate recorded yet '
+            + 'and have not been serviced — we need a visit to read the plate'
+          : '')+'</div></div></div>'
       + '<div style="overflow-x:auto"><table><thead><tr><th>Store</th><th>Equipment</th><th>Serial</th>'
       + '<th>Found</th><th>Status</th><th></th></tr></thead><tbody>'
       + fOpen.map(function(r){ return assetRowCard(r,'found'); }).join('')
