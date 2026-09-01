@@ -1680,6 +1680,7 @@ function riList(){
     if(riFilter==='review' && !p.needs_review) return false;
     if(riFilter==='revisit' && !(p.revisit_requested_at && !p.revisit_done_at)) return false;
     if(riFilter==='needphoto' && p.audit_flag!=='needs_plate_photo') return false;
+    if(riFilter==='reused' && p.audit_flag!=='reused_photo') return false;
     if(riFilter==='noserial' && !p.no_serial_plate) return false;
     if(riFilter==='assetlist' && p.audit_flag!=='asset_list_confirm') return false;
     if(q && ((p.store||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)<0) return false;
@@ -1733,6 +1734,7 @@ function renderReportIssues(){
   var revisitN=completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; }).length;
   var needPhotoN=completedPMs.filter(function(p){ return p.audit_flag==='needs_plate_photo'; }).length;
   var noSerialN=completedPMs.filter(function(p){ return p.no_serial_plate; }).length;
+  var reusedN=completedPMs.filter(function(p){ return p.audit_flag==='reused_photo'; }).length;
   var assetListN=completedPMs.filter(function(p){ return p.audit_flag==='asset_list_confirm'; }).length;
 
   var h='<div class="card"><h3>'+icon('alert')+' Report issues to Freshpet</h3>'
@@ -1742,6 +1744,7 @@ function renderReportIssues(){
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
     +'<div class="seg">'
       +'<button class="'+(riFilter==='needphoto'?'on':'')+'" onclick="riFilter=\'needphoto\';render()" title="No photograph of this unit\'s own serial plate exists - a re-visit is required">Needs photo ('+needPhotoN+')</button>'
+      +'<button class="'+(riFilter==='reused'?'on':'')+'" onclick="riFilter=\'reused\';render()" title="A photograph on this report also appears on a report for a DIFFERENT unit - the defect the customer found">Reused photo ('+reusedN+')</button>'
       +'<button class="'+(riFilter==='noserial'?'on':'')+'" onclick="riFilter=\'noserial\';render()" title="The tech could not find or read a serial plate on this unit - it cannot be tied to a listed asset">No serial ('+noSerialN+')</button>'
       +'<button class="'+(riFilter==='assetlist'?'on':'')+'" onclick="riFilter=\'assetlist\';render()" title="The plate photographed reads a serial that is not on the Freshpet asset list">Asset list ('+assetListN+')</button>'
       +'<button class="'+(riFilter==='issues'?'on':'')+'" onclick="riFilter=\'issues\';render()">Issues ('+allIssues.length+')</button>'
@@ -1773,7 +1776,7 @@ function renderReportIssues(){
     list.forEach(function(p){
       var nPh=Array.isArray(p.photo_paths)?p.photo_paths.length:0;
       var type=(p.added_asset?'<span class="pill ac">Added asset</span> ':'')+(p.needs_review?'<span class="pill rd">Needs review</span>':'')||'<span class="pill dim">PM</span>';
-      var AF={ needs_plate_photo:['rd','Needs photo'], asset_list_confirm:['am','Asset list'], credit_review:['am','Credit review'], resolved:['gn','Resolved'] };
+      var AF={ needs_plate_photo:['rd','Needs photo'], reused_photo:['rd','Reused photo'], asset_list_confirm:['am','Asset list'], credit_review:['am','Credit review'], resolved:['gn','Resolved'] };
       if(p.audit_flag && AF[p.audit_flag]) type='<span class="pill '+AF[p.audit_flag][0]+'">'+AF[p.audit_flag][1]+'</span>';
       if(p.revisit_requested_at && !p.revisit_done_at) type='<span class="pill pu">Re-visit ordered</span>';
       h+='<tr>'

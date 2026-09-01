@@ -229,3 +229,51 @@ weeks later. The original PDF still holds the signature, Freshpet already has
 it, and the portal links it. If the graphic is wanted on the re-shoot anyway,
 the extraction is proven and the change is small — `original_signature` is
 already rendered when present.
+
+## Addendum — reused photographs beyond the plate (2026-09-01)
+
+The nightly audit, run over the full corpus as a validation, independently
+re-found the defects this review had established by hand — and surfaced one that
+the corrections had **not** closed.
+
+**96 reports carry a photograph that also appears on another report.** Of those:
+
+| | reports |
+|---|---|
+| Already on the re-shoot list (`needs_plate_photo`) | 60 — of which **58 have no photograph of their own at all** |
+| Not on the list | 36 |
+| …sharing only with a report for the **same** unit (a duplicate submission, benign) | 3 |
+| …sharing with a report for a **different** unit | **33** |
+
+The 33 are a different shape from the original finding. They **do** have a
+genuine photograph of their own serial plate — which is why the plate-based
+sweep did not flag them — but they also carry one of a small set of images that
+were attached very widely: one appears on 21 reports across 21 stores, another
+on 14, another on 13. That is the earlier "17 gallery images across 43 reports"
+pattern, seen from the other side: round 2 detached the foreign **plate**
+photographs, and left the reused secondary shots in place.
+
+**All 33 are now on the re-shoot programme**, flagged `reused_photo` with a note
+saying how many other units' reports carry the same image. Two of them keep
+their more specific existing flag — #454 (`asset_list_confirm`) and #485
+(`credit_review`, the Kelley's duplicate Freshpet listed) — because those are
+office dispositions that a bulk re-flag must not overwrite; the re-visit itself
+is driven by `revisit_requested_at`, not by this flag.
+
+The reason for re-shooting rather than simply detaching the reused image: the
+sentence we want to be able to say to Freshpet is *"every report that carried a
+photograph belonging to another unit has been re-done."* A rule with an
+exception in it — some re-shot, some quietly tidied — is a much harder sentence,
+and the difference is 33 visits on a programme already visiting 160.
+
+⚠ **One earlier audit note was too confident and has been superseded.** Report
+#454 (Walmart US #2557) was noted as *"the on-site plate photograph reads a
+serial not on the asset list (photo appears genuine)"*. That photograph also
+appears on reports for two other units, so it cannot be a genuine plate
+photograph of all three. The asset-list question there is unresolved until the
+unit is re-shot.
+
+Also corrected in the check itself: sharing an image with a report for the
+**same** unit is a duplicate-submission problem, which has its own check.
+Collapsing the two made the serious case harder to see, so `photo_reused` now
+distinguishes them.
