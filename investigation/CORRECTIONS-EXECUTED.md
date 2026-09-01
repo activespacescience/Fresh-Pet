@@ -35,7 +35,9 @@ changed row records its prior state in `form_data` (`original_photo_paths`,
 | Credit flags: Kelley's Pets #3465 duplicate (#485), PetSmart #1975 duplicate-asset bill (#566) | 2 |
 | Duplicate asset row `272479 Date 21- 10- 22` deactivated | 1 |
 
-Full row-by-row record: [`corrections-log.csv`](corrections-log.csv).
+Full row-by-row record: [`corrections-log.csv`](corrections-log.csv). The same facts are
+queryable live — every changed row carries `modified_by = 'audit correction 2026-08-25
+(approved by skypace@brixbev.com)'` and its `form_data.audit_note`.
 Machine verification: every row's live `photo_paths`, `photo_hashes`, `visit_type`,
 `exception_reason` and note presence compared against the correction plan — zero mismatches.
 
