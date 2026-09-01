@@ -1,0 +1,10 @@
+-- Applied live 2026-09-01 (see migration 20260901k in the Supabase project).
+-- A report awaiting a re-shoot has no photographs ON PURPOSE — ordering the
+-- re-visit disconnects them (kept in form_data.revisit_cleared_photos). The
+-- audit was flagging its own remediation back to itself: photos_none went from
+-- 10 real cases to 76 and buried them. The evidence checks (photos_none,
+-- photos_missing, signature_missing) now skip stops with an OPEN re-visit;
+-- those are tracked by the re-shoot banner instead, and come back into scope on
+-- their own because the re-shoot files a NEW report the audit checks normally.
+-- duplicate_report and default_readings still apply — they are worth knowing
+-- about on a stop awaiting re-shoot.
