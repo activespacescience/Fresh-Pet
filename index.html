@@ -110,6 +110,9 @@ label input[type=checkbox]{width:26px;height:26px;accent-color:var(--ac)}
 .brand-row .brand-img{max-height:40px}
 .brand-row .fp{font-size:26px;font-weight:800;color:var(--ac);letter-spacing:-1px}
 /* Dark mode */
+/* Secondary visit audit \u2014 light blue paper on screen, matching the PDF. */
+body.audit{--bg:#E2EFF9;--sf:#FFFFFF;--sf2:#D3E6F6;--bd:#B8D5EC;--bd2:#8FC4EA;--ac:#155E9B;--ac2:#0E4676;--or:#155E9B;--dim:#4E7FA6}
+body.audit.dark{--bg:#0E1C28;--sf:#152836;--sf2:#1B3346;--bd:#254257;--bd2:#33607F;--ac:#67B2E8;--ac2:#4A93C9;--or:#67B2E8}
 body.dark{--bg:#1A1613;--sf:#241E19;--sf2:#2E271F;--bd:#3A3128;--bd2:#4A4034;--tx:#F5EEE6;--tx2:#C4B5A5;--dim:#9A8B7B;--ac:#F2872F;--ac2:#E56A15;--gn:#4CC46B;--rd:#F26761;--or:#F2872F;--shadow:0 1px 3px rgba(0,0,0,.4)}
 body.dark input:focus,body.dark textarea:focus,body.dark select:focus{background:var(--sf2)}
 body.dark .stop-card.current{background:#2E2016}
@@ -720,6 +723,12 @@ function render() {
   else if (screen === 'addAsset') { html += renderAddAsset(); }
   else if (screen === 'exception') { html += renderException(); }
   if (sigModalKey) { html += renderSigModal(); }
+  // The paper is light blue and so is the screen. A tech filling this in should
+  // know from across the van that they are on an audit form and not an ordinary
+  // PM \u2014 the ask behind this whole re-shoot list was documentation nobody
+  // realised was any different from an ordinary day's.
+  document.body.classList.toggle('audit',
+    screen === 'checklist' && !!(form && form.reshoot_of_pm_id));
   el.innerHTML = html;
   bindEvents();
 }
@@ -893,9 +902,10 @@ function renderChecklist() {
   var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('pencil')+' Editing a previously submitted PM — submitting will update it and timestamp the modification</div>' : '';
   var reshootPm = reopenPmId ? null : openRevisitPm(a.serial);
   if (reshootPm) {
-    reopenBanner += '<div class="card" style="padding:10px 14px;border-left:4px solid #7C3ABE">'
-      + '<div style="font-weight:700;color:#7C3ABE;letter-spacing:.02em">RE-SHOOT</div>'
-      + '<div style="font-size:14px;margin-top:4px">The earlier report for this unit was pulled — ' + esc(revisitReason(a.serial)) + '. '
+    reopenBanner += '<div class="card" style="padding:10px 14px;border-left:4px solid #155E9B">'
+      + '<div style="font-weight:700;color:#155E9B;letter-spacing:.02em">SECONDARY VISIT AUDIT</div>'
+      + '<div style="font-size:14px;margin-top:4px">This is an <strong>audit visit</strong>, not an ordinary PM \u2014 the blue form means the report prints on blue paper and goes to Freshpet as a re-documentation. '
+      + 'The earlier report for this unit was pulled: ' + esc(revisitReason(a.serial)) + '. '
       + 'Service the unit and document it fresh: a clear photograph of the serial plate on <strong>this</strong> machine, taken here, plus the usual pictures. Nothing from the old report carries over.</div>'
       + '<div style="font-size:13px;color:var(--dim);margin-top:6px">You are paid for this stop at your normal rate. It is not billed to Freshpet.</div>'
       + '</div>';
@@ -969,8 +979,16 @@ function renderChecklist() {
   h += chk('ledCheck', 'LED Check');
   h += chk('waterLeak', 'Water Leak');
 
-  h += '<h3>Comments / Observations</h3>';
-  h += '<textarea name="comments" placeholder="Notes...">' + esc(form.comments || '') + '</textarea>';
+  if (form.reshoot_of_pm_id) {
+    h += '<h3>Audit notes</h3>';
+    h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">'
+      + 'The report prints <strong>SECONDARY VISIT AUDIT</strong> above whatever you write here, with both dates \u2014 you do not need to explain that part. '
+      + 'Use this for what you actually found today: condition, anything different from the first visit, anything that needs following up.</div>';
+    h += '<textarea name="comments" placeholder="What you found on this visit...">' + esc(form.comments || '') + '</textarea>';
+  } else {
+    h += '<h3>Comments / Observations</h3>';
+    h += '<textarea name="comments" placeholder="Notes...">' + esc(form.comments || '') + '</textarea>';
+  }
 
   h += '<h3>Signatures</h3>';
   if (reshootCarriesSignature()) {
@@ -3210,8 +3228,29 @@ function dataURLtoBlob(dataURL) {
 function generatePDF(a, f, ph, sg, meta, cb) {
   var jsPDF = window.jspdf.jsPDF;
   var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-  var W = 612, LM = 40, RM = W - 40, COL2 = 326;
+  var W = 612, H = 792, LM = 40, RM = W - 40, COL2 = 326;
   var y = 30;
+
+  // A re-shoot is printed on a light blue page, every page of it. Both the
+  // original and the re-shoot stay attached to the unit — we never overwrite a
+  // submitted report — so the two land side by side in the portal and in any
+  // folder they get filed into. Colour is what tells them apart at arm's
+  // length, before anyone reads a date.
+  var isReshootDoc = !!f.reshoot_of_pm_id;
+  function paintPage() {
+    if (!isReshootDoc) return;
+    doc.setFillColor(226, 240, 251);   // light blue, prints legibly in mono
+    doc.rect(0, 0, W, H, 'F');
+    doc.setFillColor(255, 255, 255);   // leave the default alone for later fills
+  }
+  if (isReshootDoc) {
+    // Wrap addPage rather than chase every call site, so photo pages and any
+    // overflow page get the tint too — a two-tone document would be worse than
+    // no tint at all.
+    var _addPage = doc.addPage.bind(doc);
+    doc.addPage = function() { var r = _addPage.apply(null, arguments); paintPage(); return r; };
+    paintPage();
+  }
 
   function checkbox(x, yy, checked) { doc.setLineWidth(.75); doc.setDrawColor(0); doc.rect(x, yy-7.5, 9, 9); if (checked) { doc.setLineWidth(1.2); doc.line(x+2, yy-3, x+4, yy-.5); doc.line(x+4, yy-.5, x+7.5, yy-6); doc.setLineWidth(.75); } }
 
@@ -3228,8 +3267,8 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   }
 
   // Say what this document is before anyone reads a number off it.
-  if (f.reshoot_of_pm_id) {
-    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(124, 58, 190);
+  if (isReshootDoc) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(21, 94, 155);
     doc.text('RE-SHOOT — this unit was serviced once and re-documented on a later visit', W/2, y, { align: 'center' });
     y += 11;
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
@@ -3243,9 +3282,8 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   }
 
   doc.setFontSize(9);
-  var isReshoot = !!f.reshoot_of_pm_id;
   doc.setFont('helvetica','bold');doc.text('Store:',LM,y);doc.setFont('helvetica','normal');doc.text(a.store,LM+38,y);
-  if (isReshoot) {
+  if (isReshootDoc) {
     // Two dates, never one. A single date on a re-shoot misdates either the
     // service call or the readings, and which is which is the whole question.
     // Kept on one line so the rest of the header keeps its spacing.
@@ -3289,7 +3327,17 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   var mi=[['physicalDmg','Physical Damage','powerCord','Power Cord'],['extCord','Ext Cord (Y/N)','backSpacer','Back Spacer (Y/N)'],['cleanCoil','Clean Coil','emptyDrain','Empty Drain Pan'],['cleanFans','Clean Fans','wickingPads','Wicking Pads (Y/N)'],['cleanCondPansD','Clean Cond Pans','cleanDrainLine','Clean Drain Line'],['ledCheck','LED Check','waterLeak','Water Leak']];
   mi.forEach(function(r){checkbox(LM,y,f[r[0]]);doc.text(r[1],LM+14,y);checkbox(COL2,y,f[r[2]]);doc.text(r[3],COL2+14,y);y+=13;});
 
-  y+=4;doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('Comments:',LM,y);y+=10;
+  y+=4;doc.setFont('helvetica','bold');doc.setFontSize(9);
+  doc.text(isReshootDoc?'Audit notes:':'Comments:',LM,y);y+=10;
+  if (isReshootDoc) {
+    // Stated by the document, not left to the technician to remember to write.
+    doc.setFont('helvetica','bold');doc.setFontSize(8);doc.setTextColor(21,94,155);
+    var aud=doc.splitTextToSize('SECONDARY VISIT AUDIT \u2014 a second visit made to re-document the service call of '
+      +(f.original_date||'the original visit')+'. The unit was inspected and re-measured again on '
+      +(f.reshoot_date||f.date||'this date')+' and photographed fresh. There is no charge to Freshpet for this visit.', RM-LM);
+    doc.text(aud,LM,y);y+=aud.length*10+2;
+    doc.setTextColor(0,0,0);
+  }
   doc.setFont('helvetica','normal');doc.setFontSize(8);
   var cmt=doc.splitTextToSize(f.comments||'(none)',RM-LM);doc.text(cmt,LM,y);y+=Math.max(cmt.length*10,20);
 
@@ -3593,36 +3641,26 @@ function bindEvents() {
   }
 }
 
-// Override render to include admin asset picker
+// Override render to include the admin asset picker.
+//
+// This used to re-declare the ENTIRE screen dispatch, so render() existed twice
+// and only this copy ever ran — a change made to the original above was dead
+// code with nothing to show for it (the audit tint was written there first and
+// silently did nothing). It now handles its one extra screen and delegates, so
+// there is one dispatch again and one place to add a screen.
 var _origRender = render;
 render = function() {
-  var el = document.getElementById('app');
-  var html = '';
-  if (statusMsg) {
-    html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>';
-  }
   if (screen === 'adminAssetPicker') {
+    var el = document.getElementById('app');
+    var html = '';
+    if (statusMsg) { html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>'; }
     html += renderAdminAssetPicker();
+    document.body.classList.remove('audit');
     el.innerHTML = html;
     bindEvents();
     return;
   }
-  // Call original screens
-  if (screen === 'loading') { html += renderLoading(); }
-  else if (screen === 'login') { html += renderLogin(); }
-  else if (screen === 'home') { html += renderHome(); }
-  else if (screen === 'select') { html += renderSelect(); }
-  else if (screen === 'checklist') { html += renderChecklist(); }
-  else if (screen === 'history') { html += renderHistory(); }
-  else if (screen === 'pay') { html += renderPay(); }
-  else if (screen === 'admin') { html += renderAdmin(); }
-  else if (screen === 'route') { html += renderRoute(); }
-  else if (screen === 'routeStop') { html += renderRouteStop(); }
-  else if (screen === 'addAsset') { html += renderAddAsset(); }
-  else if (screen === 'exception') { html += renderException(); }
-  if (sigModalKey) { html += renderSigModal(); }
-  el.innerHTML = html;
-  bindEvents();
+  return _origRender();
 };
 
 // ===== Theme (light/dark) =====
