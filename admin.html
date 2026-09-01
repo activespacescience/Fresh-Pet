@@ -306,12 +306,15 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,no_serial_plate,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,no_serial_plate,billing_hold_at,billing_hold_by,billing_hold_reason,billing_hold_outcome,billing_hold_closed_at,credit_amount,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
     sb.from('incident_entries').select('*').order('entry_at'),
-    sb.from('pm_audit_findings').select('*').is('resolved_at', null).is('dismissed_at', null).order('severity').order('first_seen', { ascending:false })
+    // v_pm_audit_open, not the raw table: it evaluates the re-shoot rule on
+    // every read, so a finding disappears the moment a re-visit is ordered
+    // and returns the moment one is cancelled — no waiting for the nightly run.
+    sb.from('v_pm_audit_open').select('*').order('severity').order('first_seen', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
@@ -443,7 +446,11 @@ function render(){
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">'+icon('receipt')+' Freshpet Billing</button>'
      + (function(){ var n=assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
         return '<button class="tab '+(tab==='added'?'on':'')+'" onclick="tab=\'added\';render()">'+icon('plus')+' Added Assets'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
-     + (function(){ var n=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
+     + (function(){ var n=completedPMs.filter(function(p){
+          // A stop awaiting a re-shoot is counted by the re-shoot banner. Counting
+          // it here too gives two numbers for one pile that never agree.
+          if (p.revisit_requested_at && !p.revisit_done_at) return false;
+          return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
         return '<button class="tab '+(tab==='issues'?'on':'')+'" onclick="tab=\'issues\';render()">'+icon('alert')+' Report Issues'+(n?' <span class="pill am" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + (function(){ var n=auditFindings.filter(function(f){ return f.severity==='red'; }).length;
         return '<button class="tab '+(tab==='audit'?'on':'')+'" onclick="tab=\'audit\';render()">'+icon('shield')+' Nightly Audit'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
@@ -546,13 +553,92 @@ function computeOverview(){
   }};
 }
 
+// ═══ Re-shoot programme banner ═══
+// An ordered re-visit is real work owed to a customer, on a stop that is
+// already invoiced. Before this it showed only as +1 on a generic "Report
+// Issues" badge that also counts added assets and service tickets — which is
+// how 191 open stops look identical to a quiet week. It gets its own banner,
+// on the landing tab and on the audit tab, and it does not go away by itself.
+function revisitStats(){
+  var open = completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; });
+  var done = completedPMs.filter(function(p){ return p.revisit_requested_at && p.revisit_done_at; });
+  var units = {}; open.forEach(function(p){ units[p.serial] = 1; });
+  var stores = {}; open.forEach(function(p){ stores[p.store] = 1; });
+  var oldest = open.reduce(function(a,p){
+    return (!a || String(p.revisit_requested_at) < a) ? String(p.revisit_requested_at) : a; }, null);
+  return { open: open.length, done: done.length,
+           units: Object.keys(units).length, stores: Object.keys(stores).length,
+           oldest: oldest, total: open.length + done.length };
+}
+// ── Amounts on hold ─────────────────────────────────────────────────────────
+// A hold says "we are not asking to be paid for this line yet". It deliberately
+// does NOT touch billed / bill_amount / invoice_doc_number — rewriting an
+// invoice we already sent in our own database is not a correction, it is losing
+// the record of what we charged. Two exits, both recorded: RELEASED (it was
+// re-documented, the charge stands) or CREDITED (we are not charging for it,
+// at whatever amount was actually agreed — never assumed to be the line value).
+function onHold(p){ return !!p.billing_hold_at && !p.billing_hold_outcome; }
+function holdStats(){
+  var rows = completedPMs.filter(onHold);
+  var byInv = {}, amount = 0, units = {}, ready = 0;
+  rows.forEach(function(p){
+    units[p.serial || p.id] = 1;
+    if (p.revisit_done_at) ready++;
+    if (p.billed && p.invoice_doc_number){
+      var k = p.invoice_doc_number;
+      if(!byInv[k]) byInv[k] = { invoice:k, reports:0, amount:0 };
+      byInv[k].reports++; byInv[k].amount += Number(p.bill_amount||0);
+      amount += Number(p.bill_amount||0);
+    }
+  });
+  return { rows:rows, reports:rows.length, units:Object.keys(units).length, amount:amount,
+           ready:ready, uninvoiced:rows.filter(function(p){ return !p.billed; }).length,
+           invoices:Object.keys(byInv).sort().map(function(k){ return byInv[k]; }) };
+}
+function fmtMoney(n){ return '$' + Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
+function daysSince(iso){
+  if(!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function renderRevisitBanner(){
+  var r = revisitStats();
+  if(!r.total) return '';
+  if(!r.open){
+    return '<div class="card" style="border-left:4px solid var(--gn)">'
+      + '<h3 style="color:var(--gn);margin-top:0">'+icon('check')+' Re-shoot programme complete</h3>'
+      + '<div class="hint">All '+r.done+' ordered re-visits have been serviced and re-documented.</div></div>';
+  }
+  var age = daysSince(r.oldest);
+  return '<div class="card" style="border-left:4px solid #155E9B;background:#E2EFF9">'
+    + '<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:260px">'
+    + '<h3 style="margin-top:0;color:#155E9B">'+icon('alert')+' '+r.open+' stops are open for re-shoot</h3>'
+    + '<div class="hint" style="color:#2E5C7E">'
+    + r.units+' unit'+(r.units===1?'':'s')+' across '+r.stores+' store'+(r.stores===1?'':'s')
+    + ' must be serviced and photographed again. These are invoiced stops whose documentation we could not stand behind — '
+    + 'they are <strong>not billed to Freshpet</strong> and the technician is paid normally. '
+    + 'They stay here until the work is done.</div></div>'
+    + '<div style="flex:none;text-align:right">'
+    + '<div style="font-size:1.9rem;font-weight:800;color:#155E9B;line-height:1">'+r.done+' / '+r.total+'</div>'
+    + '<div class="muted" style="font-size:.74rem">re-shot so far</div>'
+    + (age>0?'<div class="muted" style="font-size:.72rem;margin-top:4px">oldest ordered '+age+' day'+(age===1?'':'s')+' ago</div>':'')
+    + '</div></div>'
+    + '<div style="margin-top:12px"><button class="btn pu sm" onclick="tab=\'issues\';riFilter=\'revisit\';render()">'
+    + icon('refresh')+' See the '+r.open+' open stops</button></div>'
+    + '</div>';
+}
+
 function renderOverview(){
   var o=computeOverview(), c=o.company;
   var pct=function(done,tot){ return tot>0?Math.round(done/tot*100):0; };
   var cp=pct(c.completed,c.assigned);
+  var revisitBanner = renderRevisitBanner();
 
   var periodStops = ovPeriod==='all' ? 'all time' : esc(o.b.label);
-  var h='<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h3>Company overview</h3>'
+  // The re-shoot programme leads the page — it is owed work on invoiced stops.
+  var h = revisitBanner
+    + '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h3>Company overview</h3>'
     + '<div class="hint">Stops completed &amp; remaining ('+periodStops+') across every route. Each completed stop earns the tech '+money(DEFAULT_PM_RATE)+'/PM; paid-out &amp; owed are cumulative from the PM ledger. A stop can only be on one tech\'s route — enforced in the database.</div></div>'
     + '<div class="seg" style="flex:none">'
     + '<button class="'+(ovPeriod==='all'?'on':'')+'" onclick="ovPeriod=\'all\';render()">All time</button>'
@@ -859,6 +945,10 @@ function billableList(){
     if (p.prev_comp) return false;                 // done elsewhere — never billed
     if (p.visit_type === 'exception') return false; // failed visit (closed store / missing unit) — never a billable PM
     if (p.visit_type === 'reshoot') return false;   // re-visit of a stop already billed once — remediation, we absorb it
+    // On hold = in dispute. It cannot be selected for an invoice from here, and
+    // freshpet-invoice.mjs refuses it again server-side — this list is the
+    // convenience, that function is the gate.
+    if (!p.billed && onHold(p)) return false;
     if (!billShowBilled && p.billed) return false;
     if (!q) return true;
     return ((p.store||'')+' '+cityOf(p)+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
@@ -968,8 +1058,121 @@ async function createInvoice(){
   billBusy=false; render();
 }
 
+// Closing a hold. Both exits are a decision somebody made, so both record who
+// and why; neither deletes the hold, because "there was a hold on this line and
+// here is how it ended" is the only question anyone asks about it later.
+async function closeHold(outcome){
+  var ids = holdSelectedIds();
+  if(!ids.length) return toast('Select the lines to close','err');
+  var rows = completedPMs.filter(function(p){ return ids.indexOf(p.id)>=0 && onHold(p); });
+  if(!rows.length) return toast('None of those are on hold','err');
+  var patch = { billing_hold_outcome: outcome, billing_hold_closed_at: new Date().toISOString(),
+                billing_hold_closed_by: (user && user.email) || 'admin' };
+
+  if(outcome === 'released'){
+    var notRedone = rows.filter(function(p){ return !p.revisit_done_at; });
+    if(!confirm('Release ' + rows.length + ' line' + (rows.length===1?'':'s') + ' back onto the invoice?\n\n'
+      + 'You are saying the charge stands and Freshpet should pay it.\n'
+      + (notRedone.length
+         ? '\n\u26a0 ' + notRedone.length + ' of these has NOT been re-documented yet — releasing it means the\n'
+           + 'original paperwork is what you are standing behind.\n' : ''))) return;
+  } else {
+    var suggested = rows.reduce(function(t,p){ return t + Number(p.bill_amount||0); }, 0);
+    var typed = prompt('Credit ' + rows.length + ' line' + (rows.length===1?'':'s') + '.\n\n'
+      + 'Total credit amount in dollars. The line value is ' + fmtMoney(suggested) + ', but a negotiated\n'
+      + 'credit is a decision, not arithmetic — type what was actually agreed.\n\n'
+      + 'It is split evenly across the selected lines.', String(suggested));
+    if(typed === null) return;
+    var amt = Number(String(typed).replace(/[^0-9.\-]/g,''));
+    if(!(amt >= 0)) return toast('That is not an amount','err');
+    patch.credit_amount = Math.round((amt / rows.length) * 100) / 100;
+    if(!confirm('Credit ' + fmtMoney(amt) + ' across ' + rows.length + ' line' + (rows.length===1?'':'s')
+      + ' (' + fmtMoney(patch.credit_amount) + ' each)?\n\n'
+      + 'This records the credit on our side. Issuing it in QuickBooks is a separate step.')) return;
+  }
+
+  holdBusy = true; render();
+  try{
+    var { error } = await sb.from('completed_pms').update(patch).in('id', rows.map(function(p){ return p.id; }));
+    if(error) throw error;
+    holdSel = {};
+    await loadAll();
+    toast(rows.length + ' line' + (rows.length===1?'':'s') + ' ' + outcome, 'ok');
+  }catch(e){ toast('Failed: ' + e.message, 'err'); }
+  holdBusy = false; render();
+}
+
+function renderHolds(){
+  var hs = holdStats();
+  if(!hs.reports && !completedPMs.some(function(p){ return p.billing_hold_at; })) return '';
+  if(!hs.reports){
+    return '<div class="card" style="border-left:4px solid var(--gn)"><h3 style="color:var(--gn);margin-top:0">'
+      + icon('check') + ' No amounts on hold</h3>'
+      + '<div class="hint">Every disputed line has been released or credited.</div></div>';
+  }
+  var sel = holdSelectedIds();
+  var list = hs.rows.slice().sort(function(a,b){
+    if(!!b.revisit_done_at !== !!a.revisit_done_at) return b.revisit_done_at ? 1 : -1;
+    return String(a.store||'').localeCompare(String(b.store||''));
+  });
+
+  var h = '<div class="card" style="border-left:4px solid var(--am)">'
+    + '<h3 style="margin-top:0;color:var(--am)">' + icon('alert') + ' ' + fmtMoney(hs.amount) + ' on hold</h3>'
+    + '<div class="hint">' + hs.reports + ' visit' + (hs.reports===1?'':'s') + ' across ' + hs.units
+    + ' unit' + (hs.units===1?'':'s') + ' are in dispute and shown to Freshpet in the portal as '
+    + '<strong>not payable</strong>. A hold changes nothing about what was invoiced — it is our statement '
+    + 'about specific lines on it. Close each one by <strong>releasing</strong> it (re-documented, the charge '
+    + 'stands) or <strong>crediting</strong> it.'
+    + (hs.uninvoiced ? ' A further ' + hs.uninvoiced + ' held visit' + (hs.uninvoiced===1?' is':'s are')
+        + ' not invoiced at all and cannot be selected for an invoice while held.' : '')
+    + '</div>';
+
+  if(hs.invoices.length){
+    h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0">'
+      + hs.invoices.map(function(iv){
+          return '<span class="pill am">Invoice #' + esc(iv.invoice) + ' · ' + iv.reports
+            + ' visit' + (iv.reports===1?'':'s') + ' · ' + fmtMoney(iv.amount) + '</span>'; }).join('')
+      + '</div>';
+  }
+  if(hs.ready){
+    h += '<div class="hint" style="color:var(--gn)">' + hs.ready + ' of these ' + (hs.ready===1?'has':'have')
+      + ' been re-documented and ' + (hs.ready===1?'is':'are') + ' ready for you to release or credit.</div>';
+  }
+
+  h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0">'
+    + '<button class="btn o sm" onclick="holdSelectAll()">'
+      + (list.every(function(p){ return holdSel[p.id]; }) ? 'Deselect all' : 'Select all ' + list.length) + '</button>'
+    + (hs.ready ? '<button class="btn o sm" onclick="holdSelectAll(true)">Select the ' + hs.ready + ' re-documented</button>' : '')
+    + '<span class="muted" style="font-size:.8rem">' + sel.length + ' selected</span>'
+    + '<button class="btn gn sm" onclick="closeHold(\'released\')" ' + ((holdBusy||!sel.length)?'disabled':'') + '>Release — charge stands</button>'
+    + '<button class="btn o sm" onclick="closeHold(\'credited\')" ' + ((holdBusy||!sel.length)?'disabled':'') + '>Credit</button>'
+    + '</div>';
+
+  h += '<div style="overflow-x:auto;max-height:380px;overflow-y:auto"><table><thead><tr>'
+    + '<th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th>Invoice</th>'
+    + '<th>Amount</th><th>State</th></tr></thead><tbody>';
+  list.forEach(function(p){
+    h += '<tr>'
+      + '<td><input type="checkbox" ' + (holdSel[p.id]?'checked':'') + ' onclick="holdToggle(' + p.id + ')"></td>'
+      + '<td>' + esc(p.store||'') + '</td>'
+      + '<td class="mono" style="font-size:.8rem">' + esc(p.serial||'—') + '</td>'
+      + '<td>' + esc(p.pm_date||'') + '</td>'
+      + '<td>' + (p.billed ? '#' + esc(p.invoice_doc_number||'—') : '<span class="pill dim">not invoiced</span>') + '</td>'
+      + '<td class="mono">' + (p.billed ? fmtMoney(p.bill_amount) : '—') + '</td>'
+      + '<td>' + (p.revisit_done_at
+          ? '<span class="pill gn">Re-documented ' + esc(String(p.revisit_done_at).slice(0,10)) + '</span>'
+          : '<span class="pill am">Awaiting re-shoot</span>') + '</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
 function renderBilling(){
   var h = '';
+  // What is in dispute comes before anything about invoicing, so nobody raises
+  // an invoice without seeing it.
+  h += renderHolds();
   // ── Portal access ──
   var viewers = techs.filter(function(t){ return t.role==='freshpet'; });
   h += '<div class="card"><h3>Freshpet portal access</h3><div class="hint">Grant a Freshpet contact read-only access to the completed-calls portal at <span class="mono">/portal</span>. Granting sends a <strong>walkthrough invite email</strong> with a one-time set-password link, so they can sign in with plain email + password (Google works too, but isn\'t required). The email also notes that anything before <strong>6/1/2026</strong> lives on the previous system, with the archive-folder link below. Viewers can reset their own password any time via "Forgot password?" on the sign-in page.</div>';
@@ -1418,7 +1621,83 @@ var AUDIT_LABEL = {
   no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
 };
 var auditBusy = false;
-function auditPm(id){ return completedPMs.find(function(p){ return p.id===id; }) || {}; }
+var auditSel = {};   // { finding id: true }
+var holdBusy = false;
+var holdSel = {};    // { pm id: true } — lines whose hold is being closed
+function holdToggle(id){ if(holdSel[id]) delete holdSel[id]; else holdSel[id]=true; render(); }
+function holdSelectedIds(){ return Object.keys(holdSel).filter(function(k){ return holdSel[k]; }).map(Number); }
+function holdSelectAll(onlyRedone){
+  var list = holdStats().rows.filter(function(p){ return onlyRedone ? !!p.revisit_done_at : true; });
+  var allSel = list.length && list.every(function(p){ return holdSel[p.id]; });
+  list.forEach(function(p){ if(allSel) delete holdSel[p.id]; else holdSel[p.id]=true; });
+  render();
+}
+
+function auditToggle(id){ if(auditSel[id]) delete auditSel[id]; else auditSel[id]=true; render(); }
+function auditSelectedIds(){ return Object.keys(auditSel).filter(function(k){ return auditSel[k]; }).map(Number); }
+function auditSelectedFindings(){
+  var ids = auditSelectedIds();
+  return auditFindings.filter(function(f){ return ids.indexOf(f.id) >= 0; });
+}
+// Select-all over a named group, or over everything when no check is given.
+function auditSelectAll(check){
+  var list = check ? auditFindings.filter(function(f){ return f.check_name===check; }) : auditFindings;
+  var allSel = list.length && list.every(function(f){ return auditSel[f.id]; });
+  list.forEach(function(f){ if(allSel) delete auditSel[f.id]; else auditSel[f.id]=true; });
+  render();
+}
+
+// Clearing findings you have looked at is the whole point of a worklist: the
+// board is supposed to go quiet once you have been through it and stay quiet.
+// The reason is required and recorded, so "cleared" never means "hidden".
+async function bulkDismiss(){
+  var ids = auditSelectedIds();
+  if(!ids.length) return toast('Select the findings to clear','err');
+  var why = prompt('Clearing ' + ids.length + ' finding' + (ids.length===1?'':'s') + '.\n\n'
+    + 'Why? (recorded on each row — say what you checked or did)');
+  if(why === null) return;
+  if(!String(why).trim()) return toast('A reason is required','err');
+  auditBusy = true; render();
+  try{
+    var { data:{ user: u } } = await sb.auth.getUser();
+    var { error } = await sb.from('pm_audit_findings').update({
+      dismissed_at: new Date().toISOString(),
+      dismissed_by: ((u && u.email) || 'admin') + ' — ' + String(why).trim()
+    }).in('id', ids);
+    if(error) throw error;
+    auditSel = {};
+    await loadAll();
+    toast(ids.length + ' finding' + (ids.length===1?'':'s') + ' cleared','ok');
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+  auditBusy = false; render();
+}
+
+// Send the selected stops back out. The findings do not need dismissing
+// afterwards — the board drops anything a re-shoot supersedes on its next read.
+async function bulkReshootFromAudit(){
+  var fs = auditSelectedFindings();
+  if(!fs.length) return toast('Select the findings to send back out','err');
+  var pmIds = []; fs.forEach(function(f){ if(pmIds.indexOf(f.pm_id)<0) pmIds.push(f.pm_id); });
+  var reason = (document.getElementById('auditRvReason')||{}).value || 'unverifiable';
+  if(!confirm('Send ' + pmIds.length + ' stop' + (pmIds.length===1?'':'s') + ' back out for a re-shoot?\n\n'
+    + 'Reason: ' + (REVISIT_REASONS[reason]||reason) + '\n\n'
+    + 'Each one has its photographs disconnected (kept on file) and goes back on the route.\n'
+    + 'They drop off this board straight away — they are tracked on the re-shoot banner from then on.')) return;
+  auditBusy = true; render();
+  var r = await orderReshootFor(pmIds, reason);
+  auditSel = {};
+  await loadAll();
+  toast(r.ok + ' stop' + (r.ok===1?'':'s') + ' sent back out'
+    + (r.skipped ? ' · ' + r.skipped + ' already open' : '')
+    + (r.fail ? ' · ' + r.fail + ' failed' : ''), r.fail ? 'err' : 'ok');
+  auditBusy = false; render();
+}
+// The finding row carries the report's own details (the view joins them), so a
+// finding renders correctly even for a report outside the loaded page set.
+function auditPm(id, f){
+  if (f && f.store) return f;
+  return completedPMs.find(function(p){ return p.id===id; }) || {};
+}
 // fp-pdfs is a public bucket, so the report opens straight from the row.
 function openPdf(path){ window.open(SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + encodeURIComponent(path), '_blank', 'noopener'); }
 
@@ -1449,7 +1728,8 @@ function renderAudit(){
   var ambers = auditFindings.filter(function(f){ return f.severity==='amber'; });
   var infos = auditFindings.filter(function(f){ return f.severity==='info'; });
 
-  var h = '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'
+  var h = renderRevisitBanner()
+    + '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'
     + '<div style="flex:1;min-width:220px"><h3>Nightly audit</h3>'
     + '<div class="hint">Every check here is a defect the invoice #172825 review had to find by hand. It runs automatically at <strong>02:10 Pacific</strong> over the last 45 days of work and re-checks everything, so a problem is caught the night it happens rather than when a customer reads an invoice. Findings <strong>clear themselves</strong> once the report is fixed — this is a worklist, not a log.</div></div>'
     + '<button class="btn o sm" style="flex:none" onclick="runAuditNow()" '+(auditBusy?'disabled':'')+'>'+(auditBusy?'Running…':icon('refresh')+' Run it now')+'</button>'
@@ -1461,9 +1741,36 @@ function renderAudit(){
     + '</div></div>';
 
   if(!auditFindings.length){
-    h += '<div class="card"><div class="empty" style="padding:26px">Nothing outstanding. Every PM in the last 45 days passes every check.</div></div>';
+    h += '<div class="card"><div class="empty" style="padding:26px">'
+      + '<div style="font-size:1.05rem;color:var(--gn);font-weight:700">Nothing outstanding</div>'
+      + '<div class="muted" style="margin-top:6px">Every PM in the last 45 days passes every check, or has been cleared or sent back out. '
+      + 'It stays this way until something new comes in.</div></div></div>';
     return h;
   }
+
+  // Bulk bar. A worklist you can only clear one row at a time is a worklist
+  // nobody finishes, and an audit that never goes quiet stops being read.
+  var sel = auditSelectedIds();
+  var allSelected = auditFindings.length && auditFindings.every(function(f){ return auditSel[f.id]; });
+  h += '<div class="card" style="position:sticky;top:0;z-index:5">'
+    + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    + '<button class="btn o sm" onclick="auditSelectAll()">'+(allSelected?'Deselect all':'Select all '+auditFindings.length)+'</button>'
+    + '<span class="muted">'+sel.length+' selected</span>'
+    + '<div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<select id="auditRvReason" style="max-width:230px">'
+    + Object.keys(REVISIT_REASONS).map(function(k){
+        return '<option value="'+k+'"'+(k==='unverifiable'?' selected':'')+'>'+esc(REVISIT_REASONS[k])+'</option>'; }).join('')
+    + '</select>'
+    + '<button class="btn pu sm" onclick="bulkReshootFromAudit()" '+(auditBusy||!sel.length?'disabled':'')+'>'
+    + icon('refresh')+' Send back out</button>'
+    + '<button class="btn o sm" onclick="bulkDismiss()" '+(auditBusy||!sel.length?'disabled':'')+'>'
+    + icon('check')+' Clear selected</button>'
+    + '</div></div>'
+    + '<div class="muted" style="font-size:.76rem;margin-top:8px">'
+    + '<strong>Clear</strong> = you looked and it is fine or already handled; a reason is required and recorded. '
+    + '<strong>Send back out</strong> = order a re-shoot; the stop moves to the re-shoot board and leaves this one. '
+    + 'Either way it does not come back.</div>'
+    + '</div>';
 
   var byCheck = {};
   auditFindings.forEach(function(f){ (byCheck[f.check_name]=byCheck[f.check_name]||[]).push(f); });
@@ -1479,12 +1786,16 @@ function renderAudit(){
   order.forEach(function(k){
     var meta = AUDIT_LABEL[k] || ['dim', k, ''];
     var rows = byCheck[k];
-    h += '<div class="card"><h3><span class="pill '+meta[0]+'">'+rows.length+'</span> '+esc(meta[1])+'</h3>';
+    var groupAll = rows.every(function(f){ return auditSel[f.id]; });
+    h += '<div class="card"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<h3 style="margin:0;flex:1"><span class="pill '+meta[0]+'">'+rows.length+'</span> '+esc(meta[1])+'</h3>'
+      + '<button class="btn o sm" style="flex:none" onclick="auditSelectAll(\''+k+'\')">'+(groupAll?'Deselect':'Select these '+rows.length)+'</button></div>';
     if(meta[2]) h += '<div class="hint">'+esc(meta[2])+'</div>';
-    h += '<div style="overflow-x:auto;max-height:360px;overflow-y:auto"><table><thead><tr><th>Date</th><th>Store</th><th>Serial</th><th class="hide">Tech</th><th>What the audit saw</th><th></th></tr></thead><tbody>';
+    h += '<div style="overflow-x:auto;max-height:360px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Date</th><th>Store</th><th>Serial</th><th class="hide">Tech</th><th>What the audit saw</th><th></th></tr></thead><tbody>';
     rows.forEach(function(f){
-      var p = auditPm(f.pm_id);
-      h += '<tr><td style="white-space:nowrap">'+esc(p.pm_date||'')+'</td>'
+      var p = auditPm(f.pm_id, f);
+      h += '<tr><td><input type="checkbox" '+(auditSel[f.id]?'checked':'')+' onclick="auditToggle('+f.id+')"></td>'
+        + '<td style="white-space:nowrap">'+esc(p.pm_date||'')+'</td>'
         + '<td>'+esc(p.store||('report '+f.pm_id))+'</td>'
         + '<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
         + '<td class="hide">'+esc(p.tech_name||'')+'</td>'
@@ -1631,6 +1942,90 @@ function revisitPicker(p){
     + '<select id="rvr_' + p.id + '" style="margin-left:6px;padding:3px 6px;font-size:.72rem;max-width:150px">' + opts + '</select>';
 }
 
+// Ordering a re-visit, once. Called from the Report Issues tab and from the
+// Nightly Audit tab — two entry points must not grow two slightly different
+// ideas of what a re-visit does to a report.
+async function orderReshootFor(ids, reason){
+  var ok = 0, skipped = 0, fail = 0;
+  for(var i=0;i<ids.length;i++){
+    var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
+    // Already open: ordering again would wipe the cleared-photo record it is
+    // holding, which is the only copy of what was disconnected.
+    if(!p || (p.revisit_requested_at && !p.revisit_done_at)) { skipped++; continue; }
+    try{
+      var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
+      var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
+      var fd = cur && cur.form_data ? cur.form_data : {};
+      if(cleared.length) fd.revisit_cleared_photos = cleared;
+      fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
+        + 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': ' + (REVISIT_REASONS[reason]||reason)
+        + '. Photograph(s) disconnected and kept on file; the stop is scheduled to be serviced and photographed again.');
+      var { error } = await sb.from('completed_pms').update({
+        photo_paths: [], photo_hashes: [],
+        revisit_requested_at: new Date().toISOString(),
+        revisit_requested_by: (user && user.email) || 'admin',
+        revisit_reason: reason, needs_review: true, form_data: fd,
+        modified_at: new Date().toISOString(),
+        modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
+      }).eq('id', p.id);
+      if(error) throw error; ok++;
+    }catch(e){ fail++; }
+  }
+  return { ok: ok, skipped: skipped, fail: fail };
+}
+
+// Clearing an issue a re-shoot cannot answer.
+//
+// Two of the flags are questions for FRESHPET, not work for a tech: a serial
+// that is not on their asset list, and a billing credit. Driving somebody back
+// out changes nothing about either, so ordering a re-shoot is the wrong button
+// and the row would otherwise sit on the board forever. This is the right one:
+// it records what settled the question and takes the row off.
+//
+// The prior flag is written into the audit note before 'resolved' overwrites
+// it, so clearing a row never erases what it was flagged for.
+async function bulkMarkHandled(){
+  var ids = riSelectedIds();
+  if(!ids.length) return toast('Select the rows to clear','err');
+  var why = prompt('Mark ' + ids.length + ' issue' + (ids.length===1?'':'s') + ' handled.\n\n'
+    + 'Say what settled it. This is written onto each report and is the record of\n'
+    + 'why it left the board.\n\n'
+    + 'e.g. Freshpet confirmed both serials and added them to the asset list.');
+  if(why === null) return;
+  why = (why||'').trim();
+  if(!why) return toast('Say what settled it — a row cannot leave the board silently','err');
+
+  rvBusy = true; render();
+  var ok = 0, skipped = 0, fail = 0;
+  for(var i=0;i<ids.length;i++){
+    var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
+    // A stop the tech still owes is not handled. Its flags stay until the
+    // re-shoot closes them (fn_close_revisit).
+    if(!p || (p.revisit_requested_at && !p.revisit_done_at)) { skipped++; continue; }
+    try{
+      var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
+      var fd = cur && cur.form_data ? cur.form_data : {};
+      fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
+        + 'HANDLED ' + new Date().toISOString().slice(0,10) + ' by ' + ((user && user.email) || 'admin')
+        + (p.audit_flag ? ' (was flagged: ' + p.audit_flag + ')' : '') + ': ' + why);
+      var { error } = await sb.from('completed_pms').update({
+        needs_review: false,
+        audit_flag: p.audit_flag ? 'resolved' : null,
+        form_data: fd,
+        modified_at: new Date().toISOString(),
+        modified_by: 'issue marked handled by ' + ((user && user.email) || 'admin')
+      }).eq('id', p.id);
+      if(error) throw error; ok++;
+    }catch(e){ fail++; }
+  }
+  riSel = {};
+  await loadAll();
+  toast(ok + ' issue' + (ok===1?'':'s') + ' cleared'
+    + (skipped ? ' · ' + skipped + ' skipped (re-shoot still open)' : '')
+    + (fail ? ' · ' + fail + ' failed' : ''), fail ? 'err' : 'ok');
+  rvBusy = false; render();
+}
+
 function bulkRevisit(){
   var ids = riSelectedIds();
   if(!ids.length) return toast('Select the stops to re-visit','err');
@@ -1640,29 +2035,8 @@ function bulkRevisit(){
     + 'Each one has its photo evidence disconnected (kept on file) and goes back on the route to be redone.')) return;
   (async function(){
     rvBusy = true; render();
-    var ok = 0, fail = 0;
-    for(var i=0;i<ids.length;i++){
-      var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
-      if(!p || (p.revisit_requested_at && !p.revisit_done_at)) continue;
-      try{
-        var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
-        var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
-        var fd = cur && cur.form_data ? cur.form_data : {};
-        if(cleared.length) fd.revisit_cleared_photos = cleared;
-        fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
-          + 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': ' + (REVISIT_REASONS[reason]||reason)
-          + '. Photograph(s) disconnected and kept on file; the stop is scheduled to be serviced and photographed again.');
-        var { error } = await sb.from('completed_pms').update({
-          photo_paths: [], photo_hashes: [],
-          revisit_requested_at: new Date().toISOString(),
-          revisit_requested_by: (user && user.email) || 'admin',
-          revisit_reason: reason, needs_review: true, form_data: fd,
-          modified_at: new Date().toISOString(),
-          modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
-        }).eq('id', p.id);
-        if(error) throw error; ok++;
-      }catch(e){ fail++; }
-    }
+    var r = await orderReshootFor(ids, reason);
+    var ok = r.ok, fail = r.fail;
     riSel = {};
     await loadAll();
     toast(ok + ' stop' + (ok===1?'':'s') + ' queued for re-visit' + (fail ? ' · ' + fail + ' failed' : ''), fail ? 'err' : 'ok');
@@ -1675,6 +2049,9 @@ function riList(){
   var q=(riSearch||'').trim().toLowerCase();
   return completedPMs.filter(function(p){
     if(p.prev_comp) return false;
+    // The 'issues' view is what is NOT already on the re-shoot board; open
+    // re-shoots have their own pill and banner.
+    if(riFilter==='issues' && (p.revisit_requested_at && !p.revisit_done_at)) return false;
     if(riFilter==='issues' && !(p.added_asset || p.needs_review)) return false;
     if(riFilter==='added' && !p.added_asset) return false;
     if(riFilter==='review' && !p.needs_review) return false;
@@ -1743,6 +2120,7 @@ function renderReportIssues(){
   // filters + search
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
     +'<div class="seg">'
+      +'<button class="'+(riFilter==='revisit'?'on':'')+'" onclick="riFilter=\'revisit\';render()" title="Ordered for a re-shoot and not yet re-documented">Open re-shoots ('+revisitStats().open+')</button>'
       +'<button class="'+(riFilter==='needphoto'?'on':'')+'" onclick="riFilter=\'needphoto\';render()" title="No photograph of this unit\'s own serial plate exists - a re-visit is required">Needs photo ('+needPhotoN+')</button>'
       +'<button class="'+(riFilter==='reused'?'on':'')+'" onclick="riFilter=\'reused\';render()" title="A photograph on this report also appears on a report for a DIFFERENT unit - the defect the customer found">Reused photo ('+reusedN+')</button>'
       +'<button class="'+(riFilter==='noserial'?'on':'')+'" onclick="riFilter=\'noserial\';render()" title="The tech could not find or read a serial plate on this unit - it cannot be tied to a listed asset">No serial ('+noSerialN+')</button>'
@@ -1754,7 +2132,7 @@ function renderReportIssues(){
       +'<button class="'+(riFilter==='all'?'on':'')+'" onclick="riFilter=\'all\';render()">All PMs</button>'
     +'</div>'
     +'<input type="search" placeholder="Search store, serial, tech…" value="'+esc(riSearch)+'" oninput="riSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
-    +(list.length?'<button class="btn o sm" onclick="riSelectAll()">'+(list.every(function(p){return riSel[p.id];})&&list.length?'Deselect shown':'✓ Select shown')+'</button>':'')
+    +(list.length?'<button class="btn o sm" onclick="riSelectAll()" title="Selects every row this filter and search are showing — not just the visible scroll">'+(list.every(function(p){return riSel[p.id];})?'Deselect all '+list.length:'✓ Select all '+list.length)+'</button>':'')
     +'<span class="muted" style="font-size:.8rem">'+sel.length+' selected</span>'
     +'</div>';
 
@@ -1765,7 +2143,8 @@ function renderReportIssues(){
       +Object.keys(REVISIT_REASONS).map(function(k){ return '<option value="'+k+'">'+esc(REVISIT_REASONS[k])+'</option>'; }).join('')
       +'</select>'
       +'<button class="btn pu sm" onclick="bulkRevisit()" '+(rvBusy?'disabled':'')+'>'+icon('refresh')+' Order re-visits</button>'
-      +'<span class="muted" style="font-size:.76rem">Disconnects each report\'s photo evidence (kept on file) and puts the stop back on the route.</span>'
+      +'<button class="btn o sm" onclick="bulkMarkHandled()" '+(rvBusy?'disabled':'')+'>Mark handled</button>'
+      +'<span class="muted" style="font-size:.76rem;flex:1 1 100%"><strong>Order re-visits</strong> disconnects each report\'s photo evidence (kept on file) and puts the stop back on the route — use it for a missing or reused photograph. <strong>Mark handled</strong> clears the row for something a re-shoot cannot fix (a serial Freshpet needs to add, a billing credit); it asks what settled it and writes that onto the report.</span>'
     +'</div>';
   }
 

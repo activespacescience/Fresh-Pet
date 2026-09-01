@@ -95,6 +95,16 @@ select:focus,input:focus{border-color:var(--ac)}
 .pill.iv{color:var(--am);border-color:var(--am);background:rgba(207,138,23,.14)}
 .pill.dim{color:var(--dim)}
 .pill.rs{color:#155E9B;border-color:#8FC4EA;background:#E2F0FB}
+.pill.hold{color:#8A4B00;border-color:#E8B368;background:#FDF1DF}
+.call.hold{border-left:4px solid #E8B368}
+.holdbar{border:1px solid #E8B368;border-left-width:5px;border-radius:12px;background:#FDF1DF;
+  padding:14px 16px;margin:0 0 16px;color:#5E3400}
+.holdbar h4{margin:0 0 6px;font-size:.95rem;font-weight:800;color:#8A4B00;letter-spacing:.02em}
+.holdbar .amt{font-size:1.5rem;font-weight:800;color:#8A4B00;line-height:1.1}
+.holdbar p{margin:8px 0 0;font-size:.83rem;line-height:1.55}
+.holdbar .lines{margin-top:10px;display:flex;flex-wrap:wrap;gap:8px}
+.holdbar .lines span{font-size:.78rem;font-weight:700;background:#fff;border:1px solid #E8B368;
+  border-radius:999px;padding:4px 10px}
 .call.rs{border-left:4px solid #8FC4EA}
 .call.sup{opacity:.72}
 .call .dt{font-size:.78rem;color:var(--tx2);margin-top:9px;font-family:var(--mono);font-variant-numeric:tabular-nums}
@@ -181,7 +191,7 @@ var liEmail = '';         // email field value, kept across re-renders
 var recovering = false;   // true while a token_hash set-password flow is live
 var resetBusy = false, setPassBusy = false;
 var pms = [], assets = {};
-var fSearch = '', fCity = '', fMonth = '', fInvoice = '';
+var fSearch = '', fCity = '', fMonth = '', fInvoice = '', fHold = '';
 var groupBy = 'invoice';   // 'invoice' | 'month'
 var expanded = {};         // { sectionKey: true } — invoice sections start collapsed
 var authBusy = false;
@@ -251,7 +261,11 @@ function renderByInvoice(list){
     var pdf = ''; for(var i=0;i<rows.length;i++){ if(rows[i].invoice_pdf_path){ pdf = invoicePdfUrl(rows[i]); break; } }
     var open = expanded[k] || (!touched && idx===0);
     var title = isNone ? 'Not yet invoiced' : ('Invoice #'+esc(k));
-    var meta = rows.length+' visit'+(rows.length===1?'':'s') + (isNone?'':' · '+money(total)) + (when&&!isNone?' · '+when:'');
+    var gh = holdForInvoice(rows);
+    var meta = rows.length+' visit'+(rows.length===1?'':'s') + (isNone?'':' · '+money(total)) + (when&&!isNone?' · '+when:'')
+      + (gh.count ? ' · <span style="color:#8A4B00;font-weight:800">'+(isNone
+          ? gh.count+' on hold'
+          : money(gh.amount)+' on hold — not payable')+'</span>' : '');
 
     h += '<div class="inv">';
     h += '<div class="inv-h'+(open?' open':'')+'" onclick="toggleSection(\''+esc(String(k)).replace(/'/g,"\\'")+'\')">'
@@ -265,6 +279,44 @@ function renderByInvoice(list){
   return h;
 }
 
+// ── Amounts in dispute ──────────────────────────────────────────────────────
+// A HOLD IS NOT A CREDIT and the portal must not imply otherwise. The invoice
+// still says what it said; the hold is our statement that we are not asking to
+// be paid for those lines until the unit has been documented properly. Showing
+// it here rather than in a letter is the point: the customer can see exactly
+// which visits, on which invoice, and what it comes to.
+function onHold(p){ return !!p.billing_hold_at && !p.billing_hold_outcome; }
+function holdSummary(){
+  var rows = pms.filter(onHold);
+  var byInv = {}, amount = 0, units = {}, redone = 0;
+  rows.forEach(function(p){
+    units[p.serial || p.asset_id] = 1;
+    if (p.revisit_done_at) redone++;
+    if (p.billed && p.invoice_doc_number){
+      var k = p.invoice_doc_number;
+      if(!byInv[k]) byInv[k] = { invoice:k, reports:0, amount:0 };
+      byInv[k].reports++; byInv[k].amount += Number(p.bill_amount||0);
+      amount += Number(p.bill_amount||0);
+    }
+  });
+  var uninvoiced = rows.filter(function(p){ return !p.billed; }).length;
+  return { rows:rows, reports:rows.length, units:Object.keys(units).length,
+           amount:amount, redone:redone,
+           invoices:Object.keys(byInv).sort().map(function(k){ return byInv[k]; }),
+           uninvoiced:uninvoiced,
+           // Held lines that are actually ON an invoice. The other kind is held
+           // the opposite way round — it has not gone out and will not — so
+           // counting them together beside "Invoiced visits" would overstate
+           // what is being disputed on a bill Freshpet is holding.
+           invoicedHeld: rows.length - uninvoiced };
+}
+// What is on hold for one invoice group, so a total is never shown without the
+// qualification sitting right next to it.
+function holdForInvoice(rows){
+  var held = rows.filter(onHold);
+  return { count: held.length, amount: held.reduce(function(t,p){ return t + Number(p.bill_amount||0); }, 0) };
+}
+
 // Reusable completed-call card.
 function callCard(p){
   var a = assets[p.asset_id]||{};
@@ -276,13 +328,15 @@ function callCard(p){
   // this whole exercise came from.
   var isRs = p.visit_type==='reshoot' || !!fd.reshoot_of_pm_id;
   var superseded = !!p.revisit_done_pm_id;
-  return '<button class="call'+(isRs?' rs':'')+(superseded?' sup':'')+'" onclick="openCall('+p.id+')">'
+  var held = onHold(p);
+  return '<button class="call'+(isRs?' rs':'')+(superseded?' sup':'')+(held?' hold':'')+'" onclick="openCall('+p.id+')">'
     + '<div class="st">'+esc(p.store||a.store||('Asset '+p.asset_id))+'</div>'
     + '<div class="ct">'+esc([p.city||a.city, a.state].filter(Boolean).join(', ')||'')+'</div>'
     + '<div class="meta">'
     + (isRs ? '<span class="pill rs">'+icon('camera')+' Re-shoot — no charge</span>'
             : '<span class="pill gn">✓ Completed</span>')
     + (superseded?'<span class="pill dim">Re-documented later</span>':'')
+    + (held?'<span class="pill hold">'+icon('alert')+' On hold — not payable</span>':'')
     + (p.billed?'<span class="pill iv">'+icon('receipt')+' Invoice #'+esc(p.invoice_doc_number||'—')+'</span>':'')
     + ((p.form_data&&p.form_data.legacy)?'<span class="pill dim">'+icon('archive')+' Legacy</span>':'')
     + (nPhotos?'<span class="pill ac">'+icon('camera')+' '+nPhotos+'</span>':'')
@@ -484,12 +538,18 @@ function filtered(){
     if (fMonth && monthKey(p.pm_date)!==fMonth) return false;
     if (fInvoice==='__none' && p.billed) return false;
     if (fInvoice && fInvoice!=='__none' && String(p.invoice_doc_number||'')!==fInvoice) return false;
+    if (fHold && !onHold(p)) return false;
     if (!q) return true;
     var a = assets[p.asset_id]||{};
     return ((p.store||'')+' '+(p.city||a.city||'')+' '+(p.serial||'')+' '+(a.address||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
   });
 }
-function setF(k,v){ if(k==='search')fSearch=v; if(k==='city')fCity=v; if(k==='month')fMonth=v; if(k==='invoice')fInvoice=v; render(); if(k==='search'){ var el=document.getElementById('f_search'); if(el){ el.focus(); var n=el.value.length; el.setSelectionRange(n,n); } } }
+function setF(k,v){ if(k==='search')fSearch=v; if(k==='city')fCity=v; if(k==='month')fMonth=v; if(k==='invoice')fInvoice=v;
+  // The hold view is a lens on everything, so it clears the other filters
+  // rather than intersecting with whatever was set — "show me what is on hold"
+  // returning nothing because a city was selected would read as "nothing is".
+  if(k==='hold'){ fHold=v; if(v){ fInvoice=''; fCity=''; fMonth=''; fSearch=''; } }
+  render(); if(k==='search'){ var el=document.getElementById('f_search'); if(el){ el.focus(); var n=el.value.length; el.setSelectionRange(n,n); } } }
 
 // ═══ render ═══
 function render(){
@@ -572,11 +632,44 @@ function render(){
   var mCount = pms.filter(function(p){ return monthKey(p.pm_date)===thisMonth; }).length;
   var storeSet = {}; pms.forEach(function(p){ storeSet[p.store||p.asset_id]=1; });
   var invoicedCount = pms.filter(function(p){ return p.billed; }).length;
+  // The hold goes ABOVE the numbers, not in a footnote. A customer reading a
+  // total needs to know first that part of it is not being asked for.
+  var hs = holdSummary();
+  if (hs.reports){
+    h += '<div class="holdbar">'
+       + '<h4>'+icon('alert')+' AMOUNTS ON HOLD — NOT PAYABLE</h4>'
+       + '<div class="amt">'+money(hs.amount)+'</div>'
+       + '<p>Our photographic documentation for <strong>'+hs.units+' cooler'+(hs.units===1?'':'s')+'</strong> '
+       + '('+hs.reports+' visit'+(hs.reports===1?'':'s')+') will not stand up to review, so we have placed those '
+       + 'lines on hold. <strong>Please do not pay them.</strong> Each of these stops is being serviced and '
+       + 'photographed again at no charge to you; when a unit has been re-documented we will either release the '
+       + 'line or credit it, and this page will say which.</p>'
+       + '<p>The invoices themselves are unchanged — this is our statement about specific lines on them, not a '
+       + 'revised invoice.</p>';
+    if (hs.invoices.length){
+      h += '<div class="lines">' + hs.invoices.map(function(iv){
+        return '<span>Invoice #'+esc(iv.invoice)+' · '+iv.reports+' visit'+(iv.reports===1?'':'s')+' · '+money(iv.amount)+'</span>';
+      }).join('') + '</div>';
+    }
+    if (hs.uninvoiced){
+      h += '<p>A further <strong>'+hs.uninvoiced+' visit'+(hs.uninvoiced===1?'':'s')+'</strong> in the same '
+         + 'condition '+(hs.uninvoiced===1?'has':'have')+' not been invoiced at all and will not be until '
+         + (hs.uninvoiced===1?'it is':'they are')+' re-documented.</p>';
+    }
+    if (hs.redone){
+      h += '<p>'+hs.redone+' of these '+(hs.redone===1?'has':'have')+' already been re-documented and '
+         + (hs.redone===1?'is':'are')+' awaiting our review.</p>';
+    }
+    h += '<p style="margin-top:10px"><a href="#" onclick="setF(\'hold\',\'1\');return false"><strong>Show me the '+hs.reports+' visit'+(hs.reports===1?'':'s')+' on hold &rarr;</strong></a></p>'
+       + '</div>';
+  }
+
   h += '<div class="stats">'
      + '<div class="stat"><div class="v">'+pms.length+'</div><div class="k">Completed visits</div></div>'
      + '<div class="stat"><div class="v">'+mCount+'</div><div class="k">This month</div></div>'
      + '<div class="stat"><div class="v">'+Object.keys(storeSet).length+'</div><div class="k">Stores serviced</div></div>'
-     + '<div class="stat"><div class="v">'+invoicedCount+'</div><div class="k">Invoiced visits</div></div>'
+     + '<div class="stat"><div class="v">'+invoicedCount+'</div><div class="k">Invoiced visits'
+       + (hs.invoicedHeld?'<br><span style="color:#8A4B00;font-weight:700">'+hs.invoicedHeld+' on hold</span>':'')+'</div></div>'
      + '</div>';
 
   // filters
@@ -599,6 +692,11 @@ function render(){
        + '</div></div>'
      + '</div>';
 
+  if (fHold){
+    h += '<div style="margin:0 0 12px"><span class="pill hold" style="font-size:.82rem;padding:6px 12px">'
+       + icon('alert')+' Showing only the '+list.length+' visit'+(list.length===1?'':'s')+' on hold</span> '
+       + '<a href="#" onclick="setF(\'hold\',\'\');return false" style="font-size:.8rem;margin-left:8px">Show everything &rarr;</a></div>';
+  }
   if(!list.length){ h += '<div class="empty">No completed calls match your filters.</div>'; }
   else if(groupBy==='invoice'){ h += renderByInvoice(list); }
   else { h += renderByMonth(list); }
@@ -628,6 +726,35 @@ function openCall(id){
   // The other side of the pair: the original says it was re-documented and
   // points at the replacement, so nobody has to work out from two dates whether
   // this unit was serviced twice.
+  // The hold is the first thing on the record, because it is the thing that
+  // changes what the reader owes.
+  if (onHold(p)) {
+    h += '<div class="notes" style="border:1px solid #E8B368;border-left-width:5px;background:#FDF1DF;color:#5E3400">'
+       + '<div style="font-weight:800;color:#8A4B00;margin-bottom:6px">'+icon('alert')+' ON HOLD — NOT PAYABLE</div>'
+       + (p.billed
+          ? 'This visit is on invoice #' + esc(p.invoice_doc_number||'—')
+            + (Number(p.bill_amount) ? ' at ' + money(Number(p.bill_amount)) : '')
+            + ', and we have put that line on hold. Please do not pay it.'
+          : 'This visit has not been invoiced, and will not be until it is re-documented.')
+       + ' ' + esc(p.billing_hold_reason || 'Held pending re-documentation.')
+       + (p.revisit_done_at
+          ? ' <strong>It has now been re-documented</strong> and the hold is with us to close — we will either release the line or credit it.'
+          : ' The stop is scheduled to be serviced and photographed again at no charge to you.')
+       + '</div>';
+  } else if (p.billing_hold_outcome === 'credited') {
+    h += '<div class="notes" style="border-left:4px solid #2E7D53">'
+       + '<strong style="color:#2E7D53">CREDITED</strong> — we did not stand behind our documentation of this '
+       + 'visit, so it was credited'
+       + (Number(p.credit_amount) ? ' at ' + money(Number(p.credit_amount)) : '')
+       + (p.billing_hold_closed_at ? ' on ' + esc(fmtDate((p.billing_hold_closed_at||'').slice(0,10))) : '')
+       + '. It is not payable.</div>';
+  } else if (p.billing_hold_outcome === 'released') {
+    h += '<div class="notes" style="border-left:4px solid #8FC4EA">'
+       + '<strong style="color:#155E9B">HOLD RELEASED</strong> — this unit was documented again and the '
+       + 'charge stands'
+       + (p.billing_hold_closed_at ? ', released on ' + esc(fmtDate((p.billing_hold_closed_at||'').slice(0,10))) : '')
+       + '.</div>';
+  }
   if (p.revisit_done_pm_id) {
     var rsp = pms.find(function(x){ return x.id === p.revisit_done_pm_id; });
     h += '<div class="notes" style="border-left:4px solid #8FC4EA">'

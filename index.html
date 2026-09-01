@@ -201,6 +201,16 @@ var pickerSel = {};       // multi-select in the Add-Stores picker: { storeKey: 
 // Route state (for tech view)
 var myRoute = []; // route assignments + asset data
 var currentStopIdx = 0;
+// Finished work is hidden on the route screen, not deleted. A stop you have
+// already done is not a stop — it competes for the eye with the one you are
+// standing in front of, and on an audit route (where a store can hold a done
+// unit and an owed unit at once) it is actively misleading. It stays one tap
+// away under "Already done", because a tech does sometimes need to reopen a
+// report they just filed.
+var showDoneStops = false;
+var doneUnitsOpen = {};   // { stop index: true } - show finished units on a part-done store
+function toggleDoneStops(){ showDoneStops = !showDoneStops; render(); }
+function toggleDoneUnits(i){ if(doneUnitsOpen[i]) delete doneUnitsOpen[i]; else doneUnitsOpen[i] = true; render(); }
 var routeFromChecklist = false; // track if we came from route view
 
 // ===== LocalStorage helpers =====
@@ -2290,7 +2300,11 @@ function renderRoute() {
     }
   }
 
+  var doneStops = [];
   stops.forEach(function(s, i) {
+    // A finished stop leaves the route list. It is collected below instead, so
+    // what is on screen is exactly what is still owed.
+    if (s.allDone) { doneStops.push({ s: s, i: i }); return; }
     var isCurrent = !s.allDone && (i === 0 || stops[i-1].allDone);
     var cls = s.allDone ? 'completed' : (isCurrent ? 'current' : '');
     var numCls = s.allDone ? 'done' : (isCurrent ? 'current' : 'pending');
@@ -2323,9 +2337,18 @@ function renderRoute() {
     // Every unit at this store, on the store card. The tech picks the next one
     // from here instead of walking back out to a stop screen — at a store with
     // three coolers that was a screen change per unit for no reason.
-    s.assets.forEach(function(a) {
-      h += unitCard(a, i);
-    });
+    // Units already documented at this store are folded away for the same
+    // reason the finished stops are — on a re-shoot stop the owed unit is the
+    // whole point and a done one beside it reads as noise.
+    var openUnits = s.assets.filter(function(a) { return !isCompleted(a.serial); });
+    var doneUnits = s.assets.filter(function(a) { return isCompleted(a.serial); });
+    openUnits.forEach(function(a) { h += unitCard(a, i); });
+    if (doneUnits.length) {
+      h += '<button class="btn btn-o" style="margin:8px 0 0;padding:8px;font-size:13px;color:var(--dim);border-color:var(--bd)" '
+        + 'onclick="event.stopPropagation();toggleDoneUnits(' + i + ')">'
+        + (doneUnitsOpen[i] ? 'Hide' : 'Show') + ' ' + doneUnits.length + ' already done at this store</button>';
+      if (doneUnitsOpen[i]) { doneUnits.forEach(function(a) { h += unitCard(a, i); }); }
+    }
 
     // Adding a unit belongs to the STORE, not to any one machine on it — the
     // unit being added is by definition not on the list yet.
@@ -2346,6 +2369,26 @@ function renderRoute() {
 
     h += '</div></div></div>';
   });
+
+  if (doneStops.length) {
+    h += '<button class="btn btn-o" style="margin-top:14px;padding:12px;font-size:15px;color:var(--dim);border-color:var(--bd)" '
+      + 'onclick="toggleDoneStops()">' + icon('check') + ' Already done \u2014 ' + doneStops.length + ' stop'
+      + (doneStops.length === 1 ? '' : 's') + (showDoneStops ? ' (hide)' : ' (show)') + '</button>';
+    if (showDoneStops) {
+      h += '<div style="font-size:13px;color:var(--dim);margin:8px 0 4px">Finished stops. Tap a unit to reopen the report you filed.</div>';
+      doneStops.forEach(function(d) {
+        h += '<div class="stop-card completed" id="stop' + d.i + '">';
+        h += '<div style="display:flex;align-items:flex-start;gap:4px">';
+        h += '<span class="stop-num done">\u2713</span>';
+        h += '<div style="flex:1">';
+        h += '<strong style="font-size:18px">' + esc(d.s.store) + '</strong>';
+        h += '<br><span style="font-size:14px;color:var(--dim)">' + esc(d.s.city) + ' \u00b7 '
+          + d.s.assets.length + ' asset(s) documented</span>';
+        d.s.assets.forEach(function(a) { h += unitCard(a, d.i); });
+        h += '</div></div></div>';
+      });
+    }
+  }
 
   return h;
 }
