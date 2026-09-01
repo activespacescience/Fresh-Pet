@@ -570,6 +570,28 @@ function revisitStats(){
            units: Object.keys(units).length, stores: Object.keys(stores).length,
            oldest: oldest, total: open.length + done.length };
 }
+// ── When a field-found asset stops being an open item ───────────────────────
+// An added asset is not "an issue with the report" — the report is fine. It is
+// a gap in FRESHPET'S asset list, and the thing that closes it is Freshpet
+// putting the unit on their books. That is exactly what Mark reported records,
+// so the PM drops off the issues board the moment the asset is marked reported
+// and not before. Until this, an added asset sat on the board forever with no
+// action that could ever clear it.
+//
+// An asset row we cannot find is treated as NOT reported: a missing lookup must
+// never silently close somebody's open item.
+function assetById(id){
+  if(!Array.isArray(assets)) return null;
+  for(var i=0;i<assets.length;i++){ if(assets[i].id===id) return assets[i]; }
+  return null;
+}
+function addedAssetSettled(p){
+  if(!p.added_asset) return true;
+  var a = assetById(p.asset_id);
+  return !!(a && a.reported === true);
+}
+function addedAssetOpen(p){ return !!p.added_asset && !addedAssetSettled(p); }
+
 // ── Amounts on hold ─────────────────────────────────────────────────────────
 // A hold says "we are not asking to be paid for this line yet". It deliberately
 // does NOT touch billed / bill_amount / invoice_doc_number — rewriting an
@@ -2052,8 +2074,8 @@ function riList(){
     // The 'issues' view is what is NOT already on the re-shoot board; open
     // re-shoots have their own pill and banner.
     if(riFilter==='issues' && (p.revisit_requested_at && !p.revisit_done_at)) return false;
-    if(riFilter==='issues' && !(p.added_asset || p.needs_review)) return false;
-    if(riFilter==='added' && !p.added_asset) return false;
+    if(riFilter==='issues' && !(addedAssetOpen(p) || p.needs_review)) return false;
+    if(riFilter==='added' && !addedAssetOpen(p)) return false;
     if(riFilter==='review' && !p.needs_review) return false;
     if(riFilter==='revisit' && !(p.revisit_requested_at && !p.revisit_done_at)) return false;
     if(riFilter==='needphoto' && p.audit_flag!=='needs_plate_photo') return false;
@@ -2105,8 +2127,9 @@ async function sendIssueReport(){
 function renderReportIssues(){
   var list=riList();
   var sel=riSelectedIds();
-  var allIssues=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset||p.needs_review); });
-  var addedN=completedPMs.filter(function(p){ return !p.prev_comp && p.added_asset; }).length;
+  var allIssues=completedPMs.filter(function(p){ return !p.prev_comp && (addedAssetOpen(p)||p.needs_review); });
+  var addedN=completedPMs.filter(function(p){ return !p.prev_comp && addedAssetOpen(p); }).length;
+  var addedSettled=completedPMs.filter(function(p){ return !p.prev_comp && p.added_asset && addedAssetSettled(p); }).length;
   var reviewN=completedPMs.filter(function(p){ return !p.prev_comp && p.needs_review; }).length;
   var revisitN=completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; }).length;
   var needPhotoN=completedPMs.filter(function(p){ return p.audit_flag==='needs_plate_photo'; }).length;
@@ -2115,6 +2138,7 @@ function renderReportIssues(){
   var assetListN=completedPMs.filter(function(p){ return p.audit_flag==='asset_list_confirm'; }).length;
 
   var h='<div class="card"><h3>'+icon('alert')+' Report issues to Freshpet</h3>'
+    +(addedSettled?'<div class="hint" style="color:var(--gn)">'+icon('check')+' '+addedSettled+' added-asset report'+(addedSettled===1?'':'s')+' cleared — Freshpet has '+(addedSettled===1?'that unit':'those units')+' on their list. They still show under <strong>All PMs</strong>.</div>':'')
     +'<div class="hint"><strong>Needs photo</strong> and <strong>Asset list</strong> are the outcome of the 2026-08 photo-integrity audit. <em>Needs photo</em> means no photograph of that unit\'s own serial plate exists anywhere in our records — select those rows and use the purple bar to order re-visits. <em>Asset list</em> means the plate we photographed reads a serial Freshpet does not list, which needs confirming with them rather than re-shooting.</div>'+'<div class="hint">Email Freshpet a list of extra coolers found in the field and coolers with service issues so they can record them. Each selected unit\'s <strong>photos</strong> and <strong>signed PM report PDF</strong> are attached to the email (very large batches auto-trim to stay under email size limits — send in smaller batches if files get skipped). Sent units are stamped so you can see what Freshpet already has.</div>';
 
   // filters + search
@@ -2126,7 +2150,7 @@ function renderReportIssues(){
       +'<button class="'+(riFilter==='noserial'?'on':'')+'" onclick="riFilter=\'noserial\';render()" title="The tech could not find or read a serial plate on this unit - it cannot be tied to a listed asset">No serial ('+noSerialN+')</button>'
       +'<button class="'+(riFilter==='assetlist'?'on':'')+'" onclick="riFilter=\'assetlist\';render()" title="The plate photographed reads a serial that is not on the Freshpet asset list">Asset list ('+assetListN+')</button>'
       +'<button class="'+(riFilter==='issues'?'on':'')+'" onclick="riFilter=\'issues\';render()">Issues ('+allIssues.length+')</button>'
-      +'<button class="'+(riFilter==='added'?'on':'')+'" onclick="riFilter=\'added\';render()">Added assets ('+addedN+')</button>'
+      +'<button class="'+(riFilter==='added'?'on':'')+'" onclick="riFilter=\'added\';render()" title="Field-found units Freshpet does not have on their list yet. They clear when you Mark reported on the Added Assets tab.">Added assets ('+addedN+')</button>'
       +'<button class="'+(riFilter==='review'?'on':'')+'" onclick="riFilter=\'review\';render()">Needs review ('+reviewN+')</button>'
       +'<button class="'+(riFilter==='revisit'?'on':'')+'" onclick="riFilter=\'revisit\';render()">Re-visits ('+revisitN+')</button>'
       +'<button class="'+(riFilter==='all'?'on':'')+'" onclick="riFilter=\'all\';render()">All PMs</button>'
@@ -2154,7 +2178,9 @@ function renderReportIssues(){
     h+='<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Type</th><th class="hide">Files</th><th>Sent</th><th>Re-visit</th></tr></thead><tbody>';
     list.forEach(function(p){
       var nPh=Array.isArray(p.photo_paths)?p.photo_paths.length:0;
-      var type=(p.added_asset?'<span class="pill ac">Added asset</span> ':'')+(p.needs_review?'<span class="pill rd">Needs review</span>':'')||'<span class="pill dim">PM</span>';
+      var type=(p.added_asset?(addedAssetSettled(p)
+            ? '<span class="pill gn">Added asset · on their list</span> '
+            : '<span class="pill ac">Added asset</span> '):'')+(p.needs_review?'<span class="pill rd">Needs review</span>':'')||'<span class="pill dim">PM</span>';
       var AF={ needs_plate_photo:['rd','Needs photo'], reused_photo:['rd','Reused photo'], asset_list_confirm:['am','Asset list'], credit_review:['am','Credit review'], resolved:['gn','Resolved'] };
       if(p.audit_flag && AF[p.audit_flag]) type='<span class="pill '+AF[p.audit_flag][0]+'">'+AF[p.audit_flag][1]+'</span>';
       if(p.revisit_requested_at && !p.revisit_done_at) type='<span class="pill pu">Re-visit ordered</span>';

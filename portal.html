@@ -195,7 +195,9 @@ var fSearch = '', fCity = '', fMonth = '', fInvoice = '', fHold = '';
 var groupBy = 'invoice';   // 'invoice' | 'month'
 var expanded = {};         // { sectionKey: true } — invoice sections start collapsed
 var authBusy = false;
-var section = 'pm';        // 'pm' | 'reactive' — separate billing types
+var section = 'pm';        // 'pm' | 'reactive' | 'assetlist'
+var showSettledAssets = false;
+function toggleSettledAssets(){ showSettledAssets = !showSettledAssets; render(); }
 var reBatches = [];        // reactive_batches (invoiced)
 var reAssets = {};         // { batch_id: [assets] }
 
@@ -278,6 +280,40 @@ function renderByInvoice(list){
   });
   return h;
 }
+
+// ── Asset-list reconciliation ───────────────────────────────────────────────
+// Two directions, and both are gaps in the asset list Freshpet sends us, not
+// problems with our reports:
+//   FOUND   a cooler on site that is not on the list. The tech added it in the
+//           field, did a full PM on it, and it is documented like any other.
+//   MISSING a unit on the list that is not on site, or a store that has closed.
+//           Filed as an exception visit with the reason, not as a completed PM.
+// Each one is settled by FRESHPET, not by us — a found unit when it goes on
+// their books (assets.reported), a missing one when it comes off (assets.active
+// false, which their next export does). An asset row we cannot look up counts
+// as unsettled: never silently close somebody's open item on a failed lookup.
+function assetRow(p){ return assets[p.asset_id] || null; }
+function foundAssets(){
+  var out = [];
+  Object.keys(assets).forEach(function(k){
+    var a = assets[k];
+    if(a.source !== 'field') return;
+    var pm = null;
+    for(var i=0;i<pms.length;i++){ if(pms[i].asset_id === a.id){ pm = pms[i]; break; } }
+    out.push({ asset:a, pm:pm, settled: a.reported === true });
+  });
+  return out.sort(function(x,y){ return String(y.asset.added_at||'').localeCompare(String(x.asset.added_at||'')); });
+}
+function missingAssets(){
+  return pms.filter(function(p){ return p.visit_type === 'exception'; })
+    .map(function(p){ var a = assetRow(p); return { pm:p, asset:a, settled: !!(a && a.active === false) }; })
+    .sort(function(x,y){ return String(y.pm.pm_date||'').localeCompare(String(x.pm.pm_date||'')); });
+}
+function assetListOpenCount(){
+  return foundAssets().filter(function(r){ return !r.settled; }).length
+       + missingAssets().filter(function(r){ return !r.settled; }).length;
+}
+const EXC_LABEL = { store_closed:'Store closed', unit_missing:'Unit not on site' };
 
 // ── Amounts in dispute ──────────────────────────────────────────────────────
 // A HOLD IS NOT A CREDIT and the portal must not imply otherwise. The invoice
@@ -475,7 +511,7 @@ async function signOut(){ await sb.auth.signOut(); }
 async function loadData(){
   var r = await Promise.all([
     sb.from('completed_pms').select('*').order('pm_date', { ascending:false }).order('created_at', { ascending:false }),
-    sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial'),
+    sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial,source,no_serial,active,reported,reported_at,added_at,added_by'),
     sb.from('reactive_batches').select('*').eq('status','invoiced').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store')
   ]);
@@ -623,9 +659,11 @@ function render(){
   h += '<div class="tabs">'
      + '<button class="tab '+(section==='pm'?'on':'')+'" onclick="setSection(\'pm\')">PM service calls</button>'
      + '<button class="tab '+(section==='reactive'?'on':'')+'" onclick="setSection(\'reactive\')">Quarterly Reactive'+(reBatches.length?'<span class="ct">'+reBatches.length+'</span>':'')+'</button>'
+     + '<button class="tab '+(section==='assetlist'?'on':'')+'" onclick="setSection(\'assetlist\')">Asset list'+(assetListOpenCount()?'<span class="ct">'+assetListOpenCount()+'</span>':'')+'</button>'
      + '</div>';
 
   if (section === 'reactive') { h += renderReactive(); h += '</div>'; app.innerHTML = h; return; }
+  if (section === 'assetlist') { h += renderAssetList(); h += '</div>'; app.innerHTML = h; return; }
 
   // stats
   var thisMonth = monthKey(new Date().toISOString().slice(0,10));
@@ -702,6 +740,97 @@ function render(){
   else { h += renderByMonth(list); }
   h += '</div>';
   app.innerHTML = h;
+}
+
+function assetRowCard(r, kind){
+  var a = r.asset || {}, p = r.pm;
+  var serial = a.no_serial
+    ? '<span class="pill hold">NO SERIAL PLATE</span>'
+    : '<span class="mono">'+esc(a.serial || (p && p.serial) || '—')+'</span>';
+  var where = esc([a.address, a.city || (p&&p.city), a.state, a.zip].filter(Boolean).join(', '));
+  return '<tr'+(r.settled?' style="opacity:.6"':'')+'>'
+    + '<td><strong>'+esc(a.store || (p && p.store) || '—')+'</strong>'
+      + (where?'<div class="ct" style="font-size:.78rem">'+where+'</div>':'')+'</td>'
+    + '<td>'+esc([a.manufacturer, a.model].filter(Boolean).join(' ') || '—')+'</td>'
+    + '<td>'+serial+'</td>'
+    + '<td>'+(kind==='found'
+        ? esc(fmtDate(String(a.added_at||'').slice(0,10)))
+        : esc(fmtDate(p && p.pm_date)))+'</td>'
+    + '<td>'+(kind==='found'
+        ? (r.settled
+            ? '<span class="pill gn">On your list'+(a.reported_at?' · '+esc(fmtDate(String(a.reported_at).slice(0,10))):'')+'</span>'
+            : '<span class="pill hold">Not on your list</span>')
+        : (r.settled
+            ? '<span class="pill gn">Removed from your list</span>'
+            : '<span class="pill hold">'+esc(EXC_LABEL[p&&p.exception_reason] || 'Not found on site')+'</span>'))+'</td>'
+    + '<td>'+(p ? '<a href="#" onclick="openCall('+p.id+');return false">Open the report &rarr;</a>' : '<span class="ct">—</span>')+'</td>'
+    + '</tr>';
+}
+
+function renderAssetList(){
+  var found = foundAssets(), missing = missingAssets();
+  var fOpen = found.filter(function(r){ return !r.settled; });
+  var mOpen = missing.filter(function(r){ return !r.settled; });
+  var settled = found.length - fOpen.length + (missing.length - mOpen.length);
+
+  var h = '';
+  if(!found.length && !missing.length){
+    return '<div class="empty">Nothing to reconcile — every cooler we have serviced is on your asset list, '
+         + 'and we have found every unit the list says is out there.</div>';
+  }
+
+  h += '<div class="holdbar" style="border-color:#8FC4EA;background:#EAF3FB;color:#12405F">'
+     + '<h4 style="color:#155E9B">'+icon('alert')+' ASSET LIST — '+(fOpen.length+mOpen.length)+' TO RECONCILE</h4>'
+     + '<p>These are differences between the asset list you send us and what our technicians actually found in '
+     + 'the field. They are not problems with the service — every unit below was visited and documented. '
+     + 'Each line clears from this page once your list is updated.</p></div>';
+
+  h += '<div class="stats">'
+     + '<div class="stat"><div class="v">'+fOpen.length+'</div><div class="k">Found, not on your list</div></div>'
+     + '<div class="stat"><div class="v">'+mOpen.length+'</div><div class="k">On your list, not on site</div></div>'
+     + '<div class="stat"><div class="v">'+settled+'</div><div class="k">Already reconciled</div></div>'
+     + '</div>';
+
+  if(fOpen.length){
+    h += '<div class="inv"><div class="inv-h open"><div class="inv-t">'
+      + '<div class="ttl">Coolers we found that are not on your list</div>'
+      + '<div class="sub">'+fOpen.length+' unit'+(fOpen.length===1?'':'s')+' · added by the technician on site, '
+      + 'fully serviced and documented · <strong>please add them to your asset list</strong></div></div></div>'
+      + '<div style="overflow-x:auto"><table><thead><tr><th>Store</th><th>Equipment</th><th>Serial</th>'
+      + '<th>Found</th><th>Status</th><th></th></tr></thead><tbody>'
+      + fOpen.map(function(r){ return assetRowCard(r,'found'); }).join('')
+      + '</tbody></table></div></div>';
+  }
+
+  if(mOpen.length){
+    h += '<div class="inv"><div class="inv-h open"><div class="inv-t">'
+      + '<div class="ttl">On your list, but not on site</div>'
+      + '<div class="sub">'+mOpen.length+' unit'+(mOpen.length===1?'':'s')+' · the technician made the trip and '
+      + 'documented what they found · <strong>please remove or relocate them</strong></div></div></div>'
+      + '<div style="overflow-x:auto"><table><thead><tr><th>Store</th><th>Equipment</th><th>Serial</th>'
+      + '<th>Visited</th><th>What we found</th><th></th></tr></thead><tbody>'
+      + mOpen.map(function(r){ return assetRowCard(r,'missing'); }).join('')
+      + '</tbody></table></div></div>';
+  }
+
+  if(!fOpen.length && !mOpen.length){
+    h += '<div class="empty">Nothing outstanding — every difference we raised has been reconciled.</div>';
+  }
+
+  // Settled lines are kept, not dropped: "you already told us about this one"
+  // is a question that gets asked, and it needs an answer.
+  if(settled){
+    h += '<button class="btn o" style="margin-top:14px" onclick="toggleSettledAssets()">'
+      + (showSettledAssets?'Hide':'Show')+' '+settled+' already reconciled</button>';
+    if(showSettledAssets){
+      h += '<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>Store</th><th>Equipment</th>'
+        + '<th>Serial</th><th>Date</th><th>Status</th><th></th></tr></thead><tbody>'
+        + found.filter(function(r){ return r.settled; }).map(function(r){ return assetRowCard(r,'found'); }).join('')
+        + missing.filter(function(r){ return r.settled; }).map(function(r){ return assetRowCard(r,'missing'); }).join('')
+        + '</tbody></table></div>';
+    }
+  }
+  return h;
 }
 
 // ── detail modal ──

@@ -216,7 +216,12 @@ var routeFromChecklist = false; // track if we came from route view
 // ===== LocalStorage helpers =====
 function saveProgress() {
   try {
-    var d = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, photos: photos, reopenId: reopenPmId, aa: addedAssetFlag };
+    // The File handle is session-only — strip it rather than let JSON.stringify
+    // quietly drop it and leave a half-shaped photo in the draft.
+    var draftPhotos = photos.map(function(p){
+      var n = normPhoto(p); return { d: n.d, kind: n.kind, hash: n.hash };
+    });
+    var d = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, photos: draftPhotos, reopenId: reopenPmId, aa: addedAssetFlag };
     try {
       localStorage.setItem('fp_progress', JSON.stringify(d));
     } catch (e) {
@@ -629,6 +634,13 @@ function openNavigation(address, city, state, zip) {
 }
 
 // ===== Photo Handling =====
+// The compressed copy is what the REPORT carries — 1000px / q0.5, about 65 KB,
+// so a full route uploads on a store's bad signal. The ORIGINAL is kept in
+// memory alongside it purely so "save to my phone" can hand back the real
+// photograph rather than the shrunken one; a backup you cannot read is not a
+// backup. It is a reference to the file the picker already gave us, so it costs
+// nothing, and it deliberately does NOT go into the saved draft (localStorage
+// cannot hold it, and the draft already overflows on the compressed copies).
 function compressImg(file, cb) {
   var reader = new FileReader();
   reader.onload = function(e) {
@@ -734,17 +746,98 @@ function handlePhotos(input, kind) {
             render();
             return;
           }
-          photos.push({ d: d, kind: kind || 'other', hash: hash });
+          photos.push({ d: d, kind: kind || 'other', hash: hash, file: f });
           saveProgress(); render();
         }).catch(function() {
           // hashing unavailable (non-secure context) — attach without a
           // fingerprint rather than lose the photo; server keeps the record
-          photos.push({ d: d, kind: kind || 'other', hash: null });
+          photos.push({ d: d, kind: kind || 'other', hash: null, file: f });
           saveProgress(); render();
         });
       });
     })(files[j]);
   }
+}
+
+// ── Saving the photos to the phone's own camera roll ────────────────────────
+//
+// This is not a nicety. takePhoto() uses <input capture>, which on iOS opens
+// the camera INSIDE the browser — the picture never reaches the camera roll at
+// all. So the manual's "keep the photos on your phone just in case" was advice
+// the app gave no way to follow. Now it does.
+//
+// navigator.share({files}) is the path that actually lands in Photos: iOS
+// offers "Save N Images" and Android "Save to Photos". An <a download> per file
+// is the desktop fallback and lands in the Downloads folder, which is fine
+// there and useless on a phone — so the share sheet is tried first and the
+// fallback says which one you got.
+//
+// It must run from a real tap. Every await in submitForm breaks the user
+// gesture on iOS, which is why this is a button the tech presses AFTER the
+// submit rather than something the submit does for them.
+var savedPhotoSet = null;   // { files, store, serial } offered after a submit
+var savingPhotos = false;
+
+function photoFilesFor(list, base){
+  var files = [];
+  for (var i = 0; i < list.length; i++) {
+    var p = normPhoto(list[i]);
+    var name = base + '-' + (i + 1) + '-' + (p.kind || 'photo') + '.jpg';
+    // The original when we still have it, the compressed copy when we do not
+    // (a draft restored from localStorage, or a photo taken in an earlier
+    // session). Saving the small one beats saving nothing.
+    if (p.file) files.push(new File([p.file], name, { type: p.file.type || 'image/jpeg' }));
+    else if (p.d) { try { files.push(new File([dataURLtoBlob(p.d)], name, { type: 'image/jpeg' })); } catch(e) {} }
+  }
+  return files;
+}
+
+async function savePhotosToPhone(){
+  if (savingPhotos) return;
+  var set = savedPhotoSet;
+  if (!set || !set.files.length) { showStatus('No photos to save', 'err'); render(); return; }
+  savingPhotos = true; render();
+  try {
+    if (navigator.share && (!navigator.canShare || navigator.canShare({ files: set.files }))) {
+      await navigator.share({ files: set.files, title: set.store || 'PM photos' });
+      showStatus(set.files.length + ' photo' + (set.files.length === 1 ? '' : 's') + ' handed to your phone — choose Save Image', 'ok');
+    } else {
+      set.files.forEach(function(f, idx){
+        setTimeout(function(){
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(f);
+          a.download = f.name;
+          a.click();
+          setTimeout(function(){ URL.revokeObjectURL(a.href); }, 10000);
+        }, idx * 300);
+      });
+      showStatus('Downloading ' + set.files.length + ' photo' + (set.files.length === 1 ? '' : 's') + ' — check your Downloads', 'info');
+    }
+    savedPhotoSet = null;
+  } catch (err) {
+    // Closing the share sheet is not a failure — it is a choice, and it must
+    // leave the offer on screen so it can be taken again.
+    if (err && err.name === 'AbortError') { savingPhotos = false; render(); return; }
+    showStatus('Could not save the photos: ' + (err && err.message ? err.message : 'unknown error'), 'err');
+  }
+  savingPhotos = false;
+  render();
+}
+function dismissPhotoSave(){ savedPhotoSet = null; render(); }
+
+// The offer, rendered on whatever screen the submit landed on.
+function photoSaveCard(){
+  if (!savedPhotoSet || !savedPhotoSet.files.length) return '';
+  var n = savedPhotoSet.files.length;
+  return '<div class="card" style="border-left:4px solid var(--ac)">'
+    + '<div style="font-weight:700;font-size:16px;margin-bottom:4px">' + icon('camera') + ' Keep a copy of ' + (n === 1 ? 'the photo' : 'these ' + n + ' photos') + '?</div>'
+    + '<div style="font-size:14px;color:var(--dim);margin-bottom:10px">'
+    + esc(savedPhotoSet.store || '') + (savedPhotoSet.serial ? ' &middot; S/N ' + esc(savedPhotoSet.serial) : '')
+    + ' &mdash; the report is filed. Photos taken in the app do <strong>not</strong> reach your camera roll on their own.</div>'
+    + '<button class="btn btn-s" style="margin:0 0 8px" onclick="savePhotosToPhone()"' + (savingPhotos ? ' disabled' : '') + '>'
+    + (savingPhotos ? 'Saving…' : icon('camera') + ' Save to my phone') + '</button>'
+    + '<button class="btn btn-o" style="margin:0;padding:8px;font-size:13px;color:var(--dim);border-color:var(--bd)" onclick="dismissPhotoSave()">No thanks</button>'
+    + '</div>';
 }
 
 function removePhoto(i) {
@@ -760,6 +853,10 @@ function render() {
   if (statusMsg) {
     html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>';
   }
+  // The offer of a camera-roll copy rides on whichever screen the submit landed
+  // on (route or home), directly under the confirmation, rather than adding a
+  // screen between the tech and the next stop.
+  html += photoSaveCard();
   if (screen === 'loading') { html += renderLoading(); }
   else if (screen === 'login') { html += renderLogin(); }
   else if (screen === 'home') { html += renderHome(); }
@@ -3067,6 +3164,13 @@ async function submitForm() {
       if (closeErr) console.warn('Re-visit close failed:', closeErr);
     }
 
+    // Offer the camera-roll copy before anything clears `photos`. Built from
+    // the photos that were actually filed, so the tech's copy and the report
+    // are the same set.
+    savedPhotoSet = photos.length
+      ? { files: photoFilesFor(photos, baseName), store: a.store, serial: a.serial }
+      : null;
+
     var wasTicket = ticketFlag;
     var wasReopen = !!reopenPmId;
     var wasAdded = addedAssetFlag;
@@ -3370,6 +3474,12 @@ async function submitException() {
         if (exCloseErr) console.warn('Re-visit close failed:', exCloseErr);
       }
     }
+
+    // An exception report's photo is the proof of the trip, so the tech gets
+    // the same offer of a copy as on an ordinary PM.
+    savedPhotoSet = photos.length
+      ? { files: photoFilesFor(photos, baseName), store: a.store, serial: a.serial }
+      : null;
 
     await loadCompletedPMs();
     clearProgress();
