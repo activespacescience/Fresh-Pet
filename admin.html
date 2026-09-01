@@ -311,7 +311,10 @@ async function loadAll(){
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
     sb.from('incident_entries').select('*').order('entry_at'),
-    sb.from('pm_audit_findings').select('*').is('resolved_at', null).is('dismissed_at', null).order('severity').order('first_seen', { ascending:false })
+    // v_pm_audit_open, not the raw table: it evaluates the re-shoot rule on
+    // every read, so a finding disappears the moment a re-visit is ordered
+    // and returns the moment one is cancelled — no waiting for the nightly run.
+    sb.from('v_pm_audit_open').select('*').order('severity').order('first_seen', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
@@ -1474,7 +1477,12 @@ var AUDIT_LABEL = {
   no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
 };
 var auditBusy = false;
-function auditPm(id){ return completedPMs.find(function(p){ return p.id===id; }) || {}; }
+// The finding row carries the report's own details (the view joins them), so a
+// finding renders correctly even for a report outside the loaded page set.
+function auditPm(id, f){
+  if (f && f.store) return f;
+  return completedPMs.find(function(p){ return p.id===id; }) || {};
+}
 // fp-pdfs is a public bucket, so the report opens straight from the row.
 function openPdf(path){ window.open(SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + encodeURIComponent(path), '_blank', 'noopener'); }
 
@@ -1540,7 +1548,7 @@ function renderAudit(){
     if(meta[2]) h += '<div class="hint">'+esc(meta[2])+'</div>';
     h += '<div style="overflow-x:auto;max-height:360px;overflow-y:auto"><table><thead><tr><th>Date</th><th>Store</th><th>Serial</th><th class="hide">Tech</th><th>What the audit saw</th><th></th></tr></thead><tbody>';
     rows.forEach(function(f){
-      var p = auditPm(f.pm_id);
+      var p = auditPm(f.pm_id, f);
       h += '<tr><td style="white-space:nowrap">'+esc(p.pm_date||'')+'</td>'
         + '<td>'+esc(p.store||('report '+f.pm_id))+'</td>'
         + '<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'

@@ -1,0 +1,19 @@
+-- Applied live 2026-09-01 (migrations 20260901m + 20260901n in the Supabase project).
+--
+-- The audit board is LIVE, not a nightly snapshot. Skipping re-shoot stops
+-- inside fn_pm_nightly_audit only took effect when the audit next ran: order a
+-- re-visit at 2pm and the finding it made irrelevant sat there until 02:10, and
+-- cancelling one left a hole for just as long.
+--
+-- The rule therefore lives in a view, evaluated on every read:
+--   public.v_pm_audit_open           what the board shows right now
+--   public.fn_audit_check_is_documentation(check)  the single definition of
+--     which checks a re-shoot supersedes, used by BOTH the view and the nightly
+--     function so they cannot drift into disagreeing
+--
+-- Suppression keys off revisit_requested_at being SET, not off the open window:
+-- keying off "ordered and not yet done" made the finding reappear the moment
+-- the re-shoot completed, which reads as the re-shoot having fixed nothing.
+--
+-- duplicate_report is deliberately never suppressed — two reports for one unit
+-- is a billing fact and re-shooting the stop does not answer it.
