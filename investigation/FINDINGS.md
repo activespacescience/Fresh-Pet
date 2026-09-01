@@ -182,3 +182,50 @@ Two things follow that are worth stating plainly:
    without a meter ticks "No meter on hand — voltage not measured" and the
    report prints *not measured (no meter)* rather than a number nobody read. A
    blank field and a fabricated reading are both worse than a stated gap.
+
+## Addendum — signatures on a re-shoot (2026-09-01)
+
+A re-shoot now starts from the **original report**, not a blank form. We were at
+the store once and a manager signed for that visit; the re-shoot exists because
+the photographs could not be stood behind, not because the visit was invented.
+So the earlier answers come forward, the readings are retaken, and the store's
+signature is **carried as a record of the original visit rather than collected
+again** — nobody signs twice for one service call, and no manager is asked to
+sign for readings taken on a day they were not shown.
+
+The document says both things out loud: **ORIGINAL DATE** and **RESHOOT DATE**
+side by side in the header, a banner naming what the document is, and an
+attestation line under the signature block reading *"Signed on the original
+visit of <date>. No store signature was taken on the re-shoot of <date> — the
+readings and photographs above are attested to by the technician only."* The
+customer portal shows the same two dates and the same sentence, so the web view
+and the PDF cannot tell different stories.
+
+Deliberately **not** carried forward: photographs (the whole point of going
+back), and the readings — an inherited `38°F` is the original defect, so
+`intTemp` / `sp1` / `voltage` start empty and are measured again. Audit
+bookkeeping and the previous re-visit flags are dropped too.
+
+### The signature graphic itself was never stored
+
+Until this change a signature existed **nowhere but as pixels burned into the
+PDF** — no column, no `form_data` key. New submissions now keep it on the
+record (`form_data.storeSignature` / `techSignature`, behind RLS; never the
+public photo buckets).
+
+For the historical reports it is recoverable: `generatePDF` draws signatures at
+a fixed rect (200 pt wide, ≤58 pt tall, x=40 store / x=326 technician), which
+makes them identifiable rather than guessed at. A trial extraction over the 120
+flagged reports that carry a store-contact name **recovered 116 store
+signatures**; 3 have a contact name but no signature was ever drawn, and 1 PDF
+failed to fetch.
+
+**They were not backfilled, and that is a judgement call, not a limitation.**
+Re-pasting a signature graphic onto a document the signer never saw is the same
+shape as the defect this whole remediation is about — a photograph from one
+visit reappearing on another report. The words carry the meaning; the ink adds
+visual weight plus the risk of reading as an endorsement of readings taken
+weeks later. The original PDF still holds the signature, Freshpet already has
+it, and the portal links it. If the graphic is wanted on the re-shoot anyway,
+the extraction is proven and the change is small — `original_signature` is
+already rendered when present.

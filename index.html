@@ -973,15 +973,36 @@ function renderChecklist() {
   h += '<textarea name="comments" placeholder="Notes...">' + esc(form.comments || '') + '</textarea>';
 
   h += '<h3>Signatures</h3>';
-  h += fld('Store Contact', 'storeContact', 'text', 'Name');
-  h += chk('noContact', 'No store contact available to sign');
-  if (form.noContact) {
-    h += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">The report will state that no store contact was available. Never sign or mark the store box yourself.</div>';
+  if (reshootCarriesSignature()) {
+    // Locked on purpose. The store signed for the original visit; they are not
+    // asked to sign again for a re-shoot, and their earlier signature is shown
+    // as what it is — a record of that visit, not an endorsement of today's
+    // readings. Both dates print on the report so the two are never conflated.
+    h += '<div class="card" style="padding:12px 14px;border-left:4px solid #7C3ABE">'
+      + '<div style="font-weight:700;color:#7C3ABE;letter-spacing:.02em">STORE SIGNATURE — LOCKED</div>'
+      + '<div style="font-size:14px;margin-top:6px">Signed by <strong>' + esc(form.original_store_contact) + '</strong> on the original visit'
+      + (form.original_date ? ' (' + esc(form.original_date) + ')' : '') + '.</div>';
+    if (form.original_signature) {
+      h += '<img src="' + esc(form.original_signature) + '" alt="Signature from the original visit" '
+        + 'style="height:56px;margin-top:8px;background:#fff;border:1px solid var(--bd);border-radius:10px;object-fit:contain;max-width:100%">';
+    }
+    h += '<div style="font-size:13px;color:var(--dim);margin-top:8px">No new store signature is taken on a re-shoot. '
+      + 'The report will show the original date and today\u2019s re-shoot date side by side, and will state that the new readings were not signed for by the store.</div>'
+      + '</div>';
+    h += fld('Service Rep', 'serviceRep', 'text', 'Name');
+    h += sigPad('tech', 'Technician Signature');
+    h += '<div style="font-size:13px;color:var(--dim);margin-top:-4px;margin-bottom:12px">You still sign: your signature is what attests to the readings you took today.</div>';
   } else {
-    h += sigPad('store', 'Store Manager Signature');
+    h += fld('Store Contact', 'storeContact', 'text', 'Name');
+    h += chk('noContact', 'No store contact available to sign');
+    if (form.noContact) {
+      h += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">The report will state that no store contact was available. Never sign or mark the store box yourself.</div>';
+    } else {
+      h += sigPad('store', 'Store Manager Signature');
+    }
+    h += fld('Service Rep', 'serviceRep', 'text', 'Name');
+    h += sigPad('tech', 'Technician Signature');
   }
-  h += fld('Service Rep', 'serviceRep', 'text', 'Name');
-  h += sigPad('tech', 'Technician Signature');
 
   h += '<h3>Photos</h3>';
   h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">The <strong>serial plate photo is required</strong> — a close-up of THIS unit’s plate, taken with the camera. Reused images are refused automatically.</div>';
@@ -2526,18 +2547,76 @@ function defaultForm() {
   };
 }
 
+// A re-shoot starts from the ORIGINAL report, not from a blank form. We were at
+// this store once and a manager signed for that visit; the re-shoot exists
+// because the photographs could not be stood behind, not because the visit was
+// invented. So the earlier answers come forward as the starting point, the
+// readings are retaken, and the store's signature is carried as a record of the
+// original visit rather than re-collected — nobody is asked to sign twice for
+// one service call, and no manager is asked to sign for readings taken on a day
+// they were not shown.
+//
+// Only the report's own fields travel. Photographs, audit notes, correction
+// bookkeeping and the previous re-visit flags are deliberately left behind: a
+// re-shoot's whole purpose is new pictures.
+var RESHOOT_DROP_KEYS = [
+  'audit_note','original_photo_paths','original_pdf_path','corrected_pdf_path',
+  'detached_photos','detach_prior_photo_paths','field_form_scan','asset_list_undercount',
+  'legacy','legacy_link','legacy_note','tech_name',
+  'reshoot_of_pm_id','original_date','original_signed_at','original_store_contact',
+  'original_signature','reshoot_date','storeSignature','techSignature'
+];
+function reshootFormFrom(pm) {
+  var src = pm.form_data || {};
+  var f = {};
+  Object.keys(src).forEach(function(k) {
+    if (RESHOOT_DROP_KEYS.indexOf(k) < 0) f[k] = src[k];
+  });
+  var me = shortTechName();
+  f.techName = me;
+  f.serviceRep = me;
+  f.serviceCompany = src.serviceCompany || 'Freeflow Beverage Solutions';
+  f.date = new Date().toISOString().split('T')[0];
+  // The readings are the point of going back. Blank them so they are measured
+  // again rather than inherited — an inherited 38F is the original defect.
+  f.intTemp = ''; f.sp1 = ''; f.voltage = ''; f.noMeter = false;
+  // What the original visit attests to, recorded as provenance.
+  f.reshoot_of_pm_id = pm.id;
+  f.original_date = pm.pm_date || '';
+  f.original_signed_at = pm.signed_at || null;
+  f.reshoot_date = f.date;
+  var signed = !src.noContact && (src.storeSignature || (src.storeContact || '').trim());
+  if (signed) {
+    f.original_store_contact = (src.storeContact || '').trim();
+    if (src.storeSignature) f.original_signature = src.storeSignature;
+    f.noContact = false;
+  } else {
+    // Nothing to carry — this stop takes a signature the normal way.
+    f.original_store_contact = '';
+    f.noContact = !!src.noContact;
+  }
+  return f;
+}
+
 function startChecklist(idx) {
   selectedAsset = ASSETS[idx];
   selectedAssetIdx = idx;
   reopenPmId = null;
   ticketFlag = false;
   addedAssetFlag = false;
-  form = defaultForm();
+  var rs = openRevisitPm(ASSETS[idx].serial);
+  form = rs ? reshootFormFrom(rs) : defaultForm();
   photos = [];
   sigs = { store: null, tech: mySig || null };
   screen = 'checklist';
   saveProgress();
   render();
+}
+
+// True when the form in hand is a re-shoot carrying a signature from the
+// original visit — the case where the store panel is locked.
+function reshootCarriesSignature() {
+  return !!(form && form.reshoot_of_pm_id && form.original_store_contact);
 }
 
 function startChecklistFromRoute(idx) {
@@ -2675,14 +2754,21 @@ async function submitForm() {
   if (form.noMeter) { form.voltage = ''; }
   else if (!(form.voltage || '').trim()) { showStatus('Enter the voltage you measured, or check \u201cNo meter on hand\u201d', 'err'); return; }
   if (!form.workingArrival && !form.notWorkingArrival) { showStatus('Mark whether the unit was working on arrival', 'err'); return; }
-  if (form.noContact) {
+  if (reshootCarriesSignature()) {
+    // Locked path: the store signed the original visit and is not asked again.
+    // Guard it rather than trust the UI — a resumed draft could carry a stale
+    // signature in memory, and pasting one onto a report the signer never saw
+    // is the exact failure this whole remediation is about.
+    sigs.store = null;
+    form.noContact = false;
+    form.reshoot_date = form.date || new Date().toISOString().split('T')[0];
+  } else if (form.noContact) {
     sigs.store = null; // never both — the report states no contact was available
   } else if (!sigs.store) {
-    showStatus('Get the store contact’s signature, or check “No store contact available to sign”. Never sign for the store yourself.', 'err'); return;
+    showStatus('Get the store contact\u2019s signature, or check \u201cNo store contact available to sign\u201d. Never sign for the store yourself.', 'err'); return;
   } else if (!(form.storeContact || '').trim()) {
     showStatus('Enter the name of the store contact who signed', 'err'); return;
-  }
-  if (!sigs.tech) {
+  }  if (!sigs.tech) {
     if (!confirm('Missing technician signature. Submit anyway?')) return;
   }
   // One report per unit per day: a second tap must go through the explicit
@@ -2732,6 +2818,14 @@ async function submitForm() {
         photoHashes.push(np.hash || (await sha256Hex(np.d).catch(function(){ return null; })));
       }
     }
+
+    // Keep the signatures WITH the record, not only as pixels burned into the
+    // PDF. Until now a signature existed nowhere else, so nothing downstream
+    // could show who signed or carry it onto a re-shoot without re-scraping the
+    // document. form_data is behind RLS; the photo buckets are public, so a
+    // signature must never go there.
+    if (sigs.store) { form.storeSignature = sigs.store; }
+    if (sigs.tech)  { form.techSignature  = sigs.tech; }
 
     var pdfDoc = await new Promise(function(resolve) {
       generatePDF(a, form, photos, sigs, { signedAt: signedAt, gps: gps, addedAsset: addedAssetFlag }, function(doc) { resolve(doc); });
@@ -3133,9 +3227,37 @@ function generatePDF(a, f, ph, sg, meta, cb) {
     doc.setTextColor(0, 0, 0); y += 14;
   }
 
+  // Say what this document is before anyone reads a number off it.
+  if (f.reshoot_of_pm_id) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(124, 58, 190);
+    doc.text('RE-SHOOT — this unit was serviced once and re-documented on a later visit', W/2, y, { align: 'center' });
+    y += 11;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    var rsLine = f.original_store_contact
+      ? 'The original visit was signed for by ' + f.original_store_contact + '. The readings and photographs below were taken on the re-shoot date and were NOT signed for by the store.'
+      : 'The readings and photographs below were taken on the re-shoot date.';
+    var rsWrap = doc.splitTextToSize(rsLine, RM - LM - 40);
+    doc.text(rsWrap, W/2, y, { align: 'center' });
+    y += rsWrap.length * 9 + 4;
+    doc.setTextColor(0, 0, 0); doc.setFontSize(9);
+  }
+
   doc.setFontSize(9);
+  var isReshoot = !!f.reshoot_of_pm_id;
   doc.setFont('helvetica','bold');doc.text('Store:',LM,y);doc.setFont('helvetica','normal');doc.text(a.store,LM+38,y);
-  doc.setFont('helvetica','bold');doc.text('Date:',COL2,y);doc.setFont('helvetica','normal');doc.text(f.date||'',COL2+32,y);y+=17;
+  if (isReshoot) {
+    // Two dates, never one. A single date on a re-shoot misdates either the
+    // service call or the readings, and which is which is the whole question.
+    // Kept on one line so the rest of the header keeps its spacing.
+    doc.setFontSize(8);
+    doc.setFont('helvetica','bold');doc.text('ORIGINAL DATE:',COL2,y);
+    doc.setFont('helvetica','normal');doc.text(f.original_date||'',COL2+72,y);
+    doc.setFont('helvetica','bold');doc.text('RESHOOT DATE:',COL2+136,y);
+    doc.setFont('helvetica','normal');doc.text(f.reshoot_date||f.date||'',COL2+205,y);
+    doc.setFontSize(9);y+=17;
+  } else {
+    doc.setFont('helvetica','bold');doc.text('Date:',COL2,y);doc.setFont('helvetica','normal');doc.text(f.date||'',COL2+32,y);y+=17;
+  }
   doc.setFont('helvetica','bold');doc.text('Address:',LM,y);doc.setFont('helvetica','normal');doc.text(a.address,LM+52,y);
   doc.setFont('helvetica','bold');doc.text('Phone:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.phone,COL2+40,y);y+=17;
   doc.setFont('helvetica','bold');doc.text('City:',LM,y);doc.setFont('helvetica','normal');doc.text(a.city,LM+28,y);
@@ -3183,7 +3305,16 @@ function generatePDF(a, f, ph, sg, meta, cb) {
       if (sh > sigH) sigH = sh;
     } catch(e) {}
   }
-  if (f.noContact) {
+  var carriedSig = f.reshoot_of_pm_id && f.original_store_contact;
+  if (carriedSig) {
+    // The store's signature is reproduced as a record of the ORIGINAL visit and
+    // labelled as such on the document itself. It is not an attestation to the
+    // readings on this page — those were taken on a later date the signer was
+    // not present for, and the page says so rather than leaving it to be
+    // inferred from two dates in the header.
+    if (f.original_signature) { drawSig(f.original_signature, LM); }
+    else if (sigH < 30) { sigH = 30; }
+  } else if (f.noContact) {
     doc.setFont('helvetica','italic');doc.setFontSize(8);
     doc.text('No store contact available at time of service — not signed by the store.', LM, y+20);
     if (sigH < 30) sigH = 30;
@@ -3194,8 +3325,20 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   y += sigH;
   doc.setLineWidth(.5);doc.line(LM,y+2,LM+200,y+2);doc.line(COL2,y+2,COL2+200,y+2);y+=12;
   doc.setFont('helvetica','normal');doc.setFontSize(8);
-  doc.text('Store Contact: '+(f.noContact?'(none available)':(f.storeContact||'')),LM,y);
-  doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=16;
+  if (carriedSig) {
+    doc.text('Store Contact: '+f.original_store_contact,LM,y);
+    doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=11;
+    doc.setFont('helvetica','italic');doc.setFontSize(7);
+    var att = doc.splitTextToSize(
+      'Signed on the original visit'+(f.original_date?' of '+f.original_date:'')+
+      '. No store signature was taken on the re-shoot'+(f.reshoot_date?' of '+f.reshoot_date:'')+
+      ' — the readings and photographs above are attested to by the technician only.', 280);
+    doc.text(att,LM,y); y += att.length*8 + 5;
+    doc.setFont('helvetica','normal');doc.setFontSize(8);
+  } else {
+    doc.text('Store Contact: '+(f.noContact?'(none available)':(f.storeContact||'')),LM,y);
+    doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=16;
+  }
 
   // Signed timestamp + GPS captured at completion.
   if (meta && (meta.signedAt || meta.gps)) {

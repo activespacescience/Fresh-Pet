@@ -609,8 +609,24 @@ function openCall(id){
   h += '<div class="mb">';
 
   // key facts
+  // A re-shoot is shown for exactly what it is. Two dates, never one: the visit
+  // and the re-documentation happened on different days, and a single "service
+  // date" would misstate one of them.
+  var isReshoot = p.visit_type === 'reshoot' || !!fd.reshoot_of_pm_id;
+  if (isReshoot) {
+    h += '<div class="notes" style="border-left:4px solid #7C3ABE">'
+       + '<strong style="color:#7C3ABE">RE-SHOOT</strong> — this unit was serviced on '
+       + esc(fmtDate(fd.original_date || p.pm_date)) + ' and re-documented on '
+       + esc(fmtDate(fd.reshoot_date || p.pm_date)) + '. '
+       + (fd.original_store_contact
+          ? 'The original visit was signed for by ' + esc(fd.original_store_contact) + '; the readings and photographs below were taken on the later visit and were not signed for by the store.'
+          : 'The readings and photographs below were taken on the later visit.')
+       + ' There is no charge for a re-shoot.</div>';
+  }
   h += '<div class="kv">'
-     + kv('Service date', fmtDate(p.pm_date))
+     + (isReshoot
+        ? kv('Original date', fmtDate(fd.original_date || p.pm_date)) + kv('Re-shoot date', fmtDate(fd.reshoot_date || p.pm_date))
+        : kv('Service date', fmtDate(p.pm_date)))
      + (p.signed_at?kv('Completed', fmtDateTime(p.signed_at)):'')
      + kv('Equipment', [a.manufacturer,a.model].filter(Boolean).join(' ')||'—')
      + kv('Serial #', p.serial||a.serial||'—')
