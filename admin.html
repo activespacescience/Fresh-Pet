@@ -306,7 +306,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,no_serial_plate,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,no_serial_plate,billing_hold_at,billing_hold_by,billing_hold_reason,billing_hold_outcome,billing_hold_closed_at,credit_amount,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
@@ -570,6 +570,33 @@ function revisitStats(){
            units: Object.keys(units).length, stores: Object.keys(stores).length,
            oldest: oldest, total: open.length + done.length };
 }
+// ── Amounts on hold ─────────────────────────────────────────────────────────
+// A hold says "we are not asking to be paid for this line yet". It deliberately
+// does NOT touch billed / bill_amount / invoice_doc_number — rewriting an
+// invoice we already sent in our own database is not a correction, it is losing
+// the record of what we charged. Two exits, both recorded: RELEASED (it was
+// re-documented, the charge stands) or CREDITED (we are not charging for it,
+// at whatever amount was actually agreed — never assumed to be the line value).
+function onHold(p){ return !!p.billing_hold_at && !p.billing_hold_outcome; }
+function holdStats(){
+  var rows = completedPMs.filter(onHold);
+  var byInv = {}, amount = 0, units = {}, ready = 0;
+  rows.forEach(function(p){
+    units[p.serial || p.id] = 1;
+    if (p.revisit_done_at) ready++;
+    if (p.billed && p.invoice_doc_number){
+      var k = p.invoice_doc_number;
+      if(!byInv[k]) byInv[k] = { invoice:k, reports:0, amount:0 };
+      byInv[k].reports++; byInv[k].amount += Number(p.bill_amount||0);
+      amount += Number(p.bill_amount||0);
+    }
+  });
+  return { rows:rows, reports:rows.length, units:Object.keys(units).length, amount:amount,
+           ready:ready, uninvoiced:rows.filter(function(p){ return !p.billed; }).length,
+           invoices:Object.keys(byInv).sort().map(function(k){ return byInv[k]; }) };
+}
+function fmtMoney(n){ return '$' + Number(n||0).toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+
 function daysSince(iso){
   if(!iso) return 0;
   return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
@@ -918,6 +945,10 @@ function billableList(){
     if (p.prev_comp) return false;                 // done elsewhere — never billed
     if (p.visit_type === 'exception') return false; // failed visit (closed store / missing unit) — never a billable PM
     if (p.visit_type === 'reshoot') return false;   // re-visit of a stop already billed once — remediation, we absorb it
+    // On hold = in dispute. It cannot be selected for an invoice from here, and
+    // freshpet-invoice.mjs refuses it again server-side — this list is the
+    // convenience, that function is the gate.
+    if (!p.billed && onHold(p)) return false;
     if (!billShowBilled && p.billed) return false;
     if (!q) return true;
     return ((p.store||'')+' '+cityOf(p)+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
@@ -1027,8 +1058,121 @@ async function createInvoice(){
   billBusy=false; render();
 }
 
+// Closing a hold. Both exits are a decision somebody made, so both record who
+// and why; neither deletes the hold, because "there was a hold on this line and
+// here is how it ended" is the only question anyone asks about it later.
+async function closeHold(outcome){
+  var ids = holdSelectedIds();
+  if(!ids.length) return toast('Select the lines to close','err');
+  var rows = completedPMs.filter(function(p){ return ids.indexOf(p.id)>=0 && onHold(p); });
+  if(!rows.length) return toast('None of those are on hold','err');
+  var patch = { billing_hold_outcome: outcome, billing_hold_closed_at: new Date().toISOString(),
+                billing_hold_closed_by: (user && user.email) || 'admin' };
+
+  if(outcome === 'released'){
+    var notRedone = rows.filter(function(p){ return !p.revisit_done_at; });
+    if(!confirm('Release ' + rows.length + ' line' + (rows.length===1?'':'s') + ' back onto the invoice?\n\n'
+      + 'You are saying the charge stands and Freshpet should pay it.\n'
+      + (notRedone.length
+         ? '\n\u26a0 ' + notRedone.length + ' of these has NOT been re-documented yet — releasing it means the\n'
+           + 'original paperwork is what you are standing behind.\n' : ''))) return;
+  } else {
+    var suggested = rows.reduce(function(t,p){ return t + Number(p.bill_amount||0); }, 0);
+    var typed = prompt('Credit ' + rows.length + ' line' + (rows.length===1?'':'s') + '.\n\n'
+      + 'Total credit amount in dollars. The line value is ' + fmtMoney(suggested) + ', but a negotiated\n'
+      + 'credit is a decision, not arithmetic — type what was actually agreed.\n\n'
+      + 'It is split evenly across the selected lines.', String(suggested));
+    if(typed === null) return;
+    var amt = Number(String(typed).replace(/[^0-9.\-]/g,''));
+    if(!(amt >= 0)) return toast('That is not an amount','err');
+    patch.credit_amount = Math.round((amt / rows.length) * 100) / 100;
+    if(!confirm('Credit ' + fmtMoney(amt) + ' across ' + rows.length + ' line' + (rows.length===1?'':'s')
+      + ' (' + fmtMoney(patch.credit_amount) + ' each)?\n\n'
+      + 'This records the credit on our side. Issuing it in QuickBooks is a separate step.')) return;
+  }
+
+  holdBusy = true; render();
+  try{
+    var { error } = await sb.from('completed_pms').update(patch).in('id', rows.map(function(p){ return p.id; }));
+    if(error) throw error;
+    holdSel = {};
+    await loadAll();
+    toast(rows.length + ' line' + (rows.length===1?'':'s') + ' ' + outcome, 'ok');
+  }catch(e){ toast('Failed: ' + e.message, 'err'); }
+  holdBusy = false; render();
+}
+
+function renderHolds(){
+  var hs = holdStats();
+  if(!hs.reports && !completedPMs.some(function(p){ return p.billing_hold_at; })) return '';
+  if(!hs.reports){
+    return '<div class="card" style="border-left:4px solid var(--gn)"><h3 style="color:var(--gn);margin-top:0">'
+      + icon('check') + ' No amounts on hold</h3>'
+      + '<div class="hint">Every disputed line has been released or credited.</div></div>';
+  }
+  var sel = holdSelectedIds();
+  var list = hs.rows.slice().sort(function(a,b){
+    if(!!b.revisit_done_at !== !!a.revisit_done_at) return b.revisit_done_at ? 1 : -1;
+    return String(a.store||'').localeCompare(String(b.store||''));
+  });
+
+  var h = '<div class="card" style="border-left:4px solid var(--am)">'
+    + '<h3 style="margin-top:0;color:var(--am)">' + icon('alert') + ' ' + fmtMoney(hs.amount) + ' on hold</h3>'
+    + '<div class="hint">' + hs.reports + ' visit' + (hs.reports===1?'':'s') + ' across ' + hs.units
+    + ' unit' + (hs.units===1?'':'s') + ' are in dispute and shown to Freshpet in the portal as '
+    + '<strong>not payable</strong>. A hold changes nothing about what was invoiced — it is our statement '
+    + 'about specific lines on it. Close each one by <strong>releasing</strong> it (re-documented, the charge '
+    + 'stands) or <strong>crediting</strong> it.'
+    + (hs.uninvoiced ? ' A further ' + hs.uninvoiced + ' held visit' + (hs.uninvoiced===1?' is':'s are')
+        + ' not invoiced at all and cannot be selected for an invoice while held.' : '')
+    + '</div>';
+
+  if(hs.invoices.length){
+    h += '<div style="display:flex;flex-wrap:wrap;gap:8px;margin:10px 0">'
+      + hs.invoices.map(function(iv){
+          return '<span class="pill am">Invoice #' + esc(iv.invoice) + ' · ' + iv.reports
+            + ' visit' + (iv.reports===1?'':'s') + ' · ' + fmtMoney(iv.amount) + '</span>'; }).join('')
+      + '</div>';
+  }
+  if(hs.ready){
+    h += '<div class="hint" style="color:var(--gn)">' + hs.ready + ' of these ' + (hs.ready===1?'has':'have')
+      + ' been re-documented and ' + (hs.ready===1?'is':'are') + ' ready for you to release or credit.</div>';
+  }
+
+  h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0">'
+    + '<button class="btn o sm" onclick="holdSelectAll()">'
+      + (list.every(function(p){ return holdSel[p.id]; }) ? 'Deselect all' : 'Select all ' + list.length) + '</button>'
+    + (hs.ready ? '<button class="btn o sm" onclick="holdSelectAll(true)">Select the ' + hs.ready + ' re-documented</button>' : '')
+    + '<span class="muted" style="font-size:.8rem">' + sel.length + ' selected</span>'
+    + '<button class="btn gn sm" onclick="closeHold(\'released\')" ' + ((holdBusy||!sel.length)?'disabled':'') + '>Release — charge stands</button>'
+    + '<button class="btn o sm" onclick="closeHold(\'credited\')" ' + ((holdBusy||!sel.length)?'disabled':'') + '>Credit</button>'
+    + '</div>';
+
+  h += '<div style="overflow-x:auto;max-height:380px;overflow-y:auto"><table><thead><tr>'
+    + '<th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th>Invoice</th>'
+    + '<th>Amount</th><th>State</th></tr></thead><tbody>';
+  list.forEach(function(p){
+    h += '<tr>'
+      + '<td><input type="checkbox" ' + (holdSel[p.id]?'checked':'') + ' onclick="holdToggle(' + p.id + ')"></td>'
+      + '<td>' + esc(p.store||'') + '</td>'
+      + '<td class="mono" style="font-size:.8rem">' + esc(p.serial||'—') + '</td>'
+      + '<td>' + esc(p.pm_date||'') + '</td>'
+      + '<td>' + (p.billed ? '#' + esc(p.invoice_doc_number||'—') : '<span class="pill dim">not invoiced</span>') + '</td>'
+      + '<td class="mono">' + (p.billed ? fmtMoney(p.bill_amount) : '—') + '</td>'
+      + '<td>' + (p.revisit_done_at
+          ? '<span class="pill gn">Re-documented ' + esc(String(p.revisit_done_at).slice(0,10)) + '</span>'
+          : '<span class="pill am">Awaiting re-shoot</span>') + '</td>'
+      + '</tr>';
+  });
+  h += '</tbody></table></div></div>';
+  return h;
+}
+
 function renderBilling(){
   var h = '';
+  // What is in dispute comes before anything about invoicing, so nobody raises
+  // an invoice without seeing it.
+  h += renderHolds();
   // ── Portal access ──
   var viewers = techs.filter(function(t){ return t.role==='freshpet'; });
   h += '<div class="card"><h3>Freshpet portal access</h3><div class="hint">Grant a Freshpet contact read-only access to the completed-calls portal at <span class="mono">/portal</span>. Granting sends a <strong>walkthrough invite email</strong> with a one-time set-password link, so they can sign in with plain email + password (Google works too, but isn\'t required). The email also notes that anything before <strong>6/1/2026</strong> lives on the previous system, with the archive-folder link below. Viewers can reset their own password any time via "Forgot password?" on the sign-in page.</div>';
@@ -1478,6 +1622,16 @@ var AUDIT_LABEL = {
 };
 var auditBusy = false;
 var auditSel = {};   // { finding id: true }
+var holdBusy = false;
+var holdSel = {};    // { pm id: true } — lines whose hold is being closed
+function holdToggle(id){ if(holdSel[id]) delete holdSel[id]; else holdSel[id]=true; render(); }
+function holdSelectedIds(){ return Object.keys(holdSel).filter(function(k){ return holdSel[k]; }).map(Number); }
+function holdSelectAll(onlyRedone){
+  var list = holdStats().rows.filter(function(p){ return onlyRedone ? !!p.revisit_done_at : true; });
+  var allSel = list.length && list.every(function(p){ return holdSel[p.id]; });
+  list.forEach(function(p){ if(allSel) delete holdSel[p.id]; else holdSel[p.id]=true; });
+  render();
+}
 
 function auditToggle(id){ if(auditSel[id]) delete auditSel[id]; else auditSel[id]=true; render(); }
 function auditSelectedIds(){ return Object.keys(auditSel).filter(function(k){ return auditSel[k]; }).map(Number); }
