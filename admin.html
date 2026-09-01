@@ -443,7 +443,11 @@ function render(){
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">'+icon('receipt')+' Freshpet Billing</button>'
      + (function(){ var n=assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
         return '<button class="tab '+(tab==='added'?'on':'')+'" onclick="tab=\'added\';render()">'+icon('plus')+' Added Assets'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
-     + (function(){ var n=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
+     + (function(){ var n=completedPMs.filter(function(p){
+          // A stop awaiting a re-shoot is counted by the re-shoot banner. Counting
+          // it here too gives two numbers for one pile that never agree.
+          if (p.revisit_requested_at && !p.revisit_done_at) return false;
+          return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
         return '<button class="tab '+(tab==='issues'?'on':'')+'" onclick="tab=\'issues\';render()">'+icon('alert')+' Report Issues'+(n?' <span class="pill am" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + (function(){ var n=auditFindings.filter(function(f){ return f.severity==='red'; }).length;
         return '<button class="tab '+(tab==='audit'?'on':'')+'" onclick="tab=\'audit\';render()">'+icon('shield')+' Nightly Audit'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
@@ -1728,6 +1732,9 @@ function riList(){
   var q=(riSearch||'').trim().toLowerCase();
   return completedPMs.filter(function(p){
     if(p.prev_comp) return false;
+    // The 'issues' view is what is NOT already on the re-shoot board; open
+    // re-shoots have their own pill and banner.
+    if(riFilter==='issues' && (p.revisit_requested_at && !p.revisit_done_at)) return false;
     if(riFilter==='issues' && !(p.added_asset || p.needs_review)) return false;
     if(riFilter==='added' && !p.added_asset) return false;
     if(riFilter==='review' && !p.needs_review) return false;

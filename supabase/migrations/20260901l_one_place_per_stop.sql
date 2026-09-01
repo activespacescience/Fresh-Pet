@@ -1,0 +1,13 @@
+-- Applied live 2026-09-01. One stop, one place.
+--
+-- A stop awaiting a re-shoot is being documented again from scratch, so every
+-- finding about its DOCUMENTATION (photographs, signature, readings, serial
+-- plate) describes a report about to be superseded. Listing it in the audit as
+-- well as on the re-shoot board is the same work counted twice, and two lists
+-- that never agree about how much is outstanding.
+--
+-- duplicate_report is the one exception: two reports for one unit is a BILLING
+-- fact, and re-shooting the stop does not answer it.
+--
+-- Nothing is lost — the re-shoot files a NEW report, checked like any other the
+-- next night.
