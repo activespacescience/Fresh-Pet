@@ -546,13 +546,65 @@ function computeOverview(){
   }};
 }
 
+// ═══ Re-shoot programme banner ═══
+// An ordered re-visit is real work owed to a customer, on a stop that is
+// already invoiced. Before this it showed only as +1 on a generic "Report
+// Issues" badge that also counts added assets and service tickets — which is
+// how 191 open stops look identical to a quiet week. It gets its own banner,
+// on the landing tab and on the audit tab, and it does not go away by itself.
+function revisitStats(){
+  var open = completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; });
+  var done = completedPMs.filter(function(p){ return p.revisit_requested_at && p.revisit_done_at; });
+  var units = {}; open.forEach(function(p){ units[p.serial] = 1; });
+  var stores = {}; open.forEach(function(p){ stores[p.store] = 1; });
+  var oldest = open.reduce(function(a,p){
+    return (!a || String(p.revisit_requested_at) < a) ? String(p.revisit_requested_at) : a; }, null);
+  return { open: open.length, done: done.length,
+           units: Object.keys(units).length, stores: Object.keys(stores).length,
+           oldest: oldest, total: open.length + done.length };
+}
+function daysSince(iso){
+  if(!iso) return 0;
+  return Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+}
+function renderRevisitBanner(){
+  var r = revisitStats();
+  if(!r.total) return '';
+  if(!r.open){
+    return '<div class="card" style="border-left:4px solid var(--gn)">'
+      + '<h3 style="color:var(--gn);margin-top:0">'+icon('check')+' Re-shoot programme complete</h3>'
+      + '<div class="hint">All '+r.done+' ordered re-visits have been serviced and re-documented.</div></div>';
+  }
+  var age = daysSince(r.oldest);
+  return '<div class="card" style="border-left:4px solid #155E9B;background:#E2EFF9">'
+    + '<div style="display:flex;align-items:flex-start;gap:14px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:260px">'
+    + '<h3 style="margin-top:0;color:#155E9B">'+icon('alert')+' '+r.open+' stops are open for re-shoot</h3>'
+    + '<div class="hint" style="color:#2E5C7E">'
+    + r.units+' unit'+(r.units===1?'':'s')+' across '+r.stores+' store'+(r.stores===1?'':'s')
+    + ' must be serviced and photographed again. These are invoiced stops whose documentation we could not stand behind — '
+    + 'they are <strong>not billed to Freshpet</strong> and the technician is paid normally. '
+    + 'They stay here until the work is done.</div></div>'
+    + '<div style="flex:none;text-align:right">'
+    + '<div style="font-size:1.9rem;font-weight:800;color:#155E9B;line-height:1">'+r.done+' / '+r.total+'</div>'
+    + '<div class="muted" style="font-size:.74rem">re-shot so far</div>'
+    + (age>0?'<div class="muted" style="font-size:.72rem;margin-top:4px">oldest ordered '+age+' day'+(age===1?'':'s')+' ago</div>':'')
+    + '</div></div>'
+    + '<div style="margin-top:12px"><button class="btn pu sm" onclick="tab=\'issues\';riFilter=\'revisit\';render()">'
+    + icon('refresh')+' See the '+r.open+' open stops</button></div>'
+    + '</div>';
+}
+
 function renderOverview(){
   var o=computeOverview(), c=o.company;
   var pct=function(done,tot){ return tot>0?Math.round(done/tot*100):0; };
   var cp=pct(c.completed,c.assigned);
+  var revisitBanner = renderRevisitBanner();
 
   var periodStops = ovPeriod==='all' ? 'all time' : esc(o.b.label);
-  var h='<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h3>Company overview</h3>'
+  // The re-shoot programme leads the page — it is owed work on invoiced stops.
+  var h = revisitBanner
+    + '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:220px"><h3>Company overview</h3>'
     + '<div class="hint">Stops completed &amp; remaining ('+periodStops+') across every route. Each completed stop earns the tech '+money(DEFAULT_PM_RATE)+'/PM; paid-out &amp; owed are cumulative from the PM ledger. A stop can only be on one tech\'s route — enforced in the database.</div></div>'
     + '<div class="seg" style="flex:none">'
     + '<button class="'+(ovPeriod==='all'?'on':'')+'" onclick="ovPeriod=\'all\';render()">All time</button>'
@@ -1449,7 +1501,8 @@ function renderAudit(){
   var ambers = auditFindings.filter(function(f){ return f.severity==='amber'; });
   var infos = auditFindings.filter(function(f){ return f.severity==='info'; });
 
-  var h = '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'
+  var h = renderRevisitBanner()
+    + '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'
     + '<div style="flex:1;min-width:220px"><h3>Nightly audit</h3>'
     + '<div class="hint">Every check here is a defect the invoice #172825 review had to find by hand. It runs automatically at <strong>02:10 Pacific</strong> over the last 45 days of work and re-checks everything, so a problem is caught the night it happens rather than when a customer reads an invoice. Findings <strong>clear themselves</strong> once the report is fixed — this is a worklist, not a log.</div></div>'
     + '<button class="btn o sm" style="flex:none" onclick="runAuditNow()" '+(auditBusy?'disabled':'')+'>'+(auditBusy?'Running…':icon('refresh')+' Run it now')+'</button>'
@@ -1743,6 +1796,7 @@ function renderReportIssues(){
   // filters + search
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
     +'<div class="seg">'
+      +'<button class="'+(riFilter==='revisit'?'on':'')+'" onclick="riFilter=\'revisit\';render()" title="Ordered for a re-shoot and not yet re-documented">Open re-shoots ('+revisitStats().open+')</button>'
       +'<button class="'+(riFilter==='needphoto'?'on':'')+'" onclick="riFilter=\'needphoto\';render()" title="No photograph of this unit\'s own serial plate exists - a re-visit is required">Needs photo ('+needPhotoN+')</button>'
       +'<button class="'+(riFilter==='reused'?'on':'')+'" onclick="riFilter=\'reused\';render()" title="A photograph on this report also appears on a report for a DIFFERENT unit - the defect the customer found">Reused photo ('+reusedN+')</button>'
       +'<button class="'+(riFilter==='noserial'?'on':'')+'" onclick="riFilter=\'noserial\';render()" title="The tech could not find or read a serial plate on this unit - it cannot be tied to a listed asset">No serial ('+noSerialN+')</button>'
