@@ -840,6 +840,17 @@ function photoSaveCard(){
     + '</div>';
 }
 
+// Does the note on this submission need a person to read it?
+// A blank note does not. A note identical to the one already on file does not
+// either — that is an edit to something else, and re-raising it would undo a
+// clearing somebody has already made.
+function noteRaisesIssue(f, prev){
+  var note = String((f && f.comments) || '').trim();
+  if (!note) return false;
+  var before = String((prev && prev.form_data && prev.form_data.comments) || '').trim();
+  return note !== before;
+}
+
 function removePhoto(i) {
   photos.splice(i, 1);
   saveProgress();
@@ -1155,7 +1166,19 @@ function renderChecklist() {
     h += '<textarea name="comments" placeholder="What you found on this visit...">' + esc(form.comments || '') + '</textarea>';
   } else {
     h += '<h3>Comments / Observations</h3>';
+    // Say what writing here does. A tech who thinks the box is a diary writes
+    // "ALERT EXTRA UNIT HERE" and assumes somebody will act on it; a tech who
+    // knows it opens a ticket writes it deliberately.
+    h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">'
+      + 'Anything you write here <strong>goes to the office as a reported issue</strong> \u2014 damage, '
+      + 'a unit that needs service, anything that looks wrong. Leave it blank if the visit was normal.</div>';
     h += '<textarea name="comments" placeholder="Notes...">' + esc(form.comments || '') + '</textarea>';
+    // The one note that has its own button. An extra cooler needs a RECORD, not
+    // a sentence — nine of them sat in this box for two months precisely
+    // because a sentence is not a record.
+    h += '<div style="font-size:13px;color:var(--dim);margin:-4px 0 4px">'
+      + 'Found a cooler here that is not on the list? Go back to the store card and use '
+      + '<strong>Add an asset</strong> so it gets its own record \u2014 a note on its own does not create one.</div>';
   }
 
   h += '<h3>Signatures</h3>';
@@ -3129,7 +3152,18 @@ async function submitForm() {
       gps_lat: gps ? gps.lat : null,
       gps_lng: gps ? gps.lng : null,
       gps_accuracy: gps ? gps.accuracy : null,
-      needs_review: ticketFlag || addedAssetFlag || !!(prevPm && prevPm.needs_review),
+      // A NOTE IS A REPORT. Until now writing one did nothing: nine visits said
+      // in plain words that a store had a cooler that was not on the list --
+      // "ALERT EXTRA UNIT HERE !!!!!" -- and four of those nine were not even
+      // flagged, so nobody read them and none of those units got a record.
+      // If a tech takes the trouble to write something down, it lands on the
+      // Report Issues board and a human clears it with Mark handled. Noise is
+      // cheap now that the board can be emptied; a missed note is not.
+      //
+      // Only a NEW or CHANGED note raises it, so re-submitting an edited report
+      // cannot re-open an issue somebody has already dealt with.
+      needs_review: ticketFlag || addedAssetFlag || noteRaisesIssue(form, prevPm)
+        || !!(prevPm && prevPm.needs_review),
       added_asset: addedAssetFlag || !!(prevPm && prevPm.added_asset)
     };
     if (reopenPmId) {

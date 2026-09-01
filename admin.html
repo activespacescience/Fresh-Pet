@@ -1370,7 +1370,8 @@ function renderAddedAssets(){
   var unpaid = pms.filter(function(p){ return !p.paid_out; });
 
   var h='<div class="card"><h3>'+icon('plus')+' Added assets — found in the field</h3>'
-    +'<div class="hint">Units techs discovered at a store that weren\'t on the Freshpet asset list, added from a closed stop in the field app. They arrive <strong>un-reported</strong> — tell Freshpet about the unit, then Mark reported so the next spreadsheet export owns it (imports never deactivate un-reported field assets). The full PM done on each one is flagged <span class="mono">ADDED ASSET</span> under Needs Review and is billed / paid from this tab.</div>';
+    +'<div class="hint">Units techs discovered at a store that weren\'t on the Freshpet asset list, added from a closed stop in the field app. They arrive <strong>un-reported</strong> — tell Freshpet about the unit, then Mark reported so the next spreadsheet export owns it (imports never deactivate un-reported field assets). The full PM done on each one is flagged <span class="mono">ADDED ASSET</span> under Needs Review and is billed / paid from this tab.</div>'
+    +'<div class="hint">Some rows read <strong>never serviced</strong>: the tech noted an extra cooler in the comments on the unit beside it rather than adding it, so there is a record and a report to point at but no PM and no serial plate. Those need a visit to read the plate. Every row here — serviced or not — shows on the Freshpet portal\'s <strong>Asset list</strong> until you Mark reported.</div>';
   h+='<div class="tiles">'
     +'<div class="tile"><div class="lb">Field-added assets</div><div class="v ac">'+fa.length+'</div></div>'
     +'<div class="tile"><div class="lb">Un-reported</div><div class="v '+(unreported.length?'am':'gn')+'">'+unreported.length+'</div><div class="sub">not yet on Freshpet\'s books</div></div>'
@@ -1385,9 +1386,14 @@ function renderAddedAssets(){
     h+='<div style="overflow-x:auto"><table><thead><tr><th>Store</th><th class="hide">City</th><th>Serial</th><th class="hide">Model</th><th>Added by</th><th>PM</th><th>Billed</th><th class="hide">Paid</th><th>Reported</th></tr></thead><tbody>';
     fa.forEach(function(a){
       var pm = pmByAsset[a.id];
-      h+='<tr><td>'+esc(a.store||'')+'</td><td class="hide">'+esc(a.city||'')+'</td><td class="mono" style="font-size:.8rem">'+esc(a.serial||'')+'</td><td class="hide">'+esc(a.model||'')+'</td>'
+      h+='<tr><td>'+esc(a.store||'')+'</td><td class="hide">'+esc(a.city||'')+'</td><td class="mono" style="font-size:.8rem">'+(a.no_serial
+            ? '<span class="pill rd">NO SERIAL</span><div class="muted" style="font-size:.68rem;margin-top:2px">read the plate on the next visit</div>'
+            : esc(a.serial||''))+'</td><td class="hide">'+esc(a.model||'')+'</td>'
         +'<td>'+esc((a.added_by||'').split('@')[0])+'<div class="muted" style="font-size:.7rem">'+esc(String(a.added_at||'').slice(0,10))+'</div></td>'
-        +'<td>'+(pm?'<span class="pill gn">✓ '+esc(pm.pm_date||'')+'</span>':'<span class="pill am">pending</span>')+'</td>'
+        +'<td>'+(pm?'<span class="pill gn">✓ '+esc(pm.pm_date||'')+'</span>'
+            : (a.found_on_pm_id
+               ? '<span class="pill am">never serviced</span><div class="muted" style="font-size:.7rem">noted on report #'+esc(String(a.found_on_pm_id))+'</div>'
+               : '<span class="pill am">pending</span>'))+'</td>'
         +'<td>'+(pm&&pm.billed?'<span class="pill gn">Inv #'+esc(pm.invoice_doc_number||'—')+'</span>':(pm?'<span class="pill am">unbilled</span>':'<span class="pill dim">—</span>'))+'</td>'
         +'<td class="hide">'+(pm&&pm.paid_out?'<span class="pill gn">'+esc(pm.payout_bill_ref||'paid')+'</span>':(pm?'<span class="pill am">unpaid</span>':'<span class="pill dim">—</span>'))+'</td>'
         +'<td>'+(a.reported===false
