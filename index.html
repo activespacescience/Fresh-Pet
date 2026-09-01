@@ -46,6 +46,20 @@ label input[type=checkbox]{width:26px;height:26px;accent-color:var(--ac)}
 .asset-btn:active{opacity:.7}
 .asset-btn .ser{color:rgba(255,255,255,.85);font-size:15px;font-weight:500}
 .asset-btn.done{background:var(--gn)}
+/* Asset sub-card, shown inside its store card on the route page. Model and
+   serial ride on the face so a tech standing at the cooler can match the card
+   to the machine without opening anything. */
+.unit{display:flex;align-items:center;gap:12px;width:100%;text-align:left;padding:13px 14px;border-radius:12px;
+  background:var(--sf2);border:1px solid var(--bd);margin-top:8px;cursor:pointer;font-family:inherit;color:var(--tx)}
+.unit:active{opacity:.7}
+.unit.done{background:transparent;border-style:dashed}
+.unit.rv{border-color:#8FC4EA;border-left:4px solid #155E9B;background:#E2EFF9}
+body.dark .unit.rv{background:#152836}
+.unit .mdl{font-size:21px;font-weight:800;line-height:1.2}
+.unit .sn{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;font-weight:700;color:var(--tx);margin-top:3px;letter-spacing:.02em;overflow-wrap:anywhere}
+.unit .go{flex:none;font-size:24px;color:var(--dim)}
+.unit.done .mdl,.unit.done .sn{color:var(--dim);font-weight:600}
+.unit.done .go{color:var(--gn)}
 .photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin:8px 0}
 .photo-grid div{position:relative;aspect-ratio:1;border-radius:12px;overflow:hidden}
 .photo-grid img{width:100%;height:100%;object-fit:cover}
@@ -110,6 +124,13 @@ label input[type=checkbox]{width:26px;height:26px;accent-color:var(--ac)}
 .brand-row .brand-img{max-height:40px}
 .brand-row .fp{font-size:26px;font-weight:800;color:var(--ac);letter-spacing:-1px}
 /* Dark mode */
+/* Exception report \u2014 red paper on screen, matching the PDF. STORE CLOSED and
+   MISSING ASSET are the two ways a stop ends with no service done. */
+body.exception{--bg:#FBE9E7;--sf:#FFFFFF;--sf2:#F7D9D5;--bd:#EFBDB6;--bd2:#E08A80;--ac:#B3261E;--ac2:#8C1D18;--or:#B3261E;--dim:#96625C}
+body.exception.dark{--bg:#2A1210;--sf:#3A1B18;--sf2:#4A2320;--bd:#5C2E29;--bd2:#7A403A;--ac:#F2857B;--ac2:#E0685C;--or:#F2857B}
+/* Secondary visit audit \u2014 light blue paper on screen, matching the PDF. */
+body.audit{--bg:#E2EFF9;--sf:#FFFFFF;--sf2:#D3E6F6;--bd:#B8D5EC;--bd2:#8FC4EA;--ac:#155E9B;--ac2:#0E4676;--or:#155E9B;--dim:#4E7FA6}
+body.audit.dark{--bg:#0E1C28;--sf:#152836;--sf2:#1B3346;--bd:#254257;--bd2:#33607F;--ac:#67B2E8;--ac2:#4A93C9;--or:#67B2E8}
 body.dark{--bg:#1A1613;--sf:#241E19;--sf2:#2E271F;--bd:#3A3128;--bd2:#4A4034;--tx:#F5EEE6;--tx2:#C4B5A5;--dim:#9A8B7B;--ac:#F2872F;--ac2:#E56A15;--gn:#4CC46B;--rd:#F26761;--or:#F2872F;--shadow:0 1px 3px rgba(0,0,0,.4)}
 body.dark input:focus,body.dark textarea:focus,body.dark select:focus{background:var(--sf2)}
 body.dark .stop-card.current{background:#2E2016}
@@ -349,7 +370,39 @@ async function loadMyRoute() {
 
 // ===== Helpers =====
 function isCompleted(serial) {
-  return completedPMs.some(function(pm) { return pm.serial === serial; });
+  // A unit is done only when it has a report AND no report on it is carrying an
+  // open re-visit. Testing "some report has no open re-visit" is not the same
+  // thing and gets it wrong for a unit with more than one report on file — 16 of
+  // the 160 units in the plate-photo re-shoot list have two — where an unflagged
+  // older report would keep the stop closed and the tech would never be shown it.
+  var mine = completedPMs.filter(function(pm) { return pm.serial === serial; });
+  if (!mine.length) return false;
+  return !mine.some(function(pm) { return pm.revisit_requested_at && !pm.revisit_done_at; });
+}
+function isRevisit(serial) {
+  return completedPMs.some(function(pm) {
+    return pm.serial === serial && pm.revisit_requested_at && !pm.revisit_done_at;
+  });
+}
+// The open re-visit this unit is carrying, if any. A PM filed against it is a
+// RE-SHOOT: paid to the tech like any other stop, never billed to Freshpet.
+function openRevisitPm(serial) {
+  return completedPMs.filter(function(pm) {
+    return pm.serial === serial && pm.revisit_requested_at && !pm.revisit_done_at;
+  }).sort(function(a, b) {
+    return String(b.revisit_requested_at).localeCompare(String(a.revisit_requested_at));
+  })[0] || null;
+}
+var REVISIT_LABEL = {
+  no_plate_photo:  'no serial-plate photo on file',
+  wrong_unit_photo:'previous photo showed another unit',
+  unverifiable:    'previous documentation could not be verified',
+  customer_dispute:'disputed by the customer'
+};
+function revisitReason(serial) {
+  var pm = completedPMs.find(function(p) {
+    return p.serial === serial && p.revisit_requested_at && !p.revisit_done_at; });
+  return pm ? (REVISIT_LABEL[pm.revisit_reason] || pm.revisit_reason || 'documentation must be redone') : '';
 }
 function getCompletedDate(serial) {
   var pm = completedPMs.find(function(p) { return p.serial === serial; });
@@ -592,13 +645,35 @@ function compressImg(file, cb) {
 // controls exist because invoice #172825 shipped 43 reports carrying 17
 // gallery images reused across stores; a plate photo must be an image of THIS
 // unit's plate, taken here, now.
-var PHOTO_KINDS = { plate: 'Serial plate', unit: 'Unit in place', site: 'Storefront / site', other: 'Other' };
+var PHOTO_KINDS = { unit: 'Full pic of unit', plate: 'Serial plate', bottom: 'Bottom of unit', interior: 'Inside of cooler (no serial plate)', site: 'Storefront / site', other: 'Other' };
+// The three shots every PM must carry, in the order they are asked for. 'site'
+// belongs to exception reports and 'other' is supplemental — neither is part of
+// the required set. Older reports carry 'other' photos from before the tags
+// existed; PHOTO_KINDS still labels them so history keeps reading correctly.
+var REQUIRED_PHOTOS = [
+  { kind: 'unit',   label: 'Full pic of unit', hint: 'the whole cabinet where it stands' },
+  { kind: 'plate',  label: 'Serial plate',     hint: 'close enough to read the serial' },
+  { kind: 'bottom', label: 'Bottom of unit',   hint: 'underneath — condenser and floor' }
+];
+// When there is no plate to photograph, the shot that replaces it is the inside
+// of the cooler. The count stays at three: a unit we cannot identify needs MORE
+// evidence of what was actually serviced, not less.
+var NO_PLATE_SHOT = { kind: 'interior', label: 'Inside of cooler', hint: 'shelves and interior — this stands in for the plate' };
+function requiredPhotos() {
+  if (!form || !form.noSerialPlate) return REQUIRED_PHOTOS;
+  return REQUIRED_PHOTOS.map(function(r) { return r.kind === 'plate' ? NO_PLATE_SHOT : r; });
+}
 
 function normPhoto(p) { // back-compat: old drafts stored bare dataURL strings
   return (typeof p === 'string') ? { d: p, kind: 'other', hash: null } : p;
 }
-function platePhotoCount() {
-  return photos.filter(function(p) { return normPhoto(p).kind === 'plate'; }).length;
+function photoCount(kind) {
+  return photos.filter(function(p) { return normPhoto(p).kind === kind; }).length;
+}
+function platePhotoCount() { return photoCount('plate'); }
+// Which of the three required shots are still missing, in ask order.
+function missingPhotos() {
+  return requiredPhotos().filter(function(r) { return !photoCount(r.kind); });
 }
 
 // hash -> earliest {store, pm_date} that already uses that exact image
@@ -684,12 +759,25 @@ function render() {
   else if (screen === 'pay') { html += renderPay(); }
   else if (screen === 'admin') { html += renderAdmin(); }
   else if (screen === 'route') { html += renderRoute(); }
-  else if (screen === 'routeStop') { html += renderRouteStop(); }
   else if (screen === 'addAsset') { html += renderAddAsset(); }
   else if (screen === 'exception') { html += renderException(); }
   if (sigModalKey) { html += renderSigModal(); }
+  // The paper is light blue and so is the screen. A tech filling this in should
+  // know from across the van that they are on an audit form and not an ordinary
+  // PM \u2014 the ask behind this whole re-shoot list was documentation nobody
+  // realised was any different from an ordinary day's.
+  document.body.classList.toggle('audit',
+    screen === 'checklist' && !!(form && form.reshoot_of_pm_id));
+  document.body.classList.toggle('exception', screen === 'exception');
   el.innerHTML = html;
   bindEvents();
+  // Coming back from a PM, put the store you were at back under your thumb
+  // instead of at the top of a twenty-stop list.
+  if (scrollToStopIdx != null && screen === 'route') {
+    var target = document.getElementById('stop' + scrollToStopIdx);
+    if (target) target.scrollIntoView({ block: 'start' });
+    scrollToStopIdx = null;
+  }
 }
 
 // Freshpet logo as inline SVG (sun + hills + two-tone wordmark). If a real
@@ -859,17 +947,41 @@ function renderChecklist() {
   if (!selectedAsset) { screen = 'home'; return renderHome(); }
   var a = selectedAsset;
   var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('pencil')+' Editing a previously submitted PM — submitting will update it and timestamp the modification</div>' : '';
+  var reshootPm = reopenPmId ? null : openRevisitPm(a.serial);
+  if (reshootPm) {
+    reopenBanner += '<div class="card" style="padding:10px 14px;border-left:4px solid #155E9B">'
+      + '<div style="font-weight:700;color:#155E9B;letter-spacing:.02em">SECONDARY VISIT AUDIT</div>'
+      + '<div style="font-size:14px;margin-top:4px">This is an <strong>audit visit</strong>, not an ordinary PM \u2014 the blue form means the report prints on blue paper and goes to Freshpet as a re-documentation. '
+      + 'The earlier report for this unit was pulled: ' + esc(revisitReason(a.serial)) + '. '
+      + 'Service the unit and document it fresh: a clear photograph of the serial plate on <strong>this</strong> machine, taken here, plus the usual pictures. Nothing from the old report carries over.</div>'
+      + '<div style="font-size:13px;color:var(--dim);margin-top:6px">You are paid for this stop at your normal rate. It is not billed to Freshpet.</div>'
+      + '</div>';
+  }
   if (addedAssetFlag) {
     reopenBanner += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('plus')+' New field-added asset — this PM will be flagged NEEDS REVIEW · ADDED ASSET</div>';
   }
 
   var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
-  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
+  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">' +
     '<button class="btn back-btn" onclick="' + backFn + '">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(a.store) + ' - ' + esc(a.city) + '</h2>' +
-    '<div style="font-size:17px;font-weight:600;margin-top:2px">' + esc(a.manufacturer) + ' ' + esc(a.model) + '</div>' +
-    '<div style="font-size:17px;color:var(--dim)">S/N: ' + esc(a.serial) + '</div></div>' +
-  '</div>' + reopenBanner;
+    '<h2 style="margin:0;flex:1;font-size:20px">' + esc(a.store) + ' - ' + esc(a.city) + '</h2>' +
+  '</div>';
+
+  // The asset card: which machine this form is about, in the type size it gets
+  // matched against the machine in. MISSING ASSET sits on it because that is
+  // the answer to the question this card asks — is this unit here?
+  h += '<div class="card" style="padding:14px">';
+  h += '<div style="font-size:22px;font-weight:800;line-height:1.2">' + esc([a.manufacturer, a.model].filter(Boolean).join(' ') || 'Unit') + '</div>';
+  h += a.no_serial
+    ? '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;font-weight:700;color:var(--rd);margin-top:3px">NO SERIAL NUMBER</div>'
+    : '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:20px;font-weight:700;margin-top:3px;overflow-wrap:anywhere">' + esc(a.serial) + '</div>';
+  if (!reopenPmId) {
+    h += '<button class="btn btn-o" style="margin:12px 0 0;padding:11px;font-size:15px;border-color:var(--rd);color:var(--rd)" '
+      + 'onclick="startUnitMissing(' + ASSETS.indexOf(a) + ', currentStopIdx)">'
+      + icon('alert') + ' MISSING ASSET \u2014 this unit is not on site</button>';
+  }
+  h += '</div>';
+  h += reopenBanner;
 
   h += '<div class="card">';
   h += '<h3>Technician Info</h3>';
@@ -880,6 +992,7 @@ function renderChecklist() {
   h += '<h3>Settings on Arrival</h3>';
   h += fld('Set Point 1', 'sp1', 'text', 'SP1');
   h += fld('Voltage', 'voltage', 'text', 'Voltage reading');
+  h += chk('noMeter', 'No meter on hand — voltage not measured');
   h += lbl('Interior Temp');
   h += '<select name="intTemp">';
   h += '<option value=""' + (!form.intTemp ? ' selected' : '') + '>— measure &amp; select —</option>';
@@ -927,27 +1040,76 @@ function renderChecklist() {
   h += chk('ledCheck', 'LED Check');
   h += chk('waterLeak', 'Water Leak');
 
-  h += '<h3>Comments / Observations</h3>';
-  h += '<textarea name="comments" placeholder="Notes...">' + esc(form.comments || '') + '</textarea>';
+  if (form.reshoot_of_pm_id) {
+    h += '<h3>Audit notes</h3>';
+    h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">'
+      + 'The report prints <strong>SECONDARY VISIT AUDIT</strong> above whatever you write here, with both dates \u2014 you do not need to explain that part. '
+      + 'Use this for what you actually found today: condition, anything different from the first visit, anything that needs following up.</div>';
+    h += '<textarea name="comments" placeholder="What you found on this visit...">' + esc(form.comments || '') + '</textarea>';
+  } else {
+    h += '<h3>Comments / Observations</h3>';
+    h += '<textarea name="comments" placeholder="Notes...">' + esc(form.comments || '') + '</textarea>';
+  }
 
   h += '<h3>Signatures</h3>';
-  h += fld('Store Contact', 'storeContact', 'text', 'Name');
-  h += chk('noContact', 'No store contact available to sign');
-  if (form.noContact) {
-    h += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">The report will state that no store contact was available. Never sign or mark the store box yourself.</div>';
+  if (reshootCarriesSignature()) {
+    // Locked on purpose. The store signed for the original visit; they are not
+    // asked to sign again for a re-shoot, and their earlier signature is shown
+    // as what it is — a record of that visit, not an endorsement of today's
+    // readings. Both dates print on the report so the two are never conflated.
+    h += '<div class="card" style="padding:12px 14px;border-left:4px solid #7C3ABE">'
+      + '<div style="font-weight:700;color:#7C3ABE;letter-spacing:.02em">STORE SIGNATURE — LOCKED</div>'
+      + '<div style="font-size:14px;margin-top:6px">Signed by <strong>' + esc(form.original_store_contact) + '</strong> on the original visit'
+      + (form.original_date ? ' (' + esc(form.original_date) + ')' : '') + '.</div>';
+    if (form.original_signature) {
+      h += '<img src="' + esc(form.original_signature) + '" alt="Signature from the original visit" '
+        + 'style="height:56px;margin-top:8px;background:#fff;border:1px solid var(--bd);border-radius:10px;object-fit:contain;max-width:100%">';
+    }
+    h += '<div style="font-size:13px;color:var(--dim);margin-top:8px">No new store signature is taken on a re-shoot. '
+      + 'The report will show the original date and today\u2019s re-shoot date side by side, and will state that the new readings were not signed for by the store.</div>'
+      + '</div>';
+    h += fld('Service Rep', 'serviceRep', 'text', 'Name');
+    h += sigPad('tech', 'Technician Signature');
+    h += '<div style="font-size:13px;color:var(--dim);margin-top:-4px;margin-bottom:12px">You still sign: your signature is what attests to the readings you took today.</div>';
   } else {
-    h += sigPad('store', 'Store Manager Signature');
+    h += fld('Store Contact', 'storeContact', 'text', 'Name');
+    h += chk('noContact', 'No store contact available to sign');
+    if (form.noContact) {
+      h += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">The report will state that no store contact was available. Never sign or mark the store box yourself.</div>';
+    } else {
+      h += sigPad('store', 'Store Manager Signature');
+    }
+    h += fld('Service Rep', 'serviceRep', 'text', 'Name');
+    h += sigPad('tech', 'Technician Signature');
   }
-  h += fld('Service Rep', 'serviceRep', 'text', 'Name');
-  h += sigPad('tech', 'Technician Signature');
 
   h += '<h3>Photos</h3>';
-  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">The <strong>serial plate photo is required</strong> — a close-up of THIS unit’s plate, taken with the camera. Reused images are refused automatically.</div>';
-  h += '<div style="display:flex;gap:8px;margin-bottom:8px">' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto(\'plate\')">'+icon('camera')+' Serial plate' + (platePhotoCount() ? ' ✓' : '') + '</button>' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="takePhoto(\'unit\')">'+icon('camera')+' Unit</button>' +
-    '<button class="btn btn-o" style="flex:1;padding:10px" onclick="uploadPhoto()">'+icon('image')+' Other</button>' +
-  '</div>';
+  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">'
+    + '<strong>All three are required</strong> on every unit, taken here with the camera. Reused images are refused automatically.</div>';
+  // One button per required shot, each showing whether it is done — a tech can
+  // see what is left without counting thumbnails.
+  // The mark sits directly above the plate button, where a tech looks when the
+  // plate is not there — and checking it swaps that slot for the interior shot.
+  h += '<div class="card" style="padding:10px 12px;margin-bottom:8px' + (form.noSerialPlate ? ';border-left:4px solid var(--rd)' : '') + '">';
+  h += chk('noSerialPlate', 'NO SERIAL NUMBER — plate missing or unreadable');
+  if (form.noSerialPlate) {
+    h += '<div style="font-size:13px;color:var(--rd);margin-top:6px">'
+      + 'The report will say <strong>NO SERIAL NUMBER FOUND</strong> and is filed as a <strong>REPORT ISSUE</strong> automatically. '
+      + 'Photograph the inside of the cooler instead of the plate.</div>';
+  }
+  h += '</div>';
+  h += '<div style="display:flex;flex-direction:column;gap:8px;margin-bottom:8px">';
+  requiredPhotos().forEach(function(r) {
+    var got = photoCount(r.kind);
+    h += '<button class="btn btn-o" style="padding:12px;text-align:left;display:flex;align-items:center;gap:10px'
+      + (got ? ';border-color:var(--gn);color:var(--gn)' : '') + '" onclick="takePhoto(\'' + r.kind + '\')">'
+      + icon(got ? 'check' : 'camera')
+      + '<span style="flex:1">' + esc(r.label) + (got > 1 ? ' (' + got + ')' : '')
+      + '<span style="display:block;font-size:12px;color:var(--dim);font-weight:400">' + esc(r.hint) + '</span></span>'
+      + '</button>';
+  });
+  h += '<button class="btn btn-o" style="padding:10px" onclick="uploadPhoto()">'+icon('image')+' Another photo (optional)</button>';
+  h += '</div>';
 
   if (photos.length) {
     h += '<div class="photo-grid">';
@@ -963,11 +1125,11 @@ function renderChecklist() {
   if (submitting) {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Uploading PM...</div>';
   } else {
-    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">'+icon('check')+' ' + (reopenPmId ? 'Update PM' : 'Submit PM') + '</button>';
-    h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' Open Service Ticket</button>';
+    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">'+icon('check')+' ' + (reopenPmId ? 'Update PM' : (reshootPm ? 'Submit Re-Shoot' : 'Submit PM')) + '</button>';
+    h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' REPORT ISSUE</button>';
     if (!reopenPmId) {
       h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">'+icon('clipboard')+' PM PREV COMP (done elsewhere)</button>';
-      h += '<button class="btn btn-o" style="margin-top:8px;border-color:var(--or);color:var(--or)" onclick="startException()">'+icon('alert')+' Can\'t complete — store closed / unit missing</button>';
+
     }
   }
 
@@ -2041,6 +2203,32 @@ async function runImport() {
 }
 
 // ===== TECH ROUTE VIEW =====
+// One asset, drawn as a sub-card on its store's card. Model and serial are on
+// the face because that is what a tech matches against the machine in front of
+// them; everything else is secondary.
+function unitCard(a, stopIdx) {
+  var idx = ASSETS.indexOf(a);
+  var done = isCompleted(a.serial);
+  var rv = isRevisit(a.serial);
+  var cls = 'unit' + (done ? ' done' : '') + (rv ? ' rv' : '');
+  var act = done
+    ? 'reopenLatestPM(\'' + esc(a.serial).replace(/'/g, "\\'") + '\')'
+    : 'startChecklistFromRoute(' + idx + ', ' + stopIdx + ')';
+  // Model and serial, big, and nothing else. This card is read at arm's length
+  // against a machine in a cold aisle — an audit flag is colour, a finished
+  // stop is a tick, and the reasons live on the form you are about to open.
+  var h = '<div class="' + cls + '" onclick="' + act + '">';
+  h += '<div style="flex:1;min-width:0">';
+  h += '<div class="mdl">' + esc([a.manufacturer, a.model].filter(Boolean).join(' ') || 'Unit') + '</div>';
+  h += a.no_serial
+    ? '<div class="sn" style="color:var(--rd)">NO SERIAL NUMBER</div>'
+    : '<div class="sn">' + esc(a.serial || '\u2014') + '</div>';
+  h += '</div>';
+  h += '<span class="go">' + (done ? icon('check') : '\u203A') + '</span>';
+  h += '</div>';
+  return h;
+}
+
 function renderRoute() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="goHome()">←</button>' +
@@ -2076,6 +2264,7 @@ function renderRoute() {
   stops.forEach(function(s) {
     s.allDone = s.assets.every(function(a) { return isCompleted(a.serial); });
     s.someDone = s.assets.some(function(a) { return isCompleted(a.serial); });
+    s.hasRevisit = s.assets.some(function(a) { return isRevisit(a.serial); });
   });
 
   var doneCount = stops.filter(function(s) { return s.allDone; }).length;
@@ -2106,7 +2295,16 @@ function renderRoute() {
     var cls = s.allDone ? 'completed' : (isCurrent ? 'current' : '');
     var numCls = s.allDone ? 'done' : (isCurrent ? 'current' : 'pending');
 
-    h += '<div class="stop-card ' + cls + '">';
+    h += '<div class="stop-card ' + cls + '" id="stop' + i + '">';
+    // Blue banner across the top of the store card when any unit here is due an
+    // audit, in the same blue as the form and the report. The per-unit flags say
+    // which machine; this says "this stop is not a normal stop" before you have
+    // read a single sub-card.
+    if (s.hasRevisit) {
+      h += '<div style="margin:-2px 0 10px;padding:8px 11px;border:1px solid #8FC4EA;border-left-width:4px;'
+        + 'border-left-color:#155E9B;border-radius:8px;background:#E2EFF9;'
+        + 'font-weight:800;font-size:14px;color:#155E9B;letter-spacing:.03em">SECONDARY VISIT AUDIT</div>';
+    }
     h += '<div style="display:flex;align-items:flex-start;gap:4px">';
     h += '<span class="stop-num ' + numCls + '">' + (s.allDone ? '✓' : (i+1)) + '</span>';
     h += '<div style="flex:1">';
@@ -2118,19 +2316,33 @@ function renderRoute() {
     if (doneSoFar > 0 && !s.allDone) { h += ' &bull; ' + doneSoFar + ' done'; }
     h += '</span>';
 
-    if (isCurrent || !s.allDone) {
-      h += '<div style="display:flex;gap:8px;margin-top:8px">';
-      h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate</button>';
-      h += '<button class="btn btn-p" style="display:inline-flex;align-items:center;padding:10px 16px;width:auto;margin-top:0" onclick="goRouteStop(' + i + ')">'+icon('clipboard')+' PMs</button>';
-      h += '</div>';
-    } else {
-      // Closed stop: re-open & modify a submitted PM, or add a NEW asset
-      // found at this store (does the full PM on it).
-      h += '<div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">';
-      h += '<button class="btn btn-o" style="display:inline-flex;align-items:center;gap:6px;width:auto;padding:10px 14px;margin-top:0;font-size:15px" onclick="goRouteStop(' + i + ')">'+icon('pencil')+' Re-open &amp; modify</button>';
-      h += '<button class="btn btn-o" style="display:inline-flex;align-items:center;gap:6px;width:auto;padding:10px 14px;margin-top:0;font-size:15px" onclick="goAddAssetForStop(' + i + ')">'+icon('plus')+' Add asset to this store</button>';
-      h += '</div>';
+    h += '<div style="margin-top:8px">';
+    h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate</button>';
+    h += '</div>';
+
+    // Every unit at this store, on the store card. The tech picks the next one
+    // from here instead of walking back out to a stop screen — at a store with
+    // three coolers that was a screen change per unit for no reason.
+    s.assets.forEach(function(a) {
+      h += unitCard(a, i);
+    });
+
+    // Adding a unit belongs to the STORE, not to any one machine on it — the
+    // unit being added is by definition not on the list yet.
+    // Everything that is NOT "service this unit" collects on one strip at the
+    // bottom. Hung off each unit these buttons doubled the height of the card
+    // and buried the only thing a tech is looking for, which is the machine.
+    h += '<div style="margin-top:12px;padding-top:10px;border-top:1px solid var(--bd);display:flex;flex-wrap:wrap;gap:8px">';
+    h += '<button class="btn btn-o" style="flex:1 1 100%;margin:0;padding:10px;font-size:14px" onclick="goAddAssetForStop(' + i + ')">'
+      + icon('plus') + ' Add an asset</button>';
+    // A closed door is a fact about the STORE and answers every unit at once, so
+    // it belongs here. A missing MACHINE is a fact about that machine, so it
+    // lives on the unit's own card on the next screen instead.
+    if (!s.allDone) {
+      h += '<button class="btn btn-o" style="flex:1;min-width:120px;margin:0;padding:10px;font-size:14px;border-color:var(--rd);color:var(--rd)" '
+        + 'onclick="startStoreClosed(' + i + ')">' + icon('alert') + ' Store closed</button>';
     }
+    h += '</div>';
 
     h += '</div></div></div>';
   });
@@ -2138,63 +2350,16 @@ function renderRoute() {
   return h;
 }
 
-function renderRouteStop() {
-  // Show assets at the current route stop
-  var stops = getRouteStops();
-  var stop = stops[currentStopIdx];
-  if (!stop) { screen = 'route'; return renderRoute(); }
-
-  var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn back-btn" onclick="goRoute()">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:21px">Stop ' + (currentStopIdx + 1) + ': ' + esc(stop.store) + '</h2>' +
-    '<div style="font-size:17px;color:var(--ac);text-decoration:underline;cursor:pointer" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">' + esc(stop.address) + ', ' + esc(stop.city) + '</div></div>' +
-  '</div>';
-
-  h += '<button class="nav-btn" style="width:100%;justify-content:center;margin-bottom:12px" onclick="openNavigation(\'' + esc(stop.address).replace(/'/g, "\\'") + '\',\'' + esc(stop.city).replace(/'/g, "\\'") + '\',\'' + esc(stop.state).replace(/'/g, "\\'") + '\',\'' + esc(stop.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate to This Stop</button>';
-
-  var stopClosed = stop.assets.every(function(a) { return isCompleted(a.serial); });
-  if (stopClosed) {
-    h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--gn)">'+icon('check')+' This stop is closed. Re-open a PM below to modify it, or add a new asset you found at this store.</div>';
-  }
-
-  h += '<h3>Assets at This Stop</h3>';
-  stop.assets.forEach(function(a) {
-    var done = isCompleted(a.serial);
-    var idx = ASSETS.indexOf(a);
-    if (done) {
-      // Completed unit: modifying goes through re-open (updates + timestamps
-      // the existing PM) instead of starting a duplicate PM.
-      h += '<div class="asset-btn done">' +
-        esc(a.manufacturer) + ' ' + esc(a.model) + ' ' + icon('check') +
-        '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
-        '<button class="btn" style="width:auto;padding:9px 14px;font-size:14px;margin-top:8px;background:rgba(255,255,255,.24);color:#fff;box-shadow:none" onclick="reopenLatestPM(\'' + esc(a.serial).replace(/'/g, "\\'") + '\')">'+icon('pencil')+' Re-open &amp; modify</button>' +
-      '</div>';
-    } else {
-      h += '<div class="asset-btn" style="cursor:pointer" onclick="startChecklistFromRoute(' + idx + ')">' +
-        esc(a.manufacturer) + ' ' + esc(a.model) + ' →' +
-        '<br><span class="ser">S/N: ' + esc(a.serial) + '</span>' +
-      '</div>';
-    }
-  });
-
-  h += '<button class="btn btn-o" style="margin-top:12px" onclick="goAddAssetForStop(' + currentStopIdx + ')">'+icon('plus')+' Add an asset found at this store</button>';
-
-  // Next stop button
-  if (currentStopIdx < stops.length - 1) {
-    var allDone = stop.assets.every(function(a) { return isCompleted(a.serial); });
-    if (allDone) {
-      h += '<button class="btn btn-s" style="margin-top:12px" onclick="goRouteStop(' + (currentStopIdx + 1) + ')">Next Stop →</button>';
-    }
-  }
-
-  return h;
-}
-
+// The old per-stop screen lived here. The route page now carries each store's
+// units on the store card itself, so it had no way in and no reason to exist —
+// left in place it would have been a second copy of the asset list to drift
+// against the real one, which is how render() ended up declared twice.
 // ===== Add a field-found asset to a stop =====
 function goAddAssetForStop(i) {
   var stops = getRouteStops();
   var stop = stops[i];
   if (!stop) return;
+  addAssetNoSerial = false;
   currentStopIdx = i;
   addAssetStop = stop;
   screen = 'addAsset';
@@ -2205,7 +2370,7 @@ function renderAddAsset() {
   var s = addAssetStop;
   if (!s) { screen = 'route'; return renderRoute(); }
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn back-btn" onclick="screen=\'routeStop\';render()">←</button>' +
+    '<button class="btn back-btn" onclick="backToRoute(currentStopIdx)">←</button>' +
     '<div style="flex:1"><h2 style="margin:0;font-size:21px">'+icon('plus')+' Add Asset</h2>' +
     '<div style="font-size:15px;color:var(--dim)">' + esc(s.store) + ' — ' + esc(s.address) + ', ' + esc(s.city) + '</div></div>' +
   '</div>';
@@ -2218,7 +2383,16 @@ function renderAddAsset() {
   h += '<div class="card">';
   h += lbl('Manufacturer') + '<input type="text" id="naMan" placeholder="e.g. AHT, MTL, TRUE">';
   h += lbl('Model') + '<input type="text" id="naModel" placeholder="Model">';
-  h += lbl('Serial Number (required)') + '<input type="text" id="naSerial" placeholder="S/N on the unit">';
+  h += lbl('Serial Number') + '<input type="text" id="naSerial" placeholder="S/N on the unit"' + (addAssetNoSerial ? ' disabled' : '') + '>';
+  // A unit with no readable plate still has to be reportable, otherwise the
+  // honest answer ("there is a third cooler here and I cannot identify it") has
+  // nowhere to go and the unit simply goes unrecorded.
+  h += '<label style="display:flex;align-items:center;gap:8px;margin:-4px 0 10px;cursor:pointer">'
+    + '<input type="checkbox" id="naNoSerial"' + (addAssetNoSerial ? ' checked' : '') + ' onchange="addAssetNoSerial=this.checked;render()">'
+    + ' <span>NO SERIAL NUMBER — plate missing or unreadable</span></label>';
+  if (addAssetNoSerial) {
+    h += '<div style="font-size:13px;color:var(--rd);margin:-4px 0 10px">The unit is filed under a placeholder that reads NO-SERIAL-… so nobody mistakes it for a real serial. Its PM will be flagged for the office automatically.</div>';
+  }
   h += lbl('Warranty');
   h += '<select id="naWarranty"><option value="OUT" selected>OUT (not in Freshpet records)</option><option value="UNDER">UNDER warranty</option></select>';
   h += '</div>';
@@ -2227,7 +2401,7 @@ function renderAddAsset() {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Saving asset...</div>';
   } else {
     h += '<button class="btn btn-s" onclick="saveNewAsset()">'+icon('check')+' Save Asset &amp; Start PM</button>';
-    h += '<button class="btn btn-o" style="margin-top:8px" onclick="screen=\'routeStop\';render()">Cancel</button>';
+    h += '<button class="btn btn-o" style="margin-top:8px" onclick="backToRoute(currentStopIdx)">Cancel</button>';
   }
   return h;
 }
@@ -2238,7 +2412,16 @@ async function saveNewAsset() {
   var model = ((document.getElementById('naModel') || {}).value || '').trim();
   var serial = ((document.getElementById('naSerial') || {}).value || '').trim();
   var warranty = ((document.getElementById('naWarranty') || {}).value || 'OUT');
-  if (!serial) { showStatus('Enter the serial number', 'err'); return; }
+  var noSerial = !!addAssetNoSerial;
+  if (noSerial) {
+    // Visibly not a manufacturer serial. assets.serial is NOT NULL and every
+    // lookup joins on it, so the row needs a value — but the value must never
+    // be mistakable for the real thing, and no_serial is what code reads.
+    serial = 'NO-SERIAL-' + new Date().toISOString().split('T')[0].replace(/-/g,'') + '-' +
+             Math.random().toString(36).slice(2,6).toUpperCase();
+  } else if (!serial) {
+    showStatus('Enter the serial number, or tick NO SERIAL NUMBER', 'err'); return;
+  }
   var dup = ASSETS.find(function(a) { return (a.serial || '').toUpperCase() === serial.toUpperCase(); });
   if (dup) { showStatus('S/N ' + serial + ' already exists (' + dup.store + ')', 'err'); return; }
 
@@ -2249,6 +2432,7 @@ async function saveNewAsset() {
     var { data: newAsset, error } = await sb.from('assets').insert({
       store: ref.store, address: ref.address, city: ref.city, state: ref.state, zip: ref.zip,
       phone: ref.phone || '', manufacturer: man, model: model, serial: serial, warranty: warranty,
+      no_serial: noSerial,
       pm_fee: ref.pm_fee || 0, lat: ref.lat, lng: ref.lng,
       active: true, source: 'field', reported: false,
       added_by: currentUser.email, added_at: new Date().toISOString()
@@ -2271,11 +2455,10 @@ async function saveNewAsset() {
     var idx = ASSETS.findIndex(function(a) { return a.id === newAsset.id; });
     if (idx === -1) {
       showStatus('Asset saved — find it under Browse All Assets to run the PM', 'err');
-      screen = 'routeStop';
-      render();
+      backToRoute(currentStopIdx);
       return;
     }
-    startChecklistFromRoute(idx);
+    startChecklistFromRoute(idx, currentStopIdx);
     addedAssetFlag = true;
     saveProgress();
     showStatus('Asset added — now complete the full PM', 'ok');
@@ -2437,17 +2620,9 @@ async function goRoute() {
   render();
 }
 
-function goRouteStop(idx) {
-  currentStopIdx = idx;
-  screen = 'routeStop';
-  render();
-}
+function goRouteStop(idx) { backToRoute(idx); }
 
-function goBackToRouteStop() {
-  routeFromChecklist = false;
-  screen = 'routeStop';
-  render();
-}
+function goBackToRouteStop() { backToRoute(currentStopIdx); }
 
 // "First L." from the tech profile / Google account
 function shortTechName() {
@@ -2472,13 +2647,68 @@ function defaultForm() {
   };
 }
 
+// A re-shoot starts from the ORIGINAL report, not from a blank form. We were at
+// this store once and a manager signed for that visit; the re-shoot exists
+// because the photographs could not be stood behind, not because the visit was
+// invented. So the earlier answers come forward as the starting point, the
+// readings are retaken, and the store's signature is carried as a record of the
+// original visit rather than re-collected — nobody is asked to sign twice for
+// one service call, and no manager is asked to sign for readings taken on a day
+// they were not shown.
+//
+// Only the report's own fields travel. Photographs, audit notes, correction
+// bookkeeping and the previous re-visit flags are deliberately left behind: a
+// re-shoot's whole purpose is new pictures.
+var RESHOOT_DROP_KEYS = [
+  'audit_note','original_photo_paths','original_pdf_path','corrected_pdf_path',
+  'detached_photos','detach_prior_photo_paths','field_form_scan','asset_list_undercount',
+  'legacy','legacy_link','legacy_note','tech_name',
+  'reshoot_of_pm_id','original_date','original_signed_at','original_store_contact',
+  'original_signature','reshoot_date','storeSignature','techSignature'
+];
+function reshootFormFrom(pm) {
+  var src = pm.form_data || {};
+  var f = {};
+  Object.keys(src).forEach(function(k) {
+    if (RESHOOT_DROP_KEYS.indexOf(k) < 0) f[k] = src[k];
+  });
+  var me = shortTechName();
+  f.techName = me;
+  f.serviceRep = me;
+  f.serviceCompany = src.serviceCompany || 'Freeflow Beverage Solutions';
+  f.date = new Date().toISOString().split('T')[0];
+  // The readings are the point of going back. Blank them so they are measured
+  // again rather than inherited — an inherited 38F is the original defect.
+  f.intTemp = ''; f.sp1 = ''; f.voltage = ''; f.noMeter = false;
+  // What the original visit attests to, recorded as provenance.
+  f.reshoot_of_pm_id = pm.id;
+  f.original_date = pm.pm_date || '';
+  f.original_signed_at = pm.signed_at || null;
+  f.reshoot_date = f.date;
+  var signed = !src.noContact && (src.storeSignature || (src.storeContact || '').trim());
+  if (signed) {
+    f.original_store_contact = (src.storeContact || '').trim();
+    if (src.storeSignature) f.original_signature = src.storeSignature;
+    f.noContact = false;
+  } else {
+    // Nothing to carry — this stop takes a signature the normal way.
+    f.original_store_contact = '';
+    f.noContact = !!src.noContact;
+  }
+  return f;
+}
+
 function startChecklist(idx) {
   selectedAsset = ASSETS[idx];
   selectedAssetIdx = idx;
   reopenPmId = null;
   ticketFlag = false;
   addedAssetFlag = false;
-  form = defaultForm();
+  var rs = openRevisitPm(ASSETS[idx].serial);
+  form = rs ? reshootFormFrom(rs) : defaultForm();
+  // A unit recorded as having no plate starts already marked. Asking the tech
+  // to tick it every visit is asking them to re-discover the same fact.
+  if (ASSETS[idx].no_serial) form.noSerialPlate = true;
   photos = [];
   sigs = { store: null, tech: mySig || null };
   screen = 'checklist';
@@ -2486,9 +2716,27 @@ function startChecklist(idx) {
   render();
 }
 
-function startChecklistFromRoute(idx) {
+// True when the form in hand is a re-shoot carrying a signature from the
+// original visit — the case where the store panel is locked.
+function reshootCarriesSignature() {
+  return !!(form && form.reshoot_of_pm_id && form.original_store_contact);
+}
+
+function startChecklistFromRoute(idx, stopIdx) {
   routeFromChecklist = true;
+  if (stopIdx != null) currentStopIdx = stopIdx;
   startChecklist(idx);
+}
+
+// Coming back from a PM lands on the route page beside the store you were just
+// at, with its other units right there. Walking out to a stop screen to pick
+// the next cooler was a screen change per unit for nothing.
+var scrollToStopIdx = null;
+function backToRoute(stopIdx) {
+  routeFromChecklist = false;
+  if (stopIdx != null) { currentStopIdx = stopIdx; scrollToStopIdx = stopIdx; }
+  screen = 'route';
+  render();
 }
 
 // Drop straight back into an unfinished PM (used on every app start)
@@ -2612,18 +2860,39 @@ async function submitForm() {
   // Hard gates added after the invoice #172825 review (2026-08): a PM without
   // a fresh serial-plate photo, a real temperature reading, or an honest
   // answer on the store signature is exactly what produced that dispute.
-  if (platePhotoCount() < 1) { showStatus('Serial plate photo required — use the “Serial plate” camera button on THIS unit’s plate', 'err'); return; }
+  // No serial means nobody can prove which machine this report is about, which
+  // is precisely the thing the office has to chase. Flag it here rather than
+  // trusting the tech to also remember to press REPORT ISSUE.
+  if (form.noSerialPlate) { ticketFlag = true; }
+  var missing = missingPhotos();
+  if (missing.length) {
+    showStatus('Still needed: ' + missing.map(function(r){ return r.label; }).join(', ')
+      + ' \u2014 take them here with the camera on THIS unit', 'err');
+    return;
+  }
   if (!form.intTemp) { showStatus('Measure and select the interior temperature', 'err'); return; }
   if (!form.sp1) { showStatus('Enter Set Point 1 as read on the unit', 'err'); return; }
+  // Voltage read as 120 on all 511 reports that carried one, because it was a
+  // pre-filled default nobody ever changed. Ask for it, and take "no meter" as an
+  // honest answer — a blank field and a fake reading are both worse.
+  if (form.noMeter) { form.voltage = ''; }
+  else if (!(form.voltage || '').trim()) { showStatus('Enter the voltage you measured, or check \u201cNo meter on hand\u201d', 'err'); return; }
   if (!form.workingArrival && !form.notWorkingArrival) { showStatus('Mark whether the unit was working on arrival', 'err'); return; }
-  if (form.noContact) {
+  if (reshootCarriesSignature()) {
+    // Locked path: the store signed the original visit and is not asked again.
+    // Guard it rather than trust the UI — a resumed draft could carry a stale
+    // signature in memory, and pasting one onto a report the signer never saw
+    // is the exact failure this whole remediation is about.
+    sigs.store = null;
+    form.noContact = false;
+    form.reshoot_date = form.date || new Date().toISOString().split('T')[0];
+  } else if (form.noContact) {
     sigs.store = null; // never both — the report states no contact was available
   } else if (!sigs.store) {
-    showStatus('Get the store contact’s signature, or check “No store contact available to sign”. Never sign for the store yourself.', 'err'); return;
+    showStatus('Get the store contact\u2019s signature, or check \u201cNo store contact available to sign\u201d. Never sign for the store yourself.', 'err'); return;
   } else if (!(form.storeContact || '').trim()) {
     showStatus('Enter the name of the store contact who signed', 'err'); return;
-  }
-  if (!sigs.tech) {
+  }  if (!sigs.tech) {
     if (!confirm('Missing technician signature. Submit anyway?')) return;
   }
   // One report per unit per day: a second tap must go through the explicit
@@ -2674,6 +2943,14 @@ async function submitForm() {
       }
     }
 
+    // Keep the signatures WITH the record, not only as pixels burned into the
+    // PDF. Until now a signature existed nowhere else, so nothing downstream
+    // could show who signed or carry it onto a re-shoot without re-scraping the
+    // document. form_data is behind RLS; the photo buckets are public, so a
+    // signature must never go there.
+    if (sigs.store) { form.storeSignature = sigs.store; }
+    if (sigs.tech)  { form.techSignature  = sigs.tech; }
+
     var pdfDoc = await new Promise(function(resolve) {
       generatePDF(a, form, photos, sigs, { signedAt: signedAt, gps: gps, addedAsset: addedAssetFlag }, function(doc) { resolve(doc); });
     });
@@ -2687,6 +2964,12 @@ async function submitForm() {
     if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
 
     var prevPm = reopenPmId ? completedPMs.find(function(p) { return p.id === reopenPmId; }) : null;
+    // A stop carrying an open re-visit files a RE-SHOOT: a new, complete report
+    // that replaces documentation we could not stand behind. It is paid to the
+    // tech at the normal rate and is NEVER charged to Freshpet — they already
+    // paid for this stop once, and the re-do is ours, not theirs. Enforced in
+    // admin.html (billableList), freshpet-invoice.mjs, and a DB trigger.
+    var openRevisit = reopenPmId ? null : openRevisitPm(a.serial);
     var record = {
       asset_id: a.id,
       tech_user_id: currentUser.id,
@@ -2697,7 +2980,9 @@ async function submitForm() {
       pdf_path: pdfPath,
       photo_paths: photoPaths,
       photo_hashes: photoHashes,
-      visit_type: 'pm',
+      visit_type: openRevisit ? 'reshoot' : 'pm',
+      revisit_of: openRevisit ? openRevisit.id : null,
+      no_serial_plate: !!form.noSerialPlate,
       store: a.store,
       serial: a.serial,
       signed_at: signedAt,
@@ -2713,14 +2998,31 @@ async function submitForm() {
       record.modified_at = signedAt;
       record.modified_by = currentUser.email;
     }
-    var dbErr;
+    var dbErr, savedId = null;
     if (reopenPmId) {
       dbErr = (await sb.from('completed_pms').update(record).eq('id', reopenPmId)).error;
+      savedId = reopenPmId;
     } else {
-      dbErr = (await sb.from('completed_pms').insert(record)).error;
+      var ins = await sb.from('completed_pms').insert(record).select('id').single();
+      dbErr = ins.error;
+      savedId = ins.data && ins.data.id;
     }
 
     if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+    // Close the re-visit only after its replacement is safely saved — if the
+    // insert had failed the stop must stay open on the route, not silently
+    // disappear with nothing filed in its place.
+    if (openRevisit && savedId) {
+      // Through the RPC, not a direct update: the original may have been filed
+      // by a different tech, and RLS only lets a tech update their own rows.
+      var closeErr = (await sb.rpc('fn_close_revisit', {
+        p_original_id: openRevisit.id, p_reshoot_id: savedId
+      })).error;
+      // A failed close leaves the stop on the route — annoying, not wrong. The
+      // re-shoot report itself is filed either way, so nothing is lost.
+      if (closeErr) console.warn('Re-visit close failed:', closeErr);
+    }
 
     var wasTicket = ticketFlag;
     var wasReopen = !!reopenPmId;
@@ -2740,10 +3042,10 @@ async function submitForm() {
     clearProgress();
     submitting = false;
 
-    // If came from route, go back to route stop
     if (routeFromChecklist) {
       routeFromChecklist = false;
-      screen = 'routeStop';
+      scrollToStopIdx = currentStopIdx;
+      screen = 'route';
     } else {
       screen = 'home';
     }
@@ -2760,7 +3062,7 @@ async function submitForm() {
 }
 
 function openServiceTicket() {
-  if (!confirm('Open a service ticket?\n\nThe PM will be ' + (reopenPmId ? 'updated' : 'submitted') + ', flagged NEEDS REVIEW, and the PDF emailed to service@brixbev.com.')) return;
+  if (!confirm('Report an issue with this unit?\n\nThe PM will be ' + (reopenPmId ? 'updated' : 'submitted') + ', flagged NEEDS REVIEW, and the report emailed to service@brixbev.com.')) return;
   ticketFlag = true;
   submitForm();
 }
@@ -2802,7 +3104,7 @@ async function markPrevComp() {
   if (error) { showStatus('Error: ' + error.message, 'err'); return; }
   await loadCompletedPMs();
   clearProgress();
-  if (routeFromChecklist) { routeFromChecklist = false; screen = 'routeStop'; }
+  if (routeFromChecklist) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
   else { screen = 'select'; }
   showStatus('Marked PM PREV COMP ✓', 'ok');
   render();
@@ -2815,35 +3117,114 @@ async function markPrevComp() {
 // five closed or unit-less sites. An exception visit is its own record type:
 // reason + storefront photo, no readings, no signatures, never billable as a
 // PM, always flagged for review.
+var addAssetNoSerial = false;   // ticked on the Add Asset form when the unit has no readable plate
 var exceptionForm = { reason: '', note: '' };
+// Which kind of exception is being filed, and — for a store-level one — which
+// stop it covers. A closed store is not a fact about one cooler, so it is filed
+// against the store and answers every unit on it.
+var exceptionKind = null;      // 'store_closed' | 'unit_missing'
+var exceptionStopIdx = null;   // set only for store_closed
 
-function startException() {
-  exceptionForm = { reason: '', note: '' };
+var EXCEPTION_KINDS = {
+  store_closed: {
+    title: 'STORE CLOSED \u2014 NO ASSET',
+    scope: 'store',
+    lead: 'The store is closed and no unit could be serviced. This files a report against every unit on the route at this store, so none of them is left looking unvisited.',
+    photoHint: 'Photograph the storefront \u2014 closed sign, dark windows, whatever you can see. This is the proof you were here.',
+    note: 'What you saw. Papered over? Permanently closed? Anyone to ask?'
+  },
+  unit_missing: {
+    title: 'MISSING ASSET',
+    scope: 'unit',
+    lead: 'The store is open but this unit is not on site. This files a report against this one unit; the rest of the store carries on as normal.',
+    photoHint: 'Photograph the space where the unit should be, or the aisle it was in. This is the proof you looked.',
+    note: 'What you saw and who you asked. Was it moved, pulled, or never there?'
+  }
+};
+
+// Store-level: a closed store, filed from the store card on the route page.
+function startStoreClosed(stopIdx) {
+  var stops = getRouteStops();
+  var stop = stops[stopIdx];
+  if (!stop) return;
+  exceptionStopIdx = stopIdx;
+  currentStopIdx = stopIdx;
+  selectedAsset = stop.assets[0] || null;   // the report names every unit; this is just the anchor
+  startException('store_closed');
+}
+
+// Reached from the store card's action strip. With one candidate there is
+// nothing to ask; with several the tech says which machine is gone rather than
+// every unit carrying its own button.
+// Unit-level: the store is open, this one machine is gone.
+function startUnitMissing(assetIdx, stopIdx) {
+  selectedAsset = ASSETS[assetIdx];
+  selectedAssetIdx = assetIdx;
+  if (stopIdx != null) { currentStopIdx = stopIdx; routeFromChecklist = true; }
+  exceptionStopIdx = null;
+  startException('unit_missing');
+}
+
+function startException(kind) {
+  exceptionKind = EXCEPTION_KINDS[kind] ? kind : 'unit_missing';
+  // Zero prefill. Nothing is carried in from a PM form and no answer is
+  // suggested — the whole point of this report is what the tech actually found.
+  exceptionForm = { reason: exceptionKind, note: '' };
   photos = [];
   screen = 'exception';
   render();
 }
 
+// Every unit this exception speaks for. A closed store answers all of them.
+function exceptionAssets() {
+  if (exceptionKind === 'store_closed' && exceptionStopIdx != null) {
+    var stop = getRouteStops()[exceptionStopIdx];
+    if (stop && stop.assets.length) return stop.assets;
+  }
+  return selectedAsset ? [selectedAsset] : [];
+}
+
 function renderException() {
-  var a = selectedAsset;
-  var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
+  var k = EXCEPTION_KINDS[exceptionKind] || EXCEPTION_KINDS.unit_missing;
+  var units = exceptionAssets();
+  var a = selectedAsset || {};
+  var backFn = exceptionKind === 'store_closed'
+    ? 'backToRoute(' + (exceptionStopIdx == null ? 'currentStopIdx' : exceptionStopIdx) + ')'
+    : (routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()');
+
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn back-btn" onclick="screen=\'checklist\';render()">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:22px">Site visit exception</h2>' +
-    '<div style="font-size:15px;color:var(--dim)">' + esc(a.store) + ' — ' + esc(a.city) + ' · S/N ' + esc(a.serial) + '</div></div>' +
+    '<button class="btn back-btn" onclick="' + backFn + '">←</button>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(k.title) + '</h2>' +
+    '<div style="font-size:15px;color:var(--dim)">' + esc(a.store || '') +
+      (a.city ? ' — ' + esc(a.city) : '') + '</div></div>' +
   '</div>';
-  h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--or)">This files an exception report instead of a PM: it documents that the stop could not be serviced and why. It is flagged for office review and is not billed as a PM.</div>';
+
+  h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--rd)">'
+    + '<div style="font-weight:700;color:var(--rd);letter-spacing:.02em">' + esc(k.title) + '</div>'
+    + '<div style="font-size:14px;margin-top:5px">' + esc(k.lead) + '</div>'
+    + '<div style="font-size:13px;color:var(--dim);margin-top:6px">Nothing is filled in for you on this form. It is not a PM, it is not billed to Freshpet, and it is flagged for the office.</div>'
+    + '</div>';
+
+  // Name every unit the report speaks for, so it is never a surprise later how
+  // many units one closed store accounted for.
+  if (units.length) {
+    h += '<div class="card"><h3 style="margin-top:0">'
+      + (units.length === 1 ? 'Unit' : units.length + ' units at this store') + '</h3>';
+    units.forEach(function(u) {
+      h += '<div style="padding:7px 0;border-top:1px solid var(--bd)">'
+        + '<div style="font-weight:700">' + esc([u.manufacturer, u.model].filter(Boolean).join(' ') || 'Unit') + '</div>'
+        + '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;color:var(--tx2)">S/N ' + esc(u.serial || '—') + '</div>'
+        + '</div>';
+    });
+    h += '</div>';
+  }
+
   h += '<div class="card">';
   h += lbl('What did you find? (required)');
-  h += '<select id="excReason">' +
-    '<option value=""' + (!exceptionForm.reason ? ' selected' : '') + '>— select —</option>' +
-    [['store_closed','Store permanently closed'],['unit_missing','Store open, Freshpet unit not on site'],['no_access','Could not access the unit (refused / blocked)'],['other','Other (explain below)']].map(function(o){
-      return '<option value="' + o[0] + '"' + (exceptionForm.reason === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
-    }).join('') + '</select>';
-  h += lbl('Notes'); h += '<textarea id="excNote" placeholder="What you saw, who you spoke to...">' + esc(exceptionForm.note || '') + '</textarea>';
-  h += '<h3>Photo of the site (required)</h3>';
-  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">Photograph the storefront or the space where the unit should be — this is the proof of the visit.</div>';
-  h += '<button class="btn btn-o" style="padding:10px" onclick="captureExceptionMeta();takePhoto(\'site\')">'+icon('camera')+' Take site photo</button>';
+  h += '<textarea id="excNote" placeholder="' + esc(k.note) + '">' + esc(exceptionForm.note || '') + '</textarea>';
+  h += '<h3>Photo (required)</h3>';
+  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">' + esc(k.photoHint) + '</div>';
+  h += '<button class="btn btn-o" style="padding:12px" onclick="captureExceptionMeta();takePhoto(\'site\')">'+icon('camera')+' Take photo</button>';
   if (photos.length) {
     h += '<div class="photo-grid" style="margin-top:8px">';
     photos.forEach(function(p, i) {
@@ -2852,27 +3233,27 @@ function renderException() {
     h += '</div>';
   }
   h += '</div>';
+
   if (submitting) {
-    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Filing exception report...</div>';
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Filing report...</div>';
   } else {
-    h += '<button class="btn btn-s" onclick="submitException()" style="font-size:17px;padding:16px">'+icon('check')+' File exception report</button>';
+    h += '<button class="btn btn-d" onclick="submitException()" style="font-size:17px;padding:16px">'+icon('alert')+' File ' + esc(k.title) + '</button>';
     h += '<button class="btn btn-o" style="margin-top:8px" onclick="' + backFn + '">Cancel</button>';
   }
   return h;
 }
 
 function captureExceptionMeta() {
-  var r = document.getElementById('excReason');
   var n = document.getElementById('excNote');
-  if (r) exceptionForm.reason = r.value;
   if (n) exceptionForm.note = n.value;
+  exceptionForm.reason = exceptionKind;   // set by which button was pressed
 }
 
 async function submitException() {
   if (submitting) return;
   captureExceptionMeta();
-  if (!exceptionForm.reason) { showStatus('Select what you found at the site', 'err'); return; }
-  if (!photos.length) { showStatus('A site photo is required — it is the proof of the visit', 'err'); return; }
+  if (!(exceptionForm.note || '').trim()) { showStatus('Write what you found — this report is nothing without it', 'err'); return; }
+  if (!photos.length) { showStatus('A photo is required — it is the proof of the visit', 'err'); return; }
   submitting = true;
   render();
   try {
@@ -2892,40 +3273,71 @@ async function submitException() {
       else { photoPaths.push(photoPath); photoHashes.push(np.hash || (await sha256Hex(np.d).catch(function(){ return null; }))); }
     }
 
-    var pdfDoc = generateExceptionPDF(a, exceptionForm, photos, { signedAt: signedAt, gps: gps, techName: shortTechName() });
+    // A closed store answers EVERY unit on the route there, so the report names
+    // all of them and one row is written per unit. One visit, one document —
+    // the same PDF is attached to each row rather than generating near-identical
+    // copies — but each unit gets its own answer for the day instead of some of
+    // them silently staying open on the route.
+    var units = exceptionAssets();
+    if (!units.length) { throw new Error('No unit to file this against'); }
+    var pdfDoc = generateExceptionPDF(a, exceptionForm, photos,
+      { signedAt: signedAt, gps: gps, techName: shortTechName(), kind: exceptionKind, units: units });
     var pdfPath = baseName + '_' + timestamp + '.pdf';
     var { error: pdfErr } = await sb.storage.from('fp-pdfs').upload(pdfPath, pdfDoc.output('blob'), { contentType: 'application/pdf', upsert: false });
     if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
 
-    var { error: dbErr } = await sb.from('completed_pms').insert({
-      asset_id: a.id,
-      tech_user_id: currentUser.id,
-      tech_name: shortTechName(),
-      service_company: 'Freeflow Beverage Solutions',
-      pm_date: new Date().toISOString().split('T')[0],
-      form_data: { exception: true, exceptionReason: exceptionForm.reason, comments: exceptionForm.note || '', gpsStatus: gps ? 'captured' : 'unavailable' },
-      pdf_path: pdfPath,
-      photo_paths: photoPaths,
-      photo_hashes: photoHashes,
-      visit_type: 'exception',
-      exception_reason: exceptionForm.reason,
-      store: a.store,
-      serial: a.serial,
-      signed_at: signedAt,
-      gps_lat: gps ? gps.lat : null,
-      gps_lng: gps ? gps.lng : null,
-      gps_accuracy: gps ? gps.accuracy : null,
-      needs_review: true,
-      added_asset: false
-    });
-    if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+    var today = new Date().toISOString().split('T')[0];
+    for (var u = 0; u < units.length; u++) {
+      var un = units[u];
+      // A unit already serviced today keeps its PM — a closed store cannot
+      // retroactively un-service a unit somebody actually worked on.
+      if (isCompleted(un.serial) && !isRevisit(un.serial)) continue;
+      // If this unit was carrying an open re-visit, the exception answers it:
+      // we went back and recorded why the documentation could not be redone.
+      var exRevisit = openRevisitPm(un.serial);
+      var { data: exRow, error: dbErr } = await sb.from('completed_pms').insert({
+        asset_id: un.id,
+        tech_user_id: currentUser.id,
+        tech_name: shortTechName(),
+        service_company: 'Freeflow Beverage Solutions',
+        revisit_of: exRevisit ? exRevisit.id : null,
+        pm_date: today,
+        form_data: { exception: true, exceptionReason: exceptionForm.reason, exceptionKind: exceptionKind,
+                     exceptionScope: (EXCEPTION_KINDS[exceptionKind] || {}).scope || 'unit',
+                     exceptionUnits: units.map(function(x){ return x.serial; }),
+                     comments: exceptionForm.note || '', gpsStatus: gps ? 'captured' : 'unavailable' },
+        pdf_path: pdfPath,
+        photo_paths: photoPaths,
+        photo_hashes: u === 0 ? photoHashes : [],   // the dedup guard must not see one photo as reused across its own rows
+        visit_type: 'exception',
+        exception_reason: exceptionForm.reason,
+        store: un.store,
+        serial: un.serial,
+        signed_at: signedAt,
+        gps_lat: gps ? gps.lat : null,
+        gps_lng: gps ? gps.lng : null,
+        gps_accuracy: gps ? gps.accuracy : null,
+        needs_review: true,
+        added_asset: false
+      }).select('id').single();
+      if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+      if (exRevisit && exRow && exRow.id) {
+        var exCloseErr = (await sb.rpc('fn_close_revisit', { p_original_id: exRevisit.id, p_reshoot_id: exRow.id })).error;
+        if (exCloseErr) console.warn('Re-visit close failed:', exCloseErr);
+      }
+    }
 
     await loadCompletedPMs();
     clearProgress();
     submitting = false;
-    if (routeFromChecklist) { routeFromChecklist = false; screen = 'routeStop'; }
+    var wasStore = exceptionKind === 'store_closed';
+    exceptionKind = null; exceptionStopIdx = null;
+    if (routeFromChecklist || wasStore) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
     else { screen = 'select'; }
-    showStatus('Exception report filed — flagged for office review', 'ok');
+    showStatus(wasStore
+      ? 'STORE CLOSED filed for ' + units.length + ' unit' + (units.length === 1 ? '' : 's') + ' — flagged for the office'
+      : 'MISSING ASSET filed — flagged for the office', 'ok');
     render();
   } catch (err) {
     submitting = false;
@@ -2937,19 +3349,43 @@ async function submitException() {
 function generateExceptionPDF(a, exc, ph, meta) {
   var jsPDF = window.jspdf.jsPDF;
   var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-  var W = 612, LM = 40, RM = W - 40;
+  var W = 612, H = 792, LM = 40, RM = W - 40;
   var y = 40;
-  var REASONS = { store_closed: 'Store permanently closed', unit_missing: 'Store open — Freshpet unit not on site', no_access: 'Could not access the unit', other: 'Other' };
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-  doc.text('Site Visit Exception Report', W/2, y, { align: 'center' }); y += 16;
-  doc.setFontSize(9); doc.setTextColor(200, 60, 10);
-  doc.text('NOT A COMPLETED PM — this visit could not be serviced. Filed for review.', W/2, y, { align: 'center' });
+  var REASONS = { store_closed: 'STORE CLOSED — NO ASSET', unit_missing: 'MISSING ASSET', no_access: 'Could not access the unit', other: 'Other' };
+  var TITLE = (meta && meta.kind === 'store_closed') ? 'STORE CLOSED — NO ASSET' : 'MISSING ASSET';
+  var units = (meta && meta.units && meta.units.length) ? meta.units : [a];
+
+  // Red paper, every page. A PM is white, a re-shoot audit is blue, and a stop
+  // that produced no service at all is red — the colour says which before a
+  // word is read.
+  function paintPage() { doc.setFillColor(251, 226, 223); doc.rect(0, 0, W, H, 'F'); doc.setFillColor(255,255,255); }
+  var _addPage = doc.addPage.bind(doc);
+  doc.addPage = function() { var r = _addPage.apply(null, arguments); paintPage(); return r; };
+  paintPage();
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(179, 38, 30);
+  doc.text(TITLE, W/2, y, { align: 'center' }); y += 18;
+  doc.setFontSize(9);
+  doc.text('NOT A COMPLETED PM — no unit was serviced on this visit. Filed for review, not billed to Freshpet.', W/2, y, { align: 'center' });
   doc.setTextColor(0,0,0); y += 22;
   doc.setFontSize(9);
-  [['Store', a.store], ['Address', a.address + ', ' + a.city + ' ' + (a.zip||'')], ['Listed serial', a.serial], ['Visit date', new Date().toISOString().split('T')[0]], ['Technician', meta.techName || ''], ['Finding', REASONS[exc.reason] || exc.reason]].forEach(function(r) {
+  [['Store', a.store], ['Address', a.address + ', ' + a.city + ' ' + (a.zip||'')],
+   ['Visit date', new Date().toISOString().split('T')[0]], ['Technician', meta.techName || ''],
+   ['Finding', REASONS[exc.reason] || exc.reason]].forEach(function(r) {
     doc.setFont('helvetica','bold'); doc.text(r[0] + ':', LM, y);
     doc.setFont('helvetica','normal'); doc.text(String(r[1] || ''), LM + 90, y); y += 15;
   });
+
+  // Name every unit this report answers for, so a closed store never leaves it
+  // ambiguous which machines went unserviced.
+  y += 4; doc.setFont('helvetica','bold');
+  doc.text(units.length === 1 ? 'Unit not serviced:' : 'Units not serviced (' + units.length + '):', LM, y); y += 13;
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+  units.forEach(function(u) {
+    doc.text('\u2022  ' + [u.manufacturer, u.model].filter(Boolean).join(' ') + '   S/N ' + (u.serial || '—'), LM + 8, y);
+    y += 12;
+  });
+  doc.setFontSize(9);
   y += 4; doc.setFont('helvetica','bold'); doc.text('Notes:', LM, y); y += 12;
   doc.setFont('helvetica','normal');
   var nt = doc.splitTextToSize(exc.note || '(none)', RM-LM); doc.text(nt, LM, y); y += nt.length * 11 + 8;
@@ -2960,7 +3396,9 @@ function generateExceptionPDF(a, exc, ph, meta) {
   for (var i = 0; i < ph.length; i++) {
     var pp = normPhoto(ph[i]);
     doc.addPage(); doc.setFont('helvetica','bold'); doc.setFontSize(11);
-    doc.text('Site photo ' + (i+1) + ' of ' + ph.length + ' — ' + a.store, W/2, 30, { align: 'center' });
+    doc.setTextColor(179,38,30);
+    doc.text(TITLE + ' — photo ' + (i+1) + ' of ' + ph.length + ' — ' + a.store, W/2, 30, { align: 'center' });
+    doc.setTextColor(0,0,0);
     try { var ip = doc.getImageProperties(pp.d); var iw = ip.width, ih = ip.height; var sc = Math.min((RM-LM)/iw, 680/ih, 1); iw *= sc; ih *= sc; doc.addImage(pp.d, 'JPEG', LM + ((RM-LM)-iw)/2, 50, iw, ih); } catch(e) {}
   }
   return doc;
@@ -2976,6 +3414,7 @@ async function reopenPM(pmId, fromRoute) {
   if (!pm) return;
   if (pm.prev_comp) { showStatus('PREV COMP entries have no checklist to edit', 'err'); return; }
   if (pm.visit_type === 'exception') { showStatus('Exception reports document a failed visit — file a new PM instead once the unit is serviceable', 'err'); return; }
+  if (pm.revisit_requested_at && !pm.revisit_done_at) { showStatus('This stop is flagged for a re-visit — service it and file a fresh report. Editing the old one is exactly what we are undoing.', 'err'); return; }
   if (pm.tech_user_id !== currentUser.id && userRole !== 'admin') { showStatus('Only the tech who submitted this PM (or an admin) can reopen it', 'err'); return; }
   var idx = ASSETS.findIndex(function(x) { return x.id === pm.asset_id; });
   if (idx === -1) { showStatus('Asset is no longer active', 'err'); return; }
@@ -3023,8 +3462,29 @@ function dataURLtoBlob(dataURL) {
 function generatePDF(a, f, ph, sg, meta, cb) {
   var jsPDF = window.jspdf.jsPDF;
   var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-  var W = 612, LM = 40, RM = W - 40, COL2 = 326;
+  var W = 612, H = 792, LM = 40, RM = W - 40, COL2 = 326;
   var y = 30;
+
+  // A re-shoot is printed on a light blue page, every page of it. Both the
+  // original and the re-shoot stay attached to the unit — we never overwrite a
+  // submitted report — so the two land side by side in the portal and in any
+  // folder they get filed into. Colour is what tells them apart at arm's
+  // length, before anyone reads a date.
+  var isReshootDoc = !!f.reshoot_of_pm_id;
+  function paintPage() {
+    if (!isReshootDoc) return;
+    doc.setFillColor(226, 240, 251);   // light blue, prints legibly in mono
+    doc.rect(0, 0, W, H, 'F');
+    doc.setFillColor(255, 255, 255);   // leave the default alone for later fills
+  }
+  if (isReshootDoc) {
+    // Wrap addPage rather than chase every call site, so photo pages and any
+    // overflow page get the tint too — a two-tone document would be worse than
+    // no tint at all.
+    var _addPage = doc.addPage.bind(doc);
+    doc.addPage = function() { var r = _addPage.apply(null, arguments); paintPage(); return r; };
+    paintPage();
+  }
 
   function checkbox(x, yy, checked) { doc.setLineWidth(.75); doc.setDrawColor(0); doc.rect(x, yy-7.5, 9, 9); if (checked) { doc.setLineWidth(1.2); doc.line(x+2, yy-3, x+4, yy-.5); doc.line(x+4, yy-.5, x+7.5, yy-6); doc.setLineWidth(.75); } }
 
@@ -3040,15 +3500,63 @@ function generatePDF(a, f, ph, sg, meta, cb) {
     doc.setTextColor(0, 0, 0); y += 14;
   }
 
+  // A report nobody can tie to a specific machine has to say so on its face.
+  if (f.noSerialPlate) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.setTextColor(179, 38, 30);
+    doc.text('NO SERIAL NUMBER FOUND \u2014 serial plate missing or unreadable', W/2, y, { align: 'center' });
+    y += 11;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    var nsw = doc.splitTextToSize('The serial below is the one on the Freshpet asset list; it could NOT be confirmed against the plate on this machine. An interior photograph is included in place of the plate photograph. Filed as a reported issue.', RM - LM - 40);
+    doc.text(nsw, W/2, y, { align: 'center' });
+    y += nsw.length * 9 + 4;
+    doc.setTextColor(0, 0, 0); doc.setFontSize(9);
+  }
+
+  // Say what this document is before anyone reads a number off it.
+  if (isReshootDoc) {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(21, 94, 155);
+    doc.text('RE-SHOOT — this unit was serviced once and re-documented on a later visit', W/2, y, { align: 'center' });
+    y += 11;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+    var rsLine = f.original_store_contact
+      ? 'The original visit was signed for by ' + f.original_store_contact + '. The readings and photographs below were taken on the re-shoot date and were NOT signed for by the store.'
+      : 'The readings and photographs below were taken on the re-shoot date.';
+    var rsWrap = doc.splitTextToSize(rsLine, RM - LM - 40);
+    doc.text(rsWrap, W/2, y, { align: 'center' });
+    y += rsWrap.length * 9 + 4;
+    doc.setTextColor(0, 0, 0); doc.setFontSize(9);
+  }
+
   doc.setFontSize(9);
   doc.setFont('helvetica','bold');doc.text('Store:',LM,y);doc.setFont('helvetica','normal');doc.text(a.store,LM+38,y);
-  doc.setFont('helvetica','bold');doc.text('Date:',COL2,y);doc.setFont('helvetica','normal');doc.text(f.date||'',COL2+32,y);y+=17;
+  if (isReshootDoc) {
+    // Two dates, never one. A single date on a re-shoot misdates either the
+    // service call or the readings, and which is which is the whole question.
+    // Kept on one line so the rest of the header keeps its spacing.
+    doc.setFontSize(8);
+    doc.setFont('helvetica','bold');doc.text('ORIGINAL DATE:',COL2,y);
+    doc.setFont('helvetica','normal');doc.text(f.original_date||'',COL2+72,y);
+    doc.setFont('helvetica','bold');doc.text('RESHOOT DATE:',COL2+136,y);
+    doc.setFont('helvetica','normal');doc.text(f.reshoot_date||f.date||'',COL2+205,y);
+    doc.setFontSize(9);y+=17;
+  } else {
+    doc.setFont('helvetica','bold');doc.text('Date:',COL2,y);doc.setFont('helvetica','normal');doc.text(f.date||'',COL2+32,y);y+=17;
+  }
   doc.setFont('helvetica','bold');doc.text('Address:',LM,y);doc.setFont('helvetica','normal');doc.text(a.address,LM+52,y);
   doc.setFont('helvetica','bold');doc.text('Phone:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.phone,COL2+40,y);y+=17;
   doc.setFont('helvetica','bold');doc.text('City:',LM,y);doc.setFont('helvetica','normal');doc.text(a.city,LM+28,y);
   doc.setFont('helvetica','bold');doc.text('State:',240,y);doc.setFont('helvetica','normal');doc.text(a.state,276,y);
   doc.setFont('helvetica','bold');doc.text('Zip:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.zip,COL2+24,y);y+=17;
-  doc.setFont('helvetica','bold');doc.text('Serial:',LM,y);doc.setFont('helvetica','normal');doc.text(a.serial,LM+42,y);
+  doc.setFont('helvetica','bold');doc.text('Serial:',LM,y);
+  if (f.noSerialPlate) {
+    doc.setTextColor(179,38,30);
+    doc.setFont('helvetica','bold');doc.text('NO SERIAL NUMBER FOUND',LM+42,y);
+    doc.setFont('helvetica','normal');doc.setFontSize(7.5);
+    doc.text('(listed as ' + (a.serial || '\u2014') + ')', LM+42, y+9);
+    doc.setFontSize(9);doc.setTextColor(0,0,0);
+  } else {
+    doc.setFont('helvetica','normal');doc.text(a.serial,LM+42,y);
+  }
   doc.setFont('helvetica','bold');doc.text('Model:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.model,COL2+42,y);y+=17;
   doc.setFont('helvetica','bold');doc.text('Manufacturer:',LM,y);doc.setFont('helvetica','normal');doc.text(a.manufacturer,LM+78,y);
   doc.setFont('helvetica','bold');doc.text('Warranty:',COL2,y);doc.setFont('helvetica','normal');doc.text(a.warranty,COL2+56,y);y+=10;
@@ -3056,7 +3564,7 @@ function generatePDF(a, f, ph, sg, meta, cb) {
 
   doc.setFont('helvetica','bold');doc.setFontSize(8);
   doc.text('Tech: '+(f.techName||''),LM,y);doc.text('Company: '+(f.serviceCompany||''),COL2,y);y+=12;
-  doc.text('SP1: '+(f.sp1||'___'),LM,y);doc.text('Voltage: '+(f.voltage||'___'),180,y);doc.text('Temp: '+(f.intTemp||'___'),340,y);y+=14;
+  doc.text('SP1: '+(f.sp1||'___'),LM,y);doc.text('Voltage: '+(f.noMeter?'not measured (no meter)':(f.voltage||'___')),180,y);doc.text('Temp: '+(f.intTemp||'___'),340,y);y+=14;
 
   doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('A. Unit Location',LM,y);y+=12;
   doc.setFont('helvetica','normal');doc.setFontSize(8);
@@ -3074,7 +3582,17 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   var mi=[['physicalDmg','Physical Damage','powerCord','Power Cord'],['extCord','Ext Cord (Y/N)','backSpacer','Back Spacer (Y/N)'],['cleanCoil','Clean Coil','emptyDrain','Empty Drain Pan'],['cleanFans','Clean Fans','wickingPads','Wicking Pads (Y/N)'],['cleanCondPansD','Clean Cond Pans','cleanDrainLine','Clean Drain Line'],['ledCheck','LED Check','waterLeak','Water Leak']];
   mi.forEach(function(r){checkbox(LM,y,f[r[0]]);doc.text(r[1],LM+14,y);checkbox(COL2,y,f[r[2]]);doc.text(r[3],COL2+14,y);y+=13;});
 
-  y+=4;doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('Comments:',LM,y);y+=10;
+  y+=4;doc.setFont('helvetica','bold');doc.setFontSize(9);
+  doc.text(isReshootDoc?'Audit notes:':'Comments:',LM,y);y+=10;
+  if (isReshootDoc) {
+    // Stated by the document, not left to the technician to remember to write.
+    doc.setFont('helvetica','bold');doc.setFontSize(8);doc.setTextColor(21,94,155);
+    var aud=doc.splitTextToSize('SECONDARY VISIT AUDIT \u2014 a second visit made to re-document the service call of '
+      +(f.original_date||'the original visit')+'. The unit was inspected and re-measured again on '
+      +(f.reshoot_date||f.date||'this date')+' and photographed fresh. There is no charge to Freshpet for this visit.', RM-LM);
+    doc.text(aud,LM,y);y+=aud.length*10+2;
+    doc.setTextColor(0,0,0);
+  }
   doc.setFont('helvetica','normal');doc.setFontSize(8);
   var cmt=doc.splitTextToSize(f.comments||'(none)',RM-LM);doc.text(cmt,LM,y);y+=Math.max(cmt.length*10,20);
 
@@ -3090,7 +3608,16 @@ function generatePDF(a, f, ph, sg, meta, cb) {
       if (sh > sigH) sigH = sh;
     } catch(e) {}
   }
-  if (f.noContact) {
+  var carriedSig = f.reshoot_of_pm_id && f.original_store_contact;
+  if (carriedSig) {
+    // The store's signature is reproduced as a record of the ORIGINAL visit and
+    // labelled as such on the document itself. It is not an attestation to the
+    // readings on this page — those were taken on a later date the signer was
+    // not present for, and the page says so rather than leaving it to be
+    // inferred from two dates in the header.
+    if (f.original_signature) { drawSig(f.original_signature, LM); }
+    else if (sigH < 30) { sigH = 30; }
+  } else if (f.noContact) {
     doc.setFont('helvetica','italic');doc.setFontSize(8);
     doc.text('No store contact available at time of service — not signed by the store.', LM, y+20);
     if (sigH < 30) sigH = 30;
@@ -3101,8 +3628,20 @@ function generatePDF(a, f, ph, sg, meta, cb) {
   y += sigH;
   doc.setLineWidth(.5);doc.line(LM,y+2,LM+200,y+2);doc.line(COL2,y+2,COL2+200,y+2);y+=12;
   doc.setFont('helvetica','normal');doc.setFontSize(8);
-  doc.text('Store Contact: '+(f.noContact?'(none available)':(f.storeContact||'')),LM,y);
-  doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=16;
+  if (carriedSig) {
+    doc.text('Store Contact: '+f.original_store_contact,LM,y);
+    doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=11;
+    doc.setFont('helvetica','italic');doc.setFontSize(7);
+    var att = doc.splitTextToSize(
+      'Signed on the original visit'+(f.original_date?' of '+f.original_date:'')+
+      '. No store signature was taken on the re-shoot'+(f.reshoot_date?' of '+f.reshoot_date:'')+
+      ' — the readings and photographs above are attested to by the technician only.', 280);
+    doc.text(att,LM,y); y += att.length*8 + 5;
+    doc.setFont('helvetica','normal');doc.setFontSize(8);
+  } else {
+    doc.text('Store Contact: '+(f.noContact?'(none available)':(f.storeContact||'')),LM,y);
+    doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=16;
+  }
 
   // Signed timestamp + GPS captured at completion.
   if (meta && (meta.signedAt || meta.gps)) {
@@ -3120,7 +3659,9 @@ function generatePDF(a, f, ph, sg, meta, cb) {
       var pp = normPhoto(ph[i]);
       var kindLabel = PHOTO_KINDS[pp.kind] || 'Photo';
       doc.addPage();doc.setFont('helvetica','bold');doc.setFontSize(11);
-      doc.text(kindLabel+' — photo '+(i+1)+' of '+ph.length+' — '+a.store+' (S/N: '+a.serial+')',W/2,30,{align:'center'});
+      // Never caption a photo with a placeholder as if it were a serial.
+      var snLabel = f.noSerialPlate ? '(NO SERIAL NUMBER)' : '(S/N: '+a.serial+')';
+      doc.text(kindLabel+' — photo '+(i+1)+' of '+ph.length+' — '+a.store+' '+snLabel,W/2,30,{align:'center'});
       try{var ip=doc.getImageProperties(pp.d);var iw=ip.width,ih=ip.height;var sc=Math.min((RM-LM)/iw,680/ih,1);iw*=sc;ih*=sc;doc.addImage(pp.d,'JPEG',LM+((RM-LM)-iw)/2,50,iw,ih);}catch(e){}
     }
   }
@@ -3341,6 +3882,18 @@ function bindEvents() {
             if (el.checked) { sigs.store = null; }
             saveProgress(); render(); return;
           }
+          if (el.name === 'noSerialPlate') {
+            // A report cannot both carry a plate photo and claim there is no
+            // plate. Drop the plate shot so the two can never contradict.
+            if (el.checked) { photos = photos.filter(function(p) { return normPhoto(p).kind !== 'plate'; }); }
+            else { photos = photos.filter(function(p) { return normPhoto(p).kind !== 'interior'; }); }
+            saveProgress(); render(); return;
+          }
+          if (el.name === 'noMeter') {
+            // Ticking it clears any typed voltage so the two can't disagree.
+            if (el.checked) { form.voltage = ''; }
+            saveProgress(); render(); return;
+          }
         } else {
           form[el.name] = el.value;
         }
@@ -3352,36 +3905,27 @@ function bindEvents() {
   }
 }
 
-// Override render to include admin asset picker
+// Override render to include the admin asset picker.
+//
+// This used to re-declare the ENTIRE screen dispatch, so render() existed twice
+// and only this copy ever ran — a change made to the original above was dead
+// code with nothing to show for it (the audit tint was written there first and
+// silently did nothing). It now handles its one extra screen and delegates, so
+// there is one dispatch again and one place to add a screen.
 var _origRender = render;
 render = function() {
-  var el = document.getElementById('app');
-  var html = '';
-  if (statusMsg) {
-    html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>';
-  }
   if (screen === 'adminAssetPicker') {
+    var el = document.getElementById('app');
+    var html = '';
+    if (statusMsg) { html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>'; }
     html += renderAdminAssetPicker();
+    document.body.classList.remove('audit');
+    document.body.classList.remove('exception');
     el.innerHTML = html;
     bindEvents();
     return;
   }
-  // Call original screens
-  if (screen === 'loading') { html += renderLoading(); }
-  else if (screen === 'login') { html += renderLogin(); }
-  else if (screen === 'home') { html += renderHome(); }
-  else if (screen === 'select') { html += renderSelect(); }
-  else if (screen === 'checklist') { html += renderChecklist(); }
-  else if (screen === 'history') { html += renderHistory(); }
-  else if (screen === 'pay') { html += renderPay(); }
-  else if (screen === 'admin') { html += renderAdmin(); }
-  else if (screen === 'route') { html += renderRoute(); }
-  else if (screen === 'routeStop') { html += renderRouteStop(); }
-  else if (screen === 'addAsset') { html += renderAddAsset(); }
-  else if (screen === 'exception') { html += renderException(); }
-  if (sigModalKey) { html += renderSigModal(); }
-  el.innerHTML = html;
-  bindEvents();
+  return _origRender();
 };
 
 // ===== Theme (light/dark) =====

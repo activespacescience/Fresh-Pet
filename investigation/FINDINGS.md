@@ -127,3 +127,153 @@ The batch is one technician's. The visits occurred; the documentation shortcuts 
 - `visit-verification.csv` — all 196 reports: timestamps, photo status, contact, route context
 - `reverification-units.csv` — the 47-unit re-verification worklist
 - `freshpet-response-draft.md` — draft response language for Freshpet
+
+## Addendum — the paperwork defect, measured (2026-09-01)
+
+Asked directly: is the paperwork bad on the units we are sending someone back to,
+and does it need refilling? The answer is that the paperwork weakness is **not
+concentrated in the re-shoot list — it is uniform across the whole corpus**, and
+the two defects are independent of each other.
+
+Until PR #53 the app's `defaultForm()` pre-filled every reading and pre-ticked
+every work box: `sp1 = 41°F`, `voltage = 120`, `intTemp = 38°F`, and all sixteen
+checkboxes true. A report therefore carried a *measurement* only where the tech
+actively changed something.
+
+Across the 522 app-filed PM reports (the 143 legacy Bill Pace imports carry no
+readings at all and are excluded):
+
+| | reports |
+|---|---|
+| Byte-identical to the pre-filled default — no reading was ever entered | **451** (86%) |
+| Show any edit at all | 61 |
+| …of which the edit was the temperature alone | 58 |
+| Voltage changed from `120` | **0 of 522** |
+| A work box left unticked | **1 of 522** |
+| A free-text comment added | 48 |
+
+`voltage` reads exactly `120` on all 511 reports that carry one. Interior temp
+reads `38°F` on 453 of 511. Neither is plausible as a measurement across 500+
+outlets and cabinets.
+
+Broken out by audit finding, the rate is flat:
+
+| Audit finding | reports | pure default | |
+|---|---|---|---|
+| needs_plate_photo (the re-shoot list) | 166 | 137 | 82.5% |
+| asset_list_confirm | 29 | 25 | 86.2% |
+| no finding | 325 | 287 | 88.3% |
+
+**So: yes, the paperwork should be refilled on the re-shoots — and it is, by
+construction.** A re-shoot is a brand-new report filed on the current app, whose
+`defaultForm()` now carries identity fields only. Readings start empty and the
+submit gates (plate photo, interior temp, set point, working-on-arrival, store
+signature or an explicit "no contact available") refuse a report without them.
+Nothing extra had to be built for that.
+
+Two things follow that are worth stating plainly:
+
+1. **Re-shooting the 160 does not fix the other ~450.** The photo problem was
+   concentrated; the paperwork problem is not. If Freshpet reads down the
+   temperature column of any batch they will find `38°F` and `120V` repeating.
+   That exposure is not addressed by the re-shoot programme and should not be
+   presented as if it were.
+2. **Voltage is now gated too** (2026-09-01), with an honest escape: a tech
+   without a meter ticks "No meter on hand — voltage not measured" and the
+   report prints *not measured (no meter)* rather than a number nobody read. A
+   blank field and a fabricated reading are both worse than a stated gap.
+
+## Addendum — signatures on a re-shoot (2026-09-01)
+
+A re-shoot now starts from the **original report**, not a blank form. We were at
+the store once and a manager signed for that visit; the re-shoot exists because
+the photographs could not be stood behind, not because the visit was invented.
+So the earlier answers come forward, the readings are retaken, and the store's
+signature is **carried as a record of the original visit rather than collected
+again** — nobody signs twice for one service call, and no manager is asked to
+sign for readings taken on a day they were not shown.
+
+The document says both things out loud: **ORIGINAL DATE** and **RESHOOT DATE**
+side by side in the header, a banner naming what the document is, and an
+attestation line under the signature block reading *"Signed on the original
+visit of <date>. No store signature was taken on the re-shoot of <date> — the
+readings and photographs above are attested to by the technician only."* The
+customer portal shows the same two dates and the same sentence, so the web view
+and the PDF cannot tell different stories.
+
+Deliberately **not** carried forward: photographs (the whole point of going
+back), and the readings — an inherited `38°F` is the original defect, so
+`intTemp` / `sp1` / `voltage` start empty and are measured again. Audit
+bookkeeping and the previous re-visit flags are dropped too.
+
+### The signature graphic itself was never stored
+
+Until this change a signature existed **nowhere but as pixels burned into the
+PDF** — no column, no `form_data` key. New submissions now keep it on the
+record (`form_data.storeSignature` / `techSignature`, behind RLS; never the
+public photo buckets).
+
+For the historical reports it is recoverable: `generatePDF` draws signatures at
+a fixed rect (200 pt wide, ≤58 pt tall, x=40 store / x=326 technician), which
+makes them identifiable rather than guessed at. A trial extraction over the 120
+flagged reports that carry a store-contact name **recovered 116 store
+signatures**; 3 have a contact name but no signature was ever drawn, and 1 PDF
+failed to fetch.
+
+**They were not backfilled, and that is a judgement call, not a limitation.**
+Re-pasting a signature graphic onto a document the signer never saw is the same
+shape as the defect this whole remediation is about — a photograph from one
+visit reappearing on another report. The words carry the meaning; the ink adds
+visual weight plus the risk of reading as an endorsement of readings taken
+weeks later. The original PDF still holds the signature, Freshpet already has
+it, and the portal links it. If the graphic is wanted on the re-shoot anyway,
+the extraction is proven and the change is small — `original_signature` is
+already rendered when present.
+
+## Addendum — reused photographs beyond the plate (2026-09-01)
+
+The nightly audit, run over the full corpus as a validation, independently
+re-found the defects this review had established by hand — and surfaced one that
+the corrections had **not** closed.
+
+**96 reports carry a photograph that also appears on another report.** Of those:
+
+| | reports |
+|---|---|
+| Already on the re-shoot list (`needs_plate_photo`) | 60 — of which **58 have no photograph of their own at all** |
+| Not on the list | 36 |
+| …sharing only with a report for the **same** unit (a duplicate submission, benign) | 3 |
+| …sharing with a report for a **different** unit | **33** |
+
+The 33 are a different shape from the original finding. They **do** have a
+genuine photograph of their own serial plate — which is why the plate-based
+sweep did not flag them — but they also carry one of a small set of images that
+were attached very widely: one appears on 21 reports across 21 stores, another
+on 14, another on 13. That is the earlier "17 gallery images across 43 reports"
+pattern, seen from the other side: round 2 detached the foreign **plate**
+photographs, and left the reused secondary shots in place.
+
+**All 33 are now on the re-shoot programme**, flagged `reused_photo` with a note
+saying how many other units' reports carry the same image. Two of them keep
+their more specific existing flag — #454 (`asset_list_confirm`) and #485
+(`credit_review`, the Kelley's duplicate Freshpet listed) — because those are
+office dispositions that a bulk re-flag must not overwrite; the re-visit itself
+is driven by `revisit_requested_at`, not by this flag.
+
+The reason for re-shooting rather than simply detaching the reused image: the
+sentence we want to be able to say to Freshpet is *"every report that carried a
+photograph belonging to another unit has been re-done."* A rule with an
+exception in it — some re-shot, some quietly tidied — is a much harder sentence,
+and the difference is 33 visits on a programme already visiting 160.
+
+⚠ **One earlier audit note was too confident and has been superseded.** Report
+#454 (Walmart US #2557) was noted as *"the on-site plate photograph reads a
+serial not on the asset list (photo appears genuine)"*. That photograph also
+appears on reports for two other units, so it cannot be a genuine plate
+photograph of all three. The asset-list question there is unresolved until the
+unit is re-shot.
+
+Also corrected in the check itself: sharing an image with a report for the
+**same** unit is a duplicate-submission problem, which has its own check.
+Collapsing the two made the serious case harder to see, so `photo_reused` now
+distinguishes them.

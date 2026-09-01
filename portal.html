@@ -94,6 +94,9 @@ select:focus,input:focus{border-color:var(--ac)}
 .pill.ac{color:var(--ac);border-color:var(--ac);background:rgba(229,106,21,.12)}
 .pill.iv{color:var(--am);border-color:var(--am);background:rgba(207,138,23,.14)}
 .pill.dim{color:var(--dim)}
+.pill.rs{color:#155E9B;border-color:#8FC4EA;background:#E2F0FB}
+.call.rs{border-left:4px solid #8FC4EA}
+.call.sup{opacity:.72}
 .call .dt{font-size:.78rem;color:var(--tx2);margin-top:9px;font-family:var(--mono);font-variant-numeric:tabular-nums}
 .empty{padding:44px 16px;text-align:center;color:var(--tx2);font-size:.95rem}
 /* Tables — airy rows, light rules, hover (shared look with the admin console) */
@@ -266,11 +269,20 @@ function renderByInvoice(list){
 function callCard(p){
   var a = assets[p.asset_id]||{};
   var nPhotos = Array.isArray(p.photo_paths)?p.photo_paths.length:0;
-  return '<button class="call" onclick="openCall('+p.id+')">'
+  var fd = p.form_data||{};
+  // Both reports stay on the unit — a submitted record is never overwritten —
+  // so two cards appear for one service call. Say which is which on the card
+  // itself: unlabelled, a pair reads as duplicate work, which is the complaint
+  // this whole exercise came from.
+  var isRs = p.visit_type==='reshoot' || !!fd.reshoot_of_pm_id;
+  var superseded = !!p.revisit_done_pm_id;
+  return '<button class="call'+(isRs?' rs':'')+(superseded?' sup':'')+'" onclick="openCall('+p.id+')">'
     + '<div class="st">'+esc(p.store||a.store||('Asset '+p.asset_id))+'</div>'
     + '<div class="ct">'+esc([p.city||a.city, a.state].filter(Boolean).join(', ')||'')+'</div>'
     + '<div class="meta">'
-    + '<span class="pill gn">✓ Completed</span>'
+    + (isRs ? '<span class="pill rs">'+icon('camera')+' Re-shoot — no charge</span>'
+            : '<span class="pill gn">✓ Completed</span>')
+    + (superseded?'<span class="pill dim">Re-documented later</span>':'')
     + (p.billed?'<span class="pill iv">'+icon('receipt')+' Invoice #'+esc(p.invoice_doc_number||'—')+'</span>':'')
     + ((p.form_data&&p.form_data.legacy)?'<span class="pill dim">'+icon('archive')+' Legacy</span>':'')
     + (nPhotos?'<span class="pill ac">'+icon('camera')+' '+nPhotos+'</span>':'')
@@ -609,8 +621,38 @@ function openCall(id){
   h += '<div class="mb">';
 
   // key facts
+  // A re-shoot is shown for exactly what it is. Two dates, never one: the visit
+  // and the re-documentation happened on different days, and a single "service
+  // date" would misstate one of them.
+  var isReshoot = p.visit_type === 'reshoot' || !!fd.reshoot_of_pm_id;
+  // The other side of the pair: the original says it was re-documented and
+  // points at the replacement, so nobody has to work out from two dates whether
+  // this unit was serviced twice.
+  if (p.revisit_done_pm_id) {
+    var rsp = pms.find(function(x){ return x.id === p.revisit_done_pm_id; });
+    h += '<div class="notes" style="border-left:4px solid #8FC4EA">'
+       + '<strong style="color:#155E9B">RE-DOCUMENTED</strong> — this unit was serviced on '
+       + esc(fmtDate(p.pm_date)) + '. Our photographs of that visit could not be verified, so it was '
+       + 'photographed and re-measured again'
+       + (rsp ? ' on ' + esc(fmtDate(rsp.pm_date)) : '')
+       + ' at no charge. This report is the original record of the service call; the re-shoot is the current documentation.'
+       + (rsp ? ' <a href="#" onclick="openCall('+rsp.id+');return false;">Open the re-shoot &rarr;</a>' : '')
+       + '</div>';
+  }
+  if (isReshoot) {
+    h += '<div class="notes" style="border-left:4px solid #7C3ABE">'
+       + '<strong style="color:#7C3ABE">RE-SHOOT</strong> — this unit was serviced on '
+       + esc(fmtDate(fd.original_date || p.pm_date)) + ' and re-documented on '
+       + esc(fmtDate(fd.reshoot_date || p.pm_date)) + '. '
+       + (fd.original_store_contact
+          ? 'The original visit was signed for by ' + esc(fd.original_store_contact) + '; the readings and photographs below were taken on the later visit and were not signed for by the store.'
+          : 'The readings and photographs below were taken on the later visit.')
+       + ' There is no charge for a re-shoot.</div>';
+  }
   h += '<div class="kv">'
-     + kv('Service date', fmtDate(p.pm_date))
+     + (isReshoot
+        ? kv('Original date', fmtDate(fd.original_date || p.pm_date)) + kv('Re-shoot date', fmtDate(fd.reshoot_date || p.pm_date))
+        : kv('Service date', fmtDate(p.pm_date)))
      + (p.signed_at?kv('Completed', fmtDateTime(p.signed_at)):'')
      + kv('Equipment', [a.manufacturer,a.model].filter(Boolean).join(' ')||'—')
      + kv('Serial #', p.serial||a.serial||'—')

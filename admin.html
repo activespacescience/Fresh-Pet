@@ -23,7 +23,7 @@
   --bg:#FFF8F0; --sf:#FFFFFF; --sf2:#F6EEE3; --bd:#EEE0CF; --bd2:#DCC8AC;
   --line:rgba(42,37,33,.07);
   --tx:#2A2521; --tx2:#786B5E; --dim:#8A7A66;
-  --ac:#E56A15; --ac2:#C85A0E; --gn:#2FA24C; --am:#CF8A17; --rd:#DB4A44;
+  --ac:#E56A15; --ac2:#C85A0E; --gn:#2FA24C; --am:#CF8A17; --rd:#DB4A44; --pu:#7C3ABE; --pu2:#66309E;
   --shadow:0 1px 2px rgba(42,37,33,.04),0 4px 16px rgba(191,120,58,.08);
   --font:'Helvetica Neue',Helvetica,Arial,'Segoe UI',Roboto,system-ui,sans-serif;
   --mono:ui-monospace,SFMono-Regular,'SF Mono',Menlo,monospace;
@@ -56,6 +56,8 @@ input,select{font-family:inherit;color:inherit}
 .btn.o:hover{border-color:var(--bd2);background:var(--sf2)}
 .btn.sm{padding:6px 11px;font-size:.78rem;border-radius:8px}
 .btn.gn{background:var(--gn)}.btn.rd{background:var(--rd)}
+.btn.pu{background:var(--pu)}.btn.pu:hover{background:var(--pu2)}
+.pill.pu{color:var(--pu);border-color:var(--pu);background:rgba(124,58,190,.12)}
 .btn:disabled{opacity:.5;cursor:not-allowed}
 /* Tabs — clean underline nav (shared look with the portal) */
 .tabs{display:flex;gap:2px;margin:18px 0 22px;flex-wrap:wrap;border-bottom:1px solid var(--bd)}
@@ -187,6 +189,12 @@ var aaPayResult = null;       // vendor payout bill result
 var ISSUE_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-issue-report';
 var riSel = {};              // { pm id: true } selected for the report
 var riFilter = 'issues';     // issues | added | review | all
+var rvBusy = false;          // re-visit request in flight
+var incidents = [], incidentEntries = [];
+var incOpen = null;          // incident id being viewed
+var incBusy = false;
+var incDraft = { kind:'note', body:'' };
+var incNew = null;           // new-incident draft, or null
 var riSearch = '';
 var riNote = '';             // free-text note included at the top of the email
 var riPicked = { 'roparaku@Freshpet.com': true };  // quick-pick recipients (Freshpet contact pre-checked)
@@ -198,6 +206,7 @@ var riResult = null;
 
 // ── Reactive / CSV upload ──
 var QUARTERLY_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-quarterly-invoice';
+var auditFindings = [];   // open findings from the nightly audit
 var rvBatches = [];           // existing reactive_batches
 var rvFileName = '';
 var rvMode = '';              // '' | 'pm' | 'reactive'
@@ -297,13 +306,19 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,comments:form_data->>comments').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,no_serial_plate,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
-    sb.from('reactive_assets').select('*').order('store')
+    sb.from('reactive_assets').select('*').order('store'),
+    sb.from('incidents').select('*').order('opened_at', { ascending:false }),
+    sb.from('incident_entries').select('*').order('entry_at'),
+    sb.from('pm_audit_findings').select('*').is('resolved_at', null).is('dismissed_at', null).order('severity').order('first_seen', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
   rvBatches = r[5].data || [];
+  incidents = r[7] ? (r[7].data || []) : [];
+  incidentEntries = r[8] ? (r[8].data || []) : [];
+  auditFindings = r[9] ? (r[9].data || []) : [];
   rvSaved = r[6].data || [];
   if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
 }
@@ -321,7 +336,14 @@ function selectRouteTech(email){
   render();
 }
 // A serviced stop is COMPLETED and locked — it can't be moved or removed.
-function stopCompleted(id){ return completedPMs.some(function(p){ return !p.prev_comp && p.asset_id===id; }); }
+// A stop is locked only while it is genuinely finished. A unit carrying an open
+// re-visit is back in play — the tech has to service it again — so the stop must
+// stay movable and removable. Matches isCompleted() in the field app.
+function stopCompleted(id){
+  var mine = completedPMs.filter(function(p){ return !p.prev_comp && p.asset_id===id; });
+  if(!mine.length) return false;
+  return !mine.some(function(p){ return p.revisit_requested_at && !p.revisit_done_at; });
+}
 function moveStop(i, dir){ var j=i+dir; if(j<0||j>=routeStops.length) return; if(stopCompleted(routeStops[i].asset_id)||stopCompleted(routeStops[j].asset_id)){ toast('Completed stops are locked','info'); return; } var t=routeStops[i]; routeStops[i]=routeStops[j]; routeStops[j]=t; render(); }
 function removeStop(i){ if(stopCompleted(routeStops[i].asset_id)){ toast('Completed stops are locked — can\'t remove','info'); return; } routeStops.splice(i,1); render(); }
 function addStop(id){ if(routeStops.some(function(s){return s.asset_id===id;})) return; if(assetLockedElsewhere(id)){ toast('That store is on another tech\'s route','err'); return; } var as=assetById(id); if(as){ routeStops.push({asset_id:id, asset:as}); render(); } }
@@ -423,8 +445,12 @@ function render(){
         return '<button class="tab '+(tab==='added'?'on':'')+'" onclick="tab=\'added\';render()">'+icon('plus')+' Added Assets'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + (function(){ var n=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
         return '<button class="tab '+(tab==='issues'?'on':'')+'" onclick="tab=\'issues\';render()">'+icon('alert')+' Report Issues'+(n?' <span class="pill am" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
+     + (function(){ var n=auditFindings.filter(function(f){ return f.severity==='red'; }).length;
+        return '<button class="tab '+(tab==='audit'?'on':'')+'" onclick="tab=\'audit\';render()">'+icon('shield')+' Nightly Audit'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">'+icon('download')+' Upload / Reactive</button>'
      + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">'+icon('mail')+' Send Invoice</button>'
+     + (function(){ var n=incidents.filter(function(i){ return i.status!=='closed'; }).length;
+        return '<button class="tab '+(tab==='incidents'?'on':'')+'" onclick="tab=\'incidents\';render()">'+icon('alert')+' Incident Log'+(n?' <span class="pill pu" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '</div>';
   h += tab==='overview' ? renderOverview()
      : tab==='routes' ? renderRoutes()
@@ -433,6 +459,8 @@ function render(){
      : tab==='issues' ? renderReportIssues()
      : tab==='reactive' ? renderReactive()
      : tab==='send' ? renderSendInvoice()
+     : tab==='incidents' ? renderIncidents()
+     : tab==='audit' ? renderAudit()
      : renderBilling();
   h += '</div>';
   app.innerHTML = h;
@@ -660,7 +688,9 @@ async function createPayoutBill(techUserId){
   var rate = t.pm_rate!=null ? Number(t.pm_rate) : null;
   if(rate==null || rate<=0) return toast('Set a per-PM rate for '+(t.name||t.email)+' first (below)','err');
   if(!unpaid.length) return toast('No unpaid PMs for this tech','err');
-  if(!confirm('Create a QuickBooks BILL to '+(t.name||t.email)+' for '+unpaid.length+' PM'+(unpaid.length===1?'':'s')+' @ '+money(rate)+' = '+money(unpaid.length*rate)+'?\n\nThis posts a real vendor bill in QBO and marks these PMs paid out.')) return;
+  var reshoots = unpaid.filter(function(p){ return p.visit_type==='reshoot'; }).length;
+  if(!confirm('Create a QuickBooks BILL to '+(t.name||t.email)+' for '+unpaid.length+' PM'+(unpaid.length===1?'':'s')+' @ '+money(rate)+' = '+money(unpaid.length*rate)+'?\n\nThis posts a real vendor bill in QBO and marks these PMs paid out.'
+    + (reshoots?('\n\nIncludes '+reshoots+' re-shoot visit'+(reshoots===1?'':'s')+' — paid in full to the tech and NOT billed to Freshpet.'):''))) return;
   payBusy=true; payBillResult=null; render();
   try{
     var token = await billToken();
@@ -683,7 +713,7 @@ function renderTechPay(){
     if(p.prev_comp) return;
     (byTech[p.tech_user_id]=byTech[p.tech_user_id]||[]).push(p);
   });
-  var h = '<div class="card"><h3>Technician pay</h3><div class="hint">Each completed PM (per asset, <span class="mono">PREV COMP</span> excluded) earns the tech their per-PM rate. Create a QuickBooks <strong>bill</strong> (what we owe the tech) for their unpaid PMs — separate from what we invoice Freshpet. Set/edit rates in the Per-PM rates section below.</div>';
+  var h = '<div class="card"><h3>Technician pay</h3><div class="hint">Each completed PM (per asset, <span class="mono">PREV COMP</span> excluded) earns the tech their per-PM rate. Create a QuickBooks <strong>bill</strong> (what we owe the tech) for their unpaid PMs — separate from what we invoice Freshpet. Set/edit rates in the Per-PM rates section below. <strong>Re-shoot visits are paid here at the full rate</strong> even though they are never charged to Freshpet — the tech drove the stop and did the work; the bad paperwork was ours.</div>';
 
   if(payBillResult){
     var b=payBillResult.bill||{};
@@ -697,11 +727,13 @@ function renderTechPay(){
   if(!rows.length){ h += '<div class="empty" style="padding:20px">No technician pay to show yet.</div>'; h += '</div>'; return h; }
   h += '<div style="overflow-x:auto"><table><thead><tr><th>Technician</th><th class="num">Unpaid PMs</th><th class="num">Rate / PM</th><th class="num">Owed</th><th>Paid to date</th><th></th></tr></thead><tbody>';
   rows.forEach(function(t){
-    var unpaid = (byTech[t.user_id]||[]).length;
+    var mine = byTech[t.user_id]||[];
+    var unpaid = mine.length;
+    var reshoots = mine.filter(function(p){ return p.visit_type==='reshoot'; }).length;
     var rate = t.pm_rate!=null?Number(t.pm_rate):null;
     var owed = rate!=null ? unpaid*rate : null;
     h += '<tr><td>'+esc(t.name||t.email)+'<div class="muted" style="font-size:.72rem">'+esc(t.email)+'</div></td>'
-       + '<td class="num">'+unpaid+'</td>'
+       + '<td class="num">'+unpaid+(reshoots?' <span class="pill pu" title="Re-shoots — paid to the tech, not billed to Freshpet">'+reshoots+' re-shoot</span>':'')+'</td>'
        + '<td class="num">'+(rate!=null?money(rate):'<span class="muted">—</span>')+'</td>'
        + '<td class="num">'+(owed!=null?money(owed):'<span class="muted">set rate</span>')+'</td>'
        + '<td>'+(paidCount[t.user_id]?'<span class="pill gn">'+paidCount[t.user_id]+' paid</span>':'<span class="muted">—</span>')+'</td>'
@@ -744,7 +776,7 @@ function renderPayReport(){
 
   var rangeLbl = (!payFrom && !payTo) ? 'All time' : ((payFrom?fmtDate(payFrom):'…')+' – '+(payTo?fmtDate(payTo):'…'));
   var h = '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:200px"><h3>Pay report <span class="muted" style="font-weight:600">· '+esc(rangeLbl)+'</span></h3>'
-    + '<div class="hint">Per-contractor pay for any date range, from the full completed-PM history. Each completed PM earns '+money(DEFAULT_PM_RATE)+' (or the tech\'s set rate). Credited to whoever\'s route the stop is on. Pick a range to see past periods.</div></div>'
+    + '<div class="hint">Per-contractor pay for any date range, from the full completed-PM history. Each completed PM earns '+money(DEFAULT_PM_RATE)+' (or the tech\'s set rate). Credited to whoever\'s route the stop is on. Pick a range to see past periods. Re-shoot visits count here and are paid normally — they are excluded only from what we invoice Freshpet.</div></div>'
     + '<div class="seg" style="flex:none">'
     + '<button onclick="payPreset(\'this\')">This month</button><button onclick="payPreset(\'last\')">Last month</button><button onclick="payPreset(\'all\')">All time</button>'
     + '</div></div>';
@@ -826,6 +858,7 @@ function billableList(){
   return completedPMs.filter(function(p){
     if (p.prev_comp) return false;                 // done elsewhere — never billed
     if (p.visit_type === 'exception') return false; // failed visit (closed store / missing unit) — never a billable PM
+    if (p.visit_type === 'reshoot') return false;   // re-visit of a stop already billed once — remediation, we absorb it
     if (!billShowBilled && p.billed) return false;
     if (!q) return true;
     return ((p.store||'')+' '+cityOf(p)+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
@@ -967,7 +1000,7 @@ function renderBilling(){
   var list = billableList();
   var sel = selectedIds();
   var rate = Number(billRate)||30;
-  h += '<div class="card"><h3>Bill completed PMs to Freshpet</h3><div class="hint">Every completed service stop is listed below. Tick the ones to bill, then create a QuickBooks invoice to <strong>FRESH PET</strong> (a single summary line, qty × rate) with a per-visit report attached. The billed stops are stamped with the invoice # and surface — with their photos + signed report — in the customer portal. <span class="mono">PREV COMP</span> visits are excluded (done elsewhere), and <span class="mono">EXCEPTION</span> reports (store closed / unit missing) are never billable as PMs.</div>';
+  h += '<div class="card"><h3>Bill completed PMs to Freshpet</h3><div class="hint">Every completed service stop is listed below. Tick the ones to bill, then create a QuickBooks invoice to <strong>FRESH PET</strong> (a single summary line, qty × rate) with a per-visit report attached. The billed stops are stamped with the invoice # and surface — with their photos + signed report — in the customer portal. <span class="mono">PREV COMP</span> visits are excluded (done elsewhere), <span class="mono">EXCEPTION</span> reports (store closed / unit missing) are never billable as PMs, and <span class="mono">RE-SHOOT</span> visits — a stop we sent someone back to because our own documentation was bad — are <strong>never charged to Freshpet</strong>. The technician is still paid for a re-shoot in full; we absorb it.</div>';
 
   h += '<div class="row" style="align-items:flex-end">'
      + '<div style="flex:none"><label class="f">Rate / PM</label><input type="number" step="0.01" min="0" value="'+rate+'" oninput="billRate=this.value;billPreview=null" style="max-width:120px;text-align:right"></div>'
@@ -1018,6 +1051,18 @@ function renderBilling(){
     });
     h += '</tbody></table></div>';
     h += '<div class="muted" style="margin-top:8px;font-size:.78rem">'+selectableCount+' unbilled shown.</div>';
+  }
+  // Say out loud what has been held back, so a missing stop is never a mystery.
+  var heldBack = completedPMs.filter(function(p){ return !p.prev_comp && (p.visit_type==='reshoot' || p.visit_type==='exception'); });
+  if(heldBack.length){
+    var nRe = heldBack.filter(function(p){ return p.visit_type==='reshoot'; }).length;
+    var nEx = heldBack.length - nRe;
+    h += '<div class="muted" style="margin-top:6px;font-size:.78rem">'
+       + 'Not on this list and not billable: '
+       + (nRe?'<span class="pill pu">'+nRe+' re-shoot'+(nRe===1?'':'s')+'</span> (our remediation — tech is paid, Freshpet is not charged)':'')
+       + (nRe&&nEx?' · ':'')
+       + (nEx?'<span class="pill am">'+nEx+' exception'+(nEx===1?'':'s')+'</span> (store closed / unit not found)':'')
+       + '</div>';
   }
   h += '</div>';
   return h;
@@ -1199,6 +1244,432 @@ function renderAddedAssets(){
   return h;
 }
 
+// ═══ Incident Log ═══
+// A durable record of what went wrong, why, what was done, and what stops it recurring.
+// Kept in the app so the record lives beside the data it describes.
+var INC_STATUS = ['open','investigating','remediating','monitoring','closed'];
+var INC_SEV    = ['low','medium','high','critical'];
+var INC_KIND   = ['note','finding','action','decision','communication'];
+var SEV_PILL   = { low:'dim', medium:'am', high:'rd', critical:'rd' };
+var STATUS_PILL= { open:'rd', investigating:'am', remediating:'pu', monitoring:'am', closed:'gn' };
+
+function incEntriesFor(id){
+  return incidentEntries.filter(function(e){ return e.incident_id === id; })
+    .sort(function(a,b){ return String(a.entry_at).localeCompare(String(b.entry_at)); });
+}
+function fmtWhen(t){
+  if(!t) return '';
+  var d = new Date(t);
+  return isNaN(d) ? String(t).slice(0,16) : d.toLocaleString(undefined,{ dateStyle:'medium', timeStyle:'short' });
+}
+function nl2br(t){ return esc(t||'').replace(/\n/g,'<br>'); }
+
+async function incAddEntry(id){
+  var body = (incDraft.body||'').trim();
+  if(!body) return toast('Write something first','err');
+  incBusy = true; render();
+  try{
+    var { error } = await sb.from('incident_entries').insert({
+      incident_id: id, kind: incDraft.kind, body: body,
+      author: (user && user.email) || 'admin'
+    });
+    if(error) throw error;
+    await sb.from('incidents').update({ updated_at: new Date().toISOString() }).eq('id', id);
+    incDraft = { kind:'note', body:'' };
+    await loadAll();
+    toast('Entry added','ok');
+  }catch(e){ toast('Could not add the entry: '+e.message,'err'); }
+  incBusy = false; render();
+}
+
+async function incSetStatus(id, status){
+  var inc = incidents.filter(function(i){ return i.id===id; })[0];
+  if(!inc) return;
+  if(status==='closed' && !confirm('Close this incident?\n\nClosing records that the corrective and preventive work is finished. The log stays readable and entries can still be added.')) return;
+  incBusy = true; render();
+  try{
+    var patch = { status: status, updated_at: new Date().toISOString() };
+    if(status==='closed') patch.closed_at = new Date().toISOString(); else patch.closed_at = null;
+    var { error } = await sb.from('incidents').update(patch).eq('id', id);
+    if(error) throw error;
+    await sb.from('incident_entries').insert({ incident_id:id, kind:'decision',
+      author:(user && user.email)||'admin', body:'Status changed to '+status+'.' });
+    await loadAll();
+    toast('Status updated','ok');
+  }catch(e){ toast('Could not update: '+e.message,'err'); }
+  incBusy = false; render();
+}
+
+function incStartNew(){
+  incNew = { title:'', severity:'medium', category:'data_integrity', reported_by:'', summary:'', customer_facing:false };
+  render();
+}
+async function incCreate(){
+  if(!incNew || !(incNew.title||'').trim()) return toast('Give the incident a title','err');
+  incBusy = true; render();
+  try{
+    var year = new Date().getFullYear();
+    var n = incidents.filter(function(i){ return (i.ref||'').indexOf('INC-'+year)===0; }).length + 1;
+    var ref = 'INC-'+year+'-'+String(n).padStart(3,'0');
+    var { data, error } = await sb.from('incidents').insert({
+      ref: ref, title: incNew.title.trim(), severity: incNew.severity, category: incNew.category,
+      reported_by: incNew.reported_by || null, summary: incNew.summary || null,
+      customer_facing: !!incNew.customer_facing, status: 'open',
+      owner: (user && user.email) || null, created_by: (user && user.email) || null
+    }).select('id').single();
+    if(error) throw error;
+    await sb.from('incident_entries').insert({ incident_id:data.id, kind:'note',
+      author:(user && user.email)||'admin', body:'Incident opened.' });
+    incNew = null; await loadAll(); incOpen = data.id;
+    toast('Incident '+ref+' opened','ok');
+  }catch(e){ toast('Could not open the incident: '+e.message,'err'); }
+  incBusy = false; render();
+}
+
+function renderIncidentDetail(inc){
+  var entries = incEntriesFor(inc.id);
+  var h = '<div class="card">';
+  h += '<div style="display:flex;align-items:flex-start;gap:10px;flex-wrap:wrap">'
+    + '<button class="btn o sm" onclick="incOpen=null;render()">← All incidents</button>'
+    + '<div style="flex:1;min-width:240px">'
+      + '<div class="mono" style="font-size:.75rem;color:var(--tx2)">'+esc(inc.ref||'')+'</div>'
+      + '<h3 style="margin:2px 0 0">'+esc(inc.title)+'</h3></div>'
+    + '<span class="pill '+(SEV_PILL[inc.severity]||'dim')+'">'+esc(inc.severity)+'</span>'
+    + '<span class="pill '+(STATUS_PILL[inc.status]||'dim')+'">'+esc(inc.status)+'</span>'
+    + (inc.customer_facing?'<span class="pill am">customer-facing</span>':'')
+    + '</div>';
+
+  h += '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px;margin-top:14px">';
+  [['Opened', fmtWhen(inc.opened_at)],['Reported by', inc.reported_by||'—'],['Owner', inc.owner||'—'],
+   ['Category',(inc.category||'—').replace(/_/g,' ')],
+   ['Reports affected', inc.reports_affected!=null?String(inc.reports_affected):'—'],
+   ['Financial impact', inc.financial_impact!=null?('$'+Number(inc.financial_impact).toLocaleString()):'—']]
+  .forEach(function(kv){
+    h += '<div><div class="f" style="margin:0">'+esc(kv[0])+'</div><div style="font-size:.9rem">'+esc(kv[1])+'</div></div>';
+  });
+  h += '</div>';
+
+  [['What happened', inc.summary],['Root cause', inc.root_cause],['Impact', inc.impact],
+   ['Corrective action — the damage', inc.corrective],['Preventive action — stopping a repeat', inc.preventive]]
+  .forEach(function(sec){
+    if(!sec[1]) return;
+    h += '<div style="margin-top:16px"><div class="f">'+esc(sec[0])+'</div>'
+       + '<div style="font-size:.88rem;line-height:1.6">'+nl2br(sec[1])+'</div></div>';
+  });
+  if(inc.evidence){
+    h += '<div style="margin-top:16px"><div class="f">Working papers</div>'
+       + '<div class="mono" style="font-size:.78rem;color:var(--tx2)">'+esc(inc.evidence)+'</div></div>';
+  }
+
+  h += '<div style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+    + '<span class="f" style="margin:0">Status</span>'
+    + INC_STATUS.map(function(st){
+        return '<button class="btn '+(inc.status===st?'':'o')+' sm" onclick="incSetStatus('+inc.id+',\''+st+'\')" '+(incBusy?'disabled':'')+'>'+esc(st)+'</button>';
+      }).join('')
+    + '</div></div>';
+
+  // timeline
+  h += '<div class="card"><h3>'+icon('alert')+' Timeline <span class="muted" style="font-weight:400;font-size:.8rem">'+entries.length+' entr'+(entries.length===1?'y':'ies')+'</span></h3>';
+  if(!entries.length) h += '<div class="empty">No entries yet.</div>';
+  else {
+    h += '<div style="border-left:2px solid var(--bd);margin-left:6px;padding-left:16px">';
+    entries.forEach(function(e){
+      var col = e.kind==='finding' ? 'var(--rd)' : e.kind==='action' ? 'var(--gn)'
+              : e.kind==='decision' ? 'var(--pu)' : e.kind==='communication' ? 'var(--ac)' : 'var(--tx2)';
+      h += '<div style="position:relative;margin-bottom:16px">'
+        + '<div style="position:absolute;left:-23px;top:5px;width:9px;height:9px;border-radius:50%;background:'+col+'"></div>'
+        + '<div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">'
+          + '<strong style="font-size:.76rem;text-transform:uppercase;letter-spacing:.04em;color:'+col+'">'+esc(e.kind)+'</strong>'
+          + '<span class="muted" style="font-size:.75rem">'+esc(fmtWhen(e.entry_at))+(e.author?' · '+esc(e.author):'')+'</span>'
+        + '</div>'
+        + '<div style="font-size:.88rem;line-height:1.6;margin-top:3px">'+nl2br(e.body)+'</div>'
+        + '</div>';
+    });
+    h += '</div>';
+  }
+  // add entry
+  h += '<div style="margin-top:8px;border-top:1px solid var(--line);padding-top:14px">'
+    + '<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;flex-wrap:wrap">'
+      + '<span class="f" style="margin:0">Add an entry</span>'
+      + '<select onchange="incDraft.kind=this.value" style="padding:4px 8px;font-size:.8rem">'
+      + INC_KIND.map(function(k){ return '<option value="'+k+'"'+(incDraft.kind===k?' selected':'')+'>'+k+'</option>'; }).join('')
+      + '</select></div>'
+    + '<textarea rows="3" style="width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:.88rem;font-family:inherit;resize:vertical" '
+      + 'placeholder="What happened, what you found, or what you decided…" oninput="incDraft.body=this.value">'+esc(incDraft.body)+'</textarea>'
+    + '<div style="margin-top:8px"><button class="btn sm" onclick="incAddEntry('+inc.id+')" '+(incBusy?'disabled':'')+'>'+icon('save')+' Add entry</button></div>'
+    + '</div></div>';
+  return h;
+}
+
+// ═══ Nightly audit ═══
+// The findings written by fn_pm_nightly_audit, which runs in Postgres at 02:10
+// Pacific every night. This board is the record of record: the digest email is
+// a convenience on top of it, and if that email fails the list here is still
+// right. Findings resolve themselves once the underlying report is fixed, so
+// this is a worklist rather than a log.
+var AUDIT_LABEL = {
+  photos_none:      ['red',  'No photographs at all',                          'Nothing ties this report to a machine or to the visit.'],
+  photos_missing:   ['red',  'Missing one of the three required photographs',  'Full pic of unit, serial plate, bottom of unit.'],
+  photo_reused:     ['red',  'A photograph also appears on another report',    'The defect Freshpet found: one unit standing in for another.'],
+  duplicate_report: ['am',   'Two reports for one unit within ten days',       'Sometimes right, often a double submission — read it.'],
+  default_readings: ['am',   'Readings are exactly the old pre-filled values',  'SP1 41F / 120V / 38F. The form no longer suggests these.'],
+  signature_missing:['red',  'No store signature and no reason given',         'The form requires one or the other.'],
+  exception_thin:   ['am',   'Exception with no note or no photograph',        'The shape of the five closed-store reports on #172825.'],
+  no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
+};
+var auditBusy = false;
+function auditPm(id){ return completedPMs.find(function(p){ return p.id===id; }) || {}; }
+// fp-pdfs is a public bucket, so the report opens straight from the row.
+function openPdf(path){ window.open(SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + encodeURIComponent(path), '_blank', 'noopener'); }
+
+async function runAuditNow(){
+  if(auditBusy) return;
+  auditBusy = true; render();
+  try{
+    var { error } = await sb.rpc('fn_pm_nightly_audit', { p_days: 45 });
+    if(error) throw error;
+    await loadAll(); toast('Audit re-run','ok');
+  }catch(e){ toast('Audit failed: '+e.message,'err'); }
+  auditBusy = false; render();
+}
+
+async function dismissFinding(id){
+  var why = prompt('Dismissing this finding. Why? (recorded on the row)');
+  if(why===null) return;
+  var { data:{ user } } = await sb.auth.getUser();
+  var { error } = await sb.from('pm_audit_findings')
+    .update({ dismissed_at: new Date().toISOString(), dismissed_by: ((user&&user.email)||'admin') + (why ? ' — ' + why : '') })
+    .eq('id', id);
+  if(error) return toast('Failed: '+error.message,'err');
+  await loadAll(); toast('Dismissed','ok'); render();
+}
+
+function renderAudit(){
+  var reds = auditFindings.filter(function(f){ return f.severity==='red'; });
+  var ambers = auditFindings.filter(function(f){ return f.severity==='amber'; });
+  var infos = auditFindings.filter(function(f){ return f.severity==='info'; });
+
+  var h = '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:220px"><h3>Nightly audit</h3>'
+    + '<div class="hint">Every check here is a defect the invoice #172825 review had to find by hand. It runs automatically at <strong>02:10 Pacific</strong> over the last 45 days of work and re-checks everything, so a problem is caught the night it happens rather than when a customer reads an invoice. Findings <strong>clear themselves</strong> once the report is fixed — this is a worklist, not a log.</div></div>'
+    + '<button class="btn o sm" style="flex:none" onclick="runAuditNow()" '+(auditBusy?'disabled':'')+'>'+(auditBusy?'Running…':icon('refresh')+' Run it now')+'</button>'
+    + '</div>';
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">'
+    + '<span class="pill rd">'+reds.length+' to fix</span>'
+    + '<span class="pill am">'+ambers.length+' to check</span>'
+    + '<span class="pill dim">'+infos.length+' for information</span>'
+    + '</div></div>';
+
+  if(!auditFindings.length){
+    h += '<div class="card"><div class="empty" style="padding:26px">Nothing outstanding. Every PM in the last 45 days passes every check.</div></div>';
+    return h;
+  }
+
+  var byCheck = {};
+  auditFindings.forEach(function(f){ (byCheck[f.check_name]=byCheck[f.check_name]||[]).push(f); });
+  // Severity first, then size. Note the lookup must not use `||` for a default:
+  // red ranks 0, and `0 || 9` is 9, which sorted the worst findings to the
+  // bottom of the page.
+  var RANK = { red:0, amber:1, info:2 };
+  var rank = function(k){ var v = RANK[byCheck[k][0].severity]; return v == null ? 9 : v; };
+  var order = Object.keys(byCheck).sort(function(a,b){
+    return rank(a)-rank(b) || byCheck[b].length-byCheck[a].length;
+  });
+
+  order.forEach(function(k){
+    var meta = AUDIT_LABEL[k] || ['dim', k, ''];
+    var rows = byCheck[k];
+    h += '<div class="card"><h3><span class="pill '+meta[0]+'">'+rows.length+'</span> '+esc(meta[1])+'</h3>';
+    if(meta[2]) h += '<div class="hint">'+esc(meta[2])+'</div>';
+    h += '<div style="overflow-x:auto;max-height:360px;overflow-y:auto"><table><thead><tr><th>Date</th><th>Store</th><th>Serial</th><th class="hide">Tech</th><th>What the audit saw</th><th></th></tr></thead><tbody>';
+    rows.forEach(function(f){
+      var p = auditPm(f.pm_id);
+      h += '<tr><td style="white-space:nowrap">'+esc(p.pm_date||'')+'</td>'
+        + '<td>'+esc(p.store||('report '+f.pm_id))+'</td>'
+        + '<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
+        + '<td class="hide">'+esc(p.tech_name||'')+'</td>'
+        + '<td class="muted" style="font-size:.78rem">'+esc(f.detail)+'</td>'
+        + '<td style="text-align:right;white-space:nowrap">'
+        + (p.pdf_path?'<button class="btn o sm" onclick="openPdf(\''+esc(p.pdf_path)+'\')">'+icon('file-text')+' Report</button> ':'')
+        + '<button class="btn o sm" onclick="dismissFinding('+f.id+')" title="Clear this finding with a reason">Dismiss</button>'
+        + '</td></tr>';
+    });
+    h += '</tbody></table></div></div>';
+  });
+  return h;
+}
+
+function renderIncidents(){
+  if(incOpen){
+    var inc = incidents.filter(function(i){ return i.id===incOpen; })[0];
+    if(inc) return renderIncidentDetail(inc);
+    incOpen = null;
+  }
+  var h = '<div class="card"><h3>'+icon('alert')+' Incident Log</h3>'
+    + '<div class="hint">A durable record of anything that went wrong with the service or the data — what happened, why, what was done about the damage, and what stops it happening again. Kept here so the record lives beside the data it describes rather than in somebody\'s inbox.</div>';
+
+  if(incNew){
+    h += '<div class="card" style="background:var(--sf2);margin:12px 0 0"><h3>Open a new incident</h3>'
+      + '<div class="col"><label class="f">Title</label><input type="text" value="'+esc(incNew.title)+'" oninput="incNew.title=this.value" placeholder="Short description of what went wrong"></div>'
+      + '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-top:10px">'
+        + '<div><label class="f">Severity</label><select onchange="incNew.severity=this.value" style="padding:6px 10px">'+INC_SEV.map(function(x){return '<option'+(incNew.severity===x?' selected':'')+'>'+x+'</option>';}).join('')+'</select></div>'
+        + '<div><label class="f">Category</label><select onchange="incNew.category=this.value" style="padding:6px 10px">'
+          + ['data_integrity','billing','safety','customer','system'].map(function(x){return '<option value="'+x+'"'+(incNew.category===x?' selected':'')+'>'+x.replace(/_/g,' ')+'</option>';}).join('')+'</select></div>'
+        + '<div style="flex:1;min-width:160px"><label class="f">Reported by</label><input type="text" value="'+esc(incNew.reported_by)+'" oninput="incNew.reported_by=this.value" placeholder="Customer, technician, internal…"></div>'
+      + '</div>'
+      + '<div style="margin-top:10px"><label class="f">What happened</label>'
+      + '<textarea rows="3" style="width:100%;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:var(--bg);color:var(--tx);font-size:.88rem;font-family:inherit" oninput="incNew.summary=this.value">'+esc(incNew.summary)+'</textarea></div>'
+      + '<label style="display:flex;align-items:center;gap:8px;margin-top:10px;font-size:.85rem;cursor:pointer"><input type="checkbox" '+(incNew.customer_facing?'checked':'')+' onchange="incNew.customer_facing=this.checked" style="width:auto;accent-color:var(--ac)"> The customer saw this</label>'
+      + '<div style="margin-top:12px;display:flex;gap:8px"><button class="btn gn sm" onclick="incCreate()" '+(incBusy?'disabled':'')+'>Open incident</button>'
+      + '<button class="btn o sm" onclick="incNew=null;render()">Cancel</button></div></div>';
+  } else {
+    h += '<div style="margin-top:10px"><button class="btn sm" onclick="incStartNew()">'+icon('plus')+' Log an incident</button></div>';
+  }
+
+  if(!incidents.length){ h += '<div class="empty" style="margin-top:12px">No incidents logged.</div>'; }
+  else {
+    h += '<div style="overflow-x:auto;margin-top:14px"><table><thead><tr>'
+      + '<th>Ref</th><th>Incident</th><th>Severity</th><th>Status</th><th class="hide">Opened</th><th class="hide">Reported by</th><th>Entries</th><th></th>'
+      + '</tr></thead><tbody>';
+    incidents.forEach(function(i){
+      h += '<tr>'
+        + '<td class="mono" style="font-size:.78rem">'+esc(i.ref||'')+'</td>'
+        + '<td style="max-width:340px">'+esc(i.title)+(i.customer_facing?' <span class="pill am">customer-facing</span>':'')+'</td>'
+        + '<td><span class="pill '+(SEV_PILL[i.severity]||'dim')+'">'+esc(i.severity)+'</span></td>'
+        + '<td><span class="pill '+(STATUS_PILL[i.status]||'dim')+'">'+esc(i.status)+'</span></td>'
+        + '<td class="hide">'+esc(String(i.opened_at||'').slice(0,10))+'</td>'
+        + '<td class="hide">'+esc(i.reported_by||'')+'</td>'
+        + '<td>'+incEntriesFor(i.id).length+'</td>'
+        + '<td><button class="btn o sm" onclick="incOpen='+i.id+';render()">Open</button></td></tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+  h += '</div>';
+  return h;
+}
+
+// ═══ RE-VISIT — disconnect untrustworthy documentation and redo the stop ═══
+// A re-visit says: whatever photographs are on this report cannot be relied on to
+// document this unit. The images are NEVER deleted — they are moved aside into
+// form_data.revisit_cleared_photos so the original submission stays intact — but they
+// stop being presented as evidence, and the stop goes back on the route to be redone.
+var REVISIT_REASONS = {
+  no_plate_photo:  'No serial-plate photograph on file',
+  wrong_unit_photo:'Photograph(s) showed another unit',
+  unverifiable:    'Documentation cannot be verified',
+  customer_dispute:'Disputed by the customer'
+};
+
+async function requestRevisit(id, reason){
+  var p = completedPMs.filter(function(x){ return x.id === id; })[0];
+  if(!p) return;
+  var nPh = Array.isArray(p.photo_paths) ? p.photo_paths.length : 0;
+  var msg = 'Order a RE-VISIT for this stop?\n\n'
+    + (p.store||'') + '  ·  S/N ' + (p.serial||'') + '  ·  ' + (p.pm_date||'') + '\n'
+    + 'Reason: ' + (REVISIT_REASONS[reason] || reason) + '\n\n'
+    + 'This will:\n'
+    + '  • disconnect ' + (nPh ? nPh + ' photograph' + (nPh===1?'':'s') : 'the photo evidence') + ' from this report\n'
+    + '  • flag the stop to be serviced and documented again\n'
+    + '  • keep the original submission on file (nothing is deleted)\n\n'
+    + (p.billed ? 'NOTE: this PM has already been invoiced (' + (p.invoice_doc_number||'') + ').\nThe re-visit does not credit the invoice — handle that separately.\n\n' : '')
+    + 'Continue?';
+  if(!confirm(msg)) return;
+  rvBusy = true; render();
+  try{
+    var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
+    var note = 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': '
+      + (REVISIT_REASONS[reason] || reason)
+      + '. The photograph(s) previously filed on this report have been disconnected and are no longer '
+      + 'presented as documentation of this unit; they remain on file (revisit_cleared_photos). '
+      + 'This stop is scheduled to be serviced and photographed again.';
+    var { data: cur, error: readErr } = await sb.from('completed_pms')
+      .select('form_data').eq('id', id).single();
+    if(readErr) throw readErr;
+    var fd = cur && cur.form_data ? cur.form_data : {};
+    if(cleared.length) fd.revisit_cleared_photos = cleared;
+    fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '') + note);
+    var { error } = await sb.from('completed_pms').update({
+      photo_paths: [], photo_hashes: [],
+      revisit_requested_at: new Date().toISOString(),
+      revisit_requested_by: (user && user.email) || 'admin',
+      revisit_reason: reason,
+      needs_review: true,
+      form_data: fd,
+      modified_at: new Date().toISOString(),
+      modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
+    }).eq('id', id);
+    if(error) throw error;
+    await loadAll();
+    toast('Re-visit ordered — evidence disconnected, stop queued for redo','ok');
+  }catch(e){ toast('Could not order the re-visit: ' + e.message, 'err'); }
+  rvBusy = false; render();
+}
+
+async function cancelRevisit(id){
+  if(!confirm('Cancel this re-visit?\n\nThe stop goes back to normal. Photographs that were disconnected are NOT automatically re-attached — they stay on file under revisit_cleared_photos.')) return;
+  rvBusy = true; render();
+  try{
+    var { error } = await sb.from('completed_pms').update({
+      revisit_requested_at: null, revisit_requested_by: null, revisit_reason: null
+    }).eq('id', id);
+    if(error) throw error;
+    await loadAll();
+    toast('Re-visit cancelled','ok');
+  }catch(e){ toast('Could not cancel: ' + e.message, 'err'); }
+  rvBusy = false; render();
+}
+
+function revisitPicker(p){
+  if(p.revisit_requested_at && !p.revisit_done_at){
+    return '<span class="pill pu" title="Ordered by ' + esc(p.revisit_requested_by||'') + '">RE-VISIT</span> '
+      + '<button class="btn o sm" onclick="cancelRevisit(' + p.id + ')" ' + (rvBusy?'disabled':'') + '>Cancel</button>';
+  }
+  var opts = Object.keys(REVISIT_REASONS).map(function(k){
+    return '<option value="' + k + '">' + esc(REVISIT_REASONS[k]) + '</option>'; }).join('');
+  return '<button class="btn pu sm" onclick="var r=document.getElementById(\'rvr_' + p.id + '\').value; requestRevisit(' + p.id + ', r)" '
+    + (rvBusy?'disabled':'') + ' title="Disconnect this report\'s photo evidence and redo the stop">' + icon('refresh') + ' RE-VISIT</button>'
+    + '<select id="rvr_' + p.id + '" style="margin-left:6px;padding:3px 6px;font-size:.72rem;max-width:150px">' + opts + '</select>';
+}
+
+function bulkRevisit(){
+  var ids = riSelectedIds();
+  if(!ids.length) return toast('Select the stops to re-visit','err');
+  var reason = document.getElementById('rvBulkReason').value;
+  if(!confirm('Order a RE-VISIT for ' + ids.length + ' stop' + (ids.length===1?'':'s') + '?\n\n'
+    + 'Reason: ' + (REVISIT_REASONS[reason]||reason) + '\n\n'
+    + 'Each one has its photo evidence disconnected (kept on file) and goes back on the route to be redone.')) return;
+  (async function(){
+    rvBusy = true; render();
+    var ok = 0, fail = 0;
+    for(var i=0;i<ids.length;i++){
+      var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
+      if(!p || (p.revisit_requested_at && !p.revisit_done_at)) continue;
+      try{
+        var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
+        var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
+        var fd = cur && cur.form_data ? cur.form_data : {};
+        if(cleared.length) fd.revisit_cleared_photos = cleared;
+        fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
+          + 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': ' + (REVISIT_REASONS[reason]||reason)
+          + '. Photograph(s) disconnected and kept on file; the stop is scheduled to be serviced and photographed again.');
+        var { error } = await sb.from('completed_pms').update({
+          photo_paths: [], photo_hashes: [],
+          revisit_requested_at: new Date().toISOString(),
+          revisit_requested_by: (user && user.email) || 'admin',
+          revisit_reason: reason, needs_review: true, form_data: fd,
+          modified_at: new Date().toISOString(),
+          modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
+        }).eq('id', p.id);
+        if(error) throw error; ok++;
+      }catch(e){ fail++; }
+    }
+    riSel = {};
+    await loadAll();
+    toast(ok + ' stop' + (ok===1?'':'s') + ' queued for re-visit' + (fail ? ' · ' + fail + ' failed' : ''), fail ? 'err' : 'ok');
+    rvBusy = false; render();
+  })();
+}
+
 // ═══ Report Issues to Freshpet ═══
 function riList(){
   var q=(riSearch||'').trim().toLowerCase();
@@ -1207,6 +1678,11 @@ function riList(){
     if(riFilter==='issues' && !(p.added_asset || p.needs_review)) return false;
     if(riFilter==='added' && !p.added_asset) return false;
     if(riFilter==='review' && !p.needs_review) return false;
+    if(riFilter==='revisit' && !(p.revisit_requested_at && !p.revisit_done_at)) return false;
+    if(riFilter==='needphoto' && p.audit_flag!=='needs_plate_photo') return false;
+    if(riFilter==='reused' && p.audit_flag!=='reused_photo') return false;
+    if(riFilter==='noserial' && !p.no_serial_plate) return false;
+    if(riFilter==='assetlist' && p.audit_flag!=='asset_list_confirm') return false;
     if(q && ((p.store||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)<0) return false;
     return true;
   });
@@ -1255,16 +1731,26 @@ function renderReportIssues(){
   var allIssues=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset||p.needs_review); });
   var addedN=completedPMs.filter(function(p){ return !p.prev_comp && p.added_asset; }).length;
   var reviewN=completedPMs.filter(function(p){ return !p.prev_comp && p.needs_review; }).length;
+  var revisitN=completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; }).length;
+  var needPhotoN=completedPMs.filter(function(p){ return p.audit_flag==='needs_plate_photo'; }).length;
+  var noSerialN=completedPMs.filter(function(p){ return p.no_serial_plate; }).length;
+  var reusedN=completedPMs.filter(function(p){ return p.audit_flag==='reused_photo'; }).length;
+  var assetListN=completedPMs.filter(function(p){ return p.audit_flag==='asset_list_confirm'; }).length;
 
   var h='<div class="card"><h3>'+icon('alert')+' Report issues to Freshpet</h3>'
-    +'<div class="hint">Email Freshpet a list of extra coolers found in the field and coolers with service issues so they can record them. Each selected unit\'s <strong>photos</strong> and <strong>signed PM report PDF</strong> are attached to the email (very large batches auto-trim to stay under email size limits — send in smaller batches if files get skipped). Sent units are stamped so you can see what Freshpet already has.</div>';
+    +'<div class="hint"><strong>Needs photo</strong> and <strong>Asset list</strong> are the outcome of the 2026-08 photo-integrity audit. <em>Needs photo</em> means no photograph of that unit\'s own serial plate exists anywhere in our records — select those rows and use the purple bar to order re-visits. <em>Asset list</em> means the plate we photographed reads a serial Freshpet does not list, which needs confirming with them rather than re-shooting.</div>'+'<div class="hint">Email Freshpet a list of extra coolers found in the field and coolers with service issues so they can record them. Each selected unit\'s <strong>photos</strong> and <strong>signed PM report PDF</strong> are attached to the email (very large batches auto-trim to stay under email size limits — send in smaller batches if files get skipped). Sent units are stamped so you can see what Freshpet already has.</div>';
 
   // filters + search
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
     +'<div class="seg">'
+      +'<button class="'+(riFilter==='needphoto'?'on':'')+'" onclick="riFilter=\'needphoto\';render()" title="No photograph of this unit\'s own serial plate exists - a re-visit is required">Needs photo ('+needPhotoN+')</button>'
+      +'<button class="'+(riFilter==='reused'?'on':'')+'" onclick="riFilter=\'reused\';render()" title="A photograph on this report also appears on a report for a DIFFERENT unit - the defect the customer found">Reused photo ('+reusedN+')</button>'
+      +'<button class="'+(riFilter==='noserial'?'on':'')+'" onclick="riFilter=\'noserial\';render()" title="The tech could not find or read a serial plate on this unit - it cannot be tied to a listed asset">No serial ('+noSerialN+')</button>'
+      +'<button class="'+(riFilter==='assetlist'?'on':'')+'" onclick="riFilter=\'assetlist\';render()" title="The plate photographed reads a serial that is not on the Freshpet asset list">Asset list ('+assetListN+')</button>'
       +'<button class="'+(riFilter==='issues'?'on':'')+'" onclick="riFilter=\'issues\';render()">Issues ('+allIssues.length+')</button>'
       +'<button class="'+(riFilter==='added'?'on':'')+'" onclick="riFilter=\'added\';render()">Added assets ('+addedN+')</button>'
       +'<button class="'+(riFilter==='review'?'on':'')+'" onclick="riFilter=\'review\';render()">Needs review ('+reviewN+')</button>'
+      +'<button class="'+(riFilter==='revisit'?'on':'')+'" onclick="riFilter=\'revisit\';render()">Re-visits ('+revisitN+')</button>'
       +'<button class="'+(riFilter==='all'?'on':'')+'" onclick="riFilter=\'all\';render()">All PMs</button>'
     +'</div>'
     +'<input type="search" placeholder="Search store, serial, tech…" value="'+esc(riSearch)+'" oninput="riSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
@@ -1272,22 +1758,39 @@ function renderReportIssues(){
     +'<span class="muted" style="font-size:.8rem">'+sel.length+' selected</span>'
     +'</div>';
 
+  if(sel.length){
+    h+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:-2px 0 12px;padding:10px 12px;border:1px solid var(--pu);border-radius:10px;background:rgba(124,58,190,.06)">'
+      +'<strong style="font-size:.82rem;color:var(--pu)">Re-visit '+sel.length+' selected stop'+(sel.length===1?'':'s')+'</strong>'
+      +'<select id="rvBulkReason" style="padding:5px 8px;font-size:.8rem;max-width:230px">'
+      +Object.keys(REVISIT_REASONS).map(function(k){ return '<option value="'+k+'">'+esc(REVISIT_REASONS[k])+'</option>'; }).join('')
+      +'</select>'
+      +'<button class="btn pu sm" onclick="bulkRevisit()" '+(rvBusy?'disabled':'')+'>'+icon('refresh')+' Order re-visits</button>'
+      +'<span class="muted" style="font-size:.76rem">Disconnects each report\'s photo evidence (kept on file) and puts the stop back on the route.</span>'
+    +'</div>';
+  }
+
   // list
   if(!list.length){ h+='<div class="empty">No '+(riFilter==='all'?'completed PMs':'matching issues')+'.</div>'; }
   else {
-    h+='<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Type</th><th class="hide">Files</th><th>Sent</th></tr></thead><tbody>';
+    h+='<div style="overflow-x:auto;max-height:420px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Store</th><th>Serial</th><th>Date</th><th class="hide">Tech</th><th>Type</th><th class="hide">Files</th><th>Sent</th><th>Re-visit</th></tr></thead><tbody>';
     list.forEach(function(p){
       var nPh=Array.isArray(p.photo_paths)?p.photo_paths.length:0;
       var type=(p.added_asset?'<span class="pill ac">Added asset</span> ':'')+(p.needs_review?'<span class="pill rd">Needs review</span>':'')||'<span class="pill dim">PM</span>';
+      var AF={ needs_plate_photo:['rd','Needs photo'], reused_photo:['rd','Reused photo'], asset_list_confirm:['am','Asset list'], credit_review:['am','Credit review'], resolved:['gn','Resolved'] };
+      if(p.audit_flag && AF[p.audit_flag]) type='<span class="pill '+AF[p.audit_flag][0]+'">'+AF[p.audit_flag][1]+'</span>';
+      if(p.revisit_requested_at && !p.revisit_done_at) type='<span class="pill pu">Re-visit ordered</span>';
       h+='<tr>'
         +'<td><input type="checkbox" '+(riSel[p.id]?'checked':'')+' onclick="riToggle('+p.id+')"></td>'
-        +'<td>'+esc(p.store||'')+(p.comments?'<div class="muted" style="font-size:.72rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(p.comments)+'">'+esc(p.comments)+'</div>':'')+'</td>'
-        +'<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
+        +'<td>'+esc(p.store||'')+(p.comments?'<div class="muted" style="font-size:.72rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(p.comments)+'">'+esc(p.comments)+'</div>':'')+(p.audit_note?'<div class="muted" style="font-size:.7rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic" title="'+esc(p.audit_note)+'">'+esc(p.audit_note)+'</div>':'')+'</td>'
+        +'<td class="mono" style="font-size:.8rem">'+(p.no_serial_plate
+            ? '<span class="pill rd">NO SERIAL</span><div class="muted" style="font-size:.68rem;margin-top:2px">listed '+esc(p.serial||'—')+'</div>'
+            : esc(p.serial||''))+'</td>'
         +'<td>'+esc(p.pm_date||'')+'</td>'
         +'<td class="hide">'+esc(p.tech_name||'')+'</td>'
         +'<td>'+type+'</td>'
         +'<td class="hide">'+(nPh?nPh+' photo'+(nPh===1?'':'s'):'')+(p.pdf_path?(nPh?' + ':'')+'PDF':'')+'</td>'
-        +'<td>'+(p.issue_emailed_at?'<span class="pill gn" title="'+esc(p.issue_emailed_to||'')+'">✓ '+esc(String(p.issue_emailed_at).slice(0,10))+'</span>':'<span class="pill dim">—</span>')+'</td></tr>';
+        +'<td>'+(p.issue_emailed_at?'<span class="pill gn" title="'+esc(p.issue_emailed_to||'')+'">✓ '+esc(String(p.issue_emailed_at).slice(0,10))+'</span>':'<span class="pill dim">—</span>')+'</td>'
+        +'<td style="white-space:nowrap">'+revisitPicker(p)+'</td></tr>';
     });
     h+='</tbody></table></div>';
   }

@@ -1,6 +1,7 @@
 -- Run AFTER the 60 *_CORRECTED_20260825.pdf files are uploaded to fp-pdfs.
 -- Each update is guarded on form_data.corrected_pdf_path so it can only flip
 -- the rows the audit prepared, and is a no-op if re-run.
+-- APPLIED LIVE 2026-08-26; kept as the record of what was run.
 begin;
 update completed_pms set pdf_path = 'Petco__1343_226512_20260715_1784144898014_CORRECTED_20260825.pdf' where id = 414 and (form_data->>'corrected_pdf_path') = 'Petco__1343_226512_20260715_1784144898014_CORRECTED_20260825.pdf';
 update completed_pms set pdf_path = 'Petco__1343_226507_20260715_1784145114410_CORRECTED_20260825.pdf' where id = 415 and (form_data->>'corrected_pdf_path') = 'Petco__1343_226507_20260715_1784145114410_CORRECTED_20260825.pdf';
