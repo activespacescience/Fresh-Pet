@@ -96,6 +96,18 @@ select:focus,input:focus{border-color:var(--ac)}
 .pill.dim{color:var(--dim)}
 .pill.rs{color:#155E9B;border-color:#8FC4EA;background:#E2F0FB}
 .pill.hold{color:#8A4B00;border-color:#E8B368;background:#FDF1DF}
+.al-h{padding:14px 16px;background:var(--sf);border:1px solid var(--bd);border-radius:12px 12px 0 0;
+  border-bottom:none;box-shadow:var(--shadow)}
+.al-h .ttl{font-weight:700;font-size:1.02rem;letter-spacing:-.01em}
+.al-h .sub{font-size:.82rem;color:var(--tx2);margin-top:3px;line-height:1.45}
+.al-wrap{border:1px solid var(--bd);border-top:none;border-radius:0 0 12px 12px;overflow-x:auto;
+  box-shadow:var(--shadow);margin-bottom:18px;background:var(--sf)}
+.al-wrap table{margin:0}
+.al-wrap td{vertical-align:middle}
+.al-store{font-weight:700}
+.al-where{font-size:.78rem;color:var(--dim);margin-top:1px}
+.al-hint{font-size:.7rem;color:var(--dim);margin-top:3px}
+.al-pills{display:flex;flex-wrap:wrap;gap:5px}
 .call.hold{border-left:4px solid #E8B368}
 .holdbar{border:1px solid #E8B368;border-left-width:5px;border-radius:12px;background:#FDF1DF;
   padding:14px 16px;margin:0 0 16px;color:#5E3400}
@@ -312,14 +324,14 @@ function foundAssets(){
       if(!own && pms[i].asset_id === a.id) own = pms[i];
       if(!found && a.found_on_pm_id && pms[i].id === a.found_on_pm_id) found = pms[i];
     }
-    out.push({ asset:a, pm: own || found, serviced: !!own, noted: !own && !!found,
+    out.push({ kind:'found', asset:a, pm: own || found, serviced: !!own, noted: !own && !!found,
                settled: a.reported === true });
   });
   return out.sort(function(x,y){ return String(y.asset.added_at||'').localeCompare(String(x.asset.added_at||'')); });
 }
 function missingAssets(){
   return pms.filter(function(p){ return p.visit_type === 'exception'; })
-    .map(function(p){ var a = assetRow(p); return { pm:p, asset:a, settled: !!(a && a.active === false) }; })
+    .map(function(p){ var a = assetRow(p); return { kind:'missing', pm:p, asset:a, settled: !!(a && a.active === false) }; })
     .sort(function(x,y){ return String(y.pm.pm_date||'').localeCompare(String(x.pm.pm_date||'')); });
 }
 function assetListOpenCount(){
@@ -755,99 +767,115 @@ function render(){
   app.innerHTML = h;
 }
 
-function assetRowCard(r, kind){
+function assetRowCard(r, kindFallback){
   var a = r.asset || {}, p = r.pm;
+  // The row knows its own direction. The "already reconciled" table mixes found
+  // and missing units, and reading the direction off the table it happens to be
+  // in rendered every settled missing unit as a found one.
+  var kind = r.kind || kindFallback;
+  // Scannable at a glance, the way the back-office tab is: one line per unit,
+  // the store first, and every status as a short pill instead of a sentence.
+  // The long explanation belongs in the section header, said once, not
+  // repeated on all eight rows.
   var serial = a.no_serial
-    ? '<span class="pill hold">NO SERIAL PLATE</span>'
-    : '<span class="mono">'+esc(a.serial || (p && p.serial) || '—')+'</span>';
-  var where = esc([a.address, a.city || (p&&p.city), a.state, a.zip].filter(Boolean).join(', '));
-  return '<tr'+(r.settled?' style="opacity:.6"':'')+'>'
-    + '<td><strong>'+esc(a.store || (p && p.store) || '—')+'</strong>'
-      + (where?'<div class="ct" style="font-size:.78rem">'+where+'</div>':'')+'</td>'
-    + '<td>'+esc([a.manufacturer, a.model].filter(Boolean).join(' ') || '—')+'</td>'
-    + '<td>'+serial+'</td>'
-    + '<td>'+(kind==='found'
-        ? esc(fmtDate(String(a.added_at||'').slice(0,10)))
-        : esc(fmtDate(p && p.pm_date)))+'</td>'
-    + '<td>'+(kind==='found'
-        ? (r.settled
-            ? '<span class="pill gn">On your list'+(a.reported_at?' · '+esc(fmtDate(String(a.reported_at).slice(0,10))):'')+'</span>'
-            : '<span class="pill hold">Not on your list</span>')
-          + (r.noted?'<div class="ct" style="font-size:.74rem;margin-top:3px">Noted while servicing the unit beside it — not serviced itself</div>':'')
-        : (r.settled
-            ? '<span class="pill gn">Removed from your list</span>'
-            : '<span class="pill hold">'+esc(EXC_LABEL[p&&p.exception_reason] || 'Not found on site')+'</span>'))+'</td>'
-    + '<td>'+(p ? '<a href="#" onclick="openCall('+p.id+');return false">'
-        + (kind==='found' && r.noted ? 'The report that found it' : 'Open the report') + ' &rarr;</a>'
-      : '<span class="ct">—</span>')+'</td>'
+    ? '<span class="pill hold">NO SERIAL</span><div class="al-hint">plate not recorded</div>'
+    : '<span class="mono">' + esc(a.serial || (p && p.serial) || '\u2014') + '</span>';
+  var equip = esc([a.manufacturer, a.model].filter(Boolean).join(' ')) || '<span class="ct">\u2014</span>';
+  var where = esc([a.city || (p && p.city), a.state].filter(Boolean).join(', '));
+
+  var pills = kind === 'found'
+    ? (r.settled
+        ? '<span class="pill gn">On your list' + (a.reported_at ? ' \u00b7 ' + esc(fmtDate(String(a.reported_at).slice(0,10))) : '') + '</span>'
+        : '<span class="pill hold">Not on your list</span>'
+          + (r.noted ? '<span class="pill dim">Not serviced yet</span>' : ''))
+    : (r.settled
+        ? '<span class="pill gn">Removed from your list</span>'
+        : '<span class="pill hold">' + esc(EXC_LABEL[p && p.exception_reason] || 'Not found on site') + '</span>');
+
+  return '<tr' + (r.settled ? ' style="opacity:.55"' : '') + '>'
+    + '<td><div class="al-store">' + esc(a.store || (p && p.store) || '\u2014') + '</div>'
+      + (where ? '<div class="al-where">' + where + '</div>' : '') + '</td>'
+    + '<td>' + equip + '</td>'
+    + '<td>' + serial + '</td>'
+    + '<td style="white-space:nowrap">' + (kind === 'found'
+        ? esc(fmtDate(String(a.added_at || '').slice(0,10)))
+        : esc(fmtDate(p && p.pm_date))) + '</td>'
+    + '<td><div class="al-pills">' + pills + '</div></td>'
+    + '<td style="white-space:nowrap">' + (p
+        ? '<a href="#" onclick="openCall(' + p.id + ');return false">View report &rarr;</a>'
+        : '<span class="ct">\u2014</span>') + '</td>'
     + '</tr>';
+}
+
+// One section: a plain header that says what the list is and what we are asking
+// for, then the table. Deliberately NOT the invoice accordion — its sub-line is
+// monospace, meant for invoice numbers, and prose set in it reads as machine
+// output rather than a sentence addressed to a person.
+function assetSection(title, ask, note, rows, kind, cols){
+  return '<div class="al-h"><div class="ttl">' + title + '</div>'
+    + '<div class="sub">' + rows.length + ' unit' + (rows.length === 1 ? '' : 's') + ' \u00b7 ' + ask
+    + (note ? '<br>' + note : '') + '</div></div>'
+    + '<div class="al-wrap"><table><thead><tr>'
+    + cols.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '<th></th></tr></thead><tbody>'
+    + rows.map(function(r){ return assetRowCard(r, kind); }).join('')
+    + '</tbody></table></div>';
 }
 
 function renderAssetList(){
   var found = foundAssets(), missing = missingAssets();
   var fOpen = found.filter(function(r){ return !r.settled; });
   var mOpen = missing.filter(function(r){ return !r.settled; });
-  var settled = found.length - fOpen.length + (missing.length - mOpen.length);
+  var settledRows = found.filter(function(r){ return r.settled; })
+    .concat(missing.filter(function(r){ return r.settled; }));
 
-  var h = '';
   if(!found.length && !missing.length){
-    return '<div class="empty">Nothing to reconcile — every cooler we have serviced is on your asset list, '
+    return '<div class="empty">Nothing to reconcile \u2014 every cooler we have serviced is on your asset list, '
          + 'and we have found every unit the list says is out there.</div>';
   }
 
-  h += '<div class="holdbar" style="border-color:#8FC4EA;background:#EAF3FB;color:#12405F">'
-     + '<h4 style="color:#155E9B">'+icon('alert')+' ASSET LIST — '+(fOpen.length+mOpen.length)+' TO RECONCILE</h4>'
-     + '<p>These are differences between the asset list you send us and what our technicians actually found in '
-     + 'the field. They are not problems with the service — every unit below was visited and documented. '
-     + 'Each line clears from this page once your list is updated.</p></div>';
+  var h = '<div class="holdbar" style="border-color:#8FC4EA;background:#EAF3FB;color:#12405F">'
+     + '<h4 style="color:#155E9B">' + icon('alert') + ' ASSET LIST \u2014 ' + (fOpen.length + mOpen.length) + ' TO RECONCILE</h4>'
+     + '<p>Differences between the asset list you send us and what our technicians found in the field. '
+     + 'They are not problems with the service \u2014 every unit below was visited and documented, and every '
+     + 'row links to that report. Each line clears from this page once your list is updated.</p></div>';
 
   h += '<div class="stats">'
-     + '<div class="stat"><div class="v">'+fOpen.length+'</div><div class="k">Found, not on your list</div></div>'
-     + '<div class="stat"><div class="v">'+mOpen.length+'</div><div class="k">On your list, not on site</div></div>'
-     + '<div class="stat"><div class="v">'+settled+'</div><div class="k">Already reconciled</div></div>'
+     + '<div class="stat"><div class="v">' + fOpen.length + '</div><div class="k">Found, not on your list</div></div>'
+     + '<div class="stat"><div class="v">' + mOpen.length + '</div><div class="k">On your list, not on site</div></div>'
+     + '<div class="stat"><div class="v">' + settledRows.length + '</div><div class="k">Already reconciled</div></div>'
      + '</div>';
 
   if(fOpen.length){
-    h += '<div class="inv"><div class="inv-h open"><div class="inv-t">'
-      + '<div class="ttl">Coolers we found that are not on your list</div>'
-      + '<div class="sub">'+fOpen.length+' unit'+(fOpen.length===1?'':'s')+' · found by the technician on site · '
-      + '<strong>please add them to your asset list</strong>'
-      + (fOpen.filter(function(x){ return x.noted; }).length
-          ? ' · '+fOpen.filter(function(x){ return x.noted; }).length+' of them have no serial plate recorded yet '
-            + 'and have not been serviced — we need a visit to read the plate'
-          : '')+'</div></div></div>'
-      + '<div style="overflow-x:auto"><table><thead><tr><th>Store</th><th>Equipment</th><th>Serial</th>'
-      + '<th>Found</th><th>Status</th><th></th></tr></thead><tbody>'
-      + fOpen.map(function(r){ return assetRowCard(r,'found'); }).join('')
-      + '</tbody></table></div></div>';
+    var noPlate = fOpen.filter(function(x){ return x.noted; }).length;
+    h += assetSection('Coolers we found that are not on your list',
+      '<strong>please add them to your asset list</strong>',
+      noPlate ? noPlate + ' of these are marked <strong>Not serviced yet</strong>: the technician spotted them while '
+              + 'servicing the unit beside them and could not record a serial plate, so they need a visit before '
+              + 'they can be identified.' : '',
+      fOpen, 'found', ['Store', 'Equipment', 'Serial', 'Found', 'Status']);
   }
 
   if(mOpen.length){
-    h += '<div class="inv"><div class="inv-h open"><div class="inv-t">'
-      + '<div class="ttl">On your list, but not on site</div>'
-      + '<div class="sub">'+mOpen.length+' unit'+(mOpen.length===1?'':'s')+' · the technician made the trip and '
-      + 'documented what they found · <strong>please remove or relocate them</strong></div></div></div>'
-      + '<div style="overflow-x:auto"><table><thead><tr><th>Store</th><th>Equipment</th><th>Serial</th>'
-      + '<th>Visited</th><th>What we found</th><th></th></tr></thead><tbody>'
-      + mOpen.map(function(r){ return assetRowCard(r,'missing'); }).join('')
-      + '</tbody></table></div></div>';
+    h += assetSection('On your list, but not on site',
+      '<strong>please remove or relocate them</strong>',
+      'The technician made the trip and documented what they found.',
+      mOpen, 'missing', ['Store', 'Equipment', 'Serial', 'Visited', 'What we found']);
   }
 
   if(!fOpen.length && !mOpen.length){
-    h += '<div class="empty">Nothing outstanding — every difference we raised has been reconciled.</div>';
+    h += '<div class="empty">Nothing outstanding \u2014 every difference we raised has been reconciled.</div>';
   }
 
   // Settled lines are kept, not dropped: "you already told us about this one"
   // is a question that gets asked, and it needs an answer.
-  if(settled){
-    h += '<button class="btn o" style="margin-top:14px" onclick="toggleSettledAssets()">'
-      + (showSettledAssets?'Hide':'Show')+' '+settled+' already reconciled</button>';
+  if(settledRows.length){
+    h += '<button class="btn o" style="margin-top:4px" onclick="toggleSettledAssets()">'
+      + (showSettledAssets ? 'Hide' : 'Show') + ' ' + settledRows.length + ' already reconciled</button>';
     if(showSettledAssets){
-      h += '<div style="overflow-x:auto;margin-top:10px"><table><thead><tr><th>Store</th><th>Equipment</th>'
-        + '<th>Serial</th><th>Date</th><th>Status</th><th></th></tr></thead><tbody>'
-        + found.filter(function(r){ return r.settled; }).map(function(r){ return assetRowCard(r,'found'); }).join('')
-        + missing.filter(function(r){ return r.settled; }).map(function(r){ return assetRowCard(r,'missing'); }).join('')
-        + '</tbody></table></div>';
+      h += '<div style="margin-top:12px">'
+        + assetSection('Already reconciled', 'no action needed', '', settledRows, 'found',
+            ['Store', 'Equipment', 'Serial', 'Date', 'Status'])
+        + '</div>';
     }
   }
   return h;
