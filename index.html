@@ -123,6 +123,10 @@ body.dark .unit.rv{background:#152836}
 .brand-row .brand-img{max-height:40px}
 .brand-row .fp{font-size:26px;font-weight:800;color:var(--ac);letter-spacing:-1px}
 /* Dark mode */
+/* Exception report \u2014 red paper on screen, matching the PDF. STORE CLOSED and
+   MISSING ASSET are the two ways a stop ends with no service done. */
+body.exception{--bg:#FBE9E7;--sf:#FFFFFF;--sf2:#F7D9D5;--bd:#EFBDB6;--bd2:#E08A80;--ac:#B3261E;--ac2:#8C1D18;--or:#B3261E;--dim:#96625C}
+body.exception.dark{--bg:#2A1210;--sf:#3A1B18;--sf2:#4A2320;--bd:#5C2E29;--bd2:#7A403A;--ac:#F2857B;--ac2:#E0685C;--or:#F2857B}
 /* Secondary visit audit \u2014 light blue paper on screen, matching the PDF. */
 body.audit{--bg:#E2EFF9;--sf:#FFFFFF;--sf2:#D3E6F6;--bd:#B8D5EC;--bd2:#8FC4EA;--ac:#155E9B;--ac2:#0E4676;--or:#155E9B;--dim:#4E7FA6}
 body.audit.dark{--bg:#0E1C28;--sf:#152836;--sf2:#1B3346;--bd:#254257;--bd2:#33607F;--ac:#67B2E8;--ac2:#4A93C9;--or:#67B2E8}
@@ -755,6 +759,7 @@ function render() {
   // realised was any different from an ordinary day's.
   document.body.classList.toggle('audit',
     screen === 'checklist' && !!(form && form.reshoot_of_pm_id));
+  document.body.classList.toggle('exception', screen === 'exception');
   el.innerHTML = html;
   bindEvents();
   // Coming back from a PM, put the store you were at back under your thumb
@@ -1091,7 +1096,7 @@ function renderChecklist() {
     h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' REPORT ISSUE</button>';
     if (!reopenPmId) {
       h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">'+icon('clipboard')+' PM PREV COMP (done elsewhere)</button>';
-      h += '<button class="btn btn-o" style="margin-top:8px;border-color:var(--or);color:var(--or)" onclick="startException()">'+icon('alert')+' Can\'t complete — store closed / unit missing</button>';
+      h += '<button class="btn btn-o" style="margin-top:8px;border-color:var(--rd);color:var(--rd)" onclick="startUnitMissing(selectedAssetIdx, currentStopIdx)">'+icon('alert')+' MISSING ASSET — this unit is not on site</button>';
     }
   }
 
@@ -2188,6 +2193,13 @@ function unitCard(a, stopIdx) {
   h += '</div>';
   h += '<span class="go">' + (done ? icon('pencil') : '\u203A') + '</span>';
   h += '</div>';
+  // One machine gone from an open store is a fact about the UNIT, so it hangs
+  // off the unit. stopPropagation keeps it from opening the PM behind it.
+  if (!done) {
+    h += '<button class="btn btn-o" style="margin:4px 0 0;padding:8px;font-size:13px;border-color:var(--rd);color:var(--rd)" '
+      + 'onclick="event.stopPropagation();startUnitMissing(' + idx + ', ' + stopIdx + ')">'
+      + icon('alert') + ' MISSING ASSET \u2014 not on site</button>';
+  }
   return h;
 }
 
@@ -2258,9 +2270,20 @@ function renderRoute() {
     var numCls = s.allDone ? 'done' : (isCurrent ? 'current' : 'pending');
 
     h += '<div class="stop-card ' + cls + '" id="stop' + i + '">';
-    // No store-level re-visit banner: each unit carries its own audit flag on
-    // its sub-card now, in the same blue as the form and the report. Saying it
-    // twice in two different colours reads as two different things.
+    // Blue banner across the top of the store card when any unit here is due an
+    // audit, in the same blue as the form and the report. The per-unit flags say
+    // which machine; this says "this stop is not a normal stop" before you have
+    // read a single sub-card.
+    if (s.hasRevisit) {
+      var rvUnits = s.assets.filter(function(a){ return isRevisit(a.serial); });
+      h += '<div style="margin:-2px 0 10px;padding:9px 11px;border:1px solid #8FC4EA;border-left-width:4px;'
+        + 'border-left-color:#155E9B;border-radius:8px;background:#E2EFF9">'
+        + '<div style="font-weight:700;font-size:13px;color:#155E9B;letter-spacing:.02em">SECONDARY VISIT AUDIT</div>'
+        + '<div style="font-size:12px;color:#41708F;margin-top:2px">'
+        + rvUnits.length + ' unit' + (rvUnits.length === 1 ? '' : 's') + ' at this store must be serviced and photographed again. '
+        + 'Not billed to Freshpet; paid to you as normal.</div>'
+        + '</div>';
+    }
     h += '<div style="display:flex;align-items:flex-start;gap:4px">';
     h += '<span class="stop-num ' + numCls + '">' + (s.allDone ? '✓' : (i+1)) + '</span>';
     h += '<div style="flex:1">';
@@ -2287,6 +2310,14 @@ function renderRoute() {
     // unit being added is by definition not on the list yet.
     h += '<button class="btn btn-o" style="margin-top:10px;padding:11px;font-size:15px" onclick="goAddAssetForStop(' + i + ')">'
       + icon('plus') + ' Add an asset found at ' + esc(s.store) + '</button>';
+
+    // A closed store is a fact about the STORE, so the button lives on the store
+    // card. It answers every unit here at once — a tech should not have to open
+    // three coolers' worth of forms to say the door was locked.
+    if (!s.allDone) {
+      h += '<button class="btn btn-o" style="margin-top:8px;padding:11px;font-size:15px;border-color:var(--rd);color:var(--rd)" '
+        + 'onclick="startStoreClosed(' + i + ')">' + icon('alert') + ' STORE CLOSED \u2014 no asset serviced</button>';
+    }
 
     h += '</div></div></div>';
   });
@@ -3034,34 +3065,109 @@ async function markPrevComp() {
 // reason + storefront photo, no readings, no signatures, never billable as a
 // PM, always flagged for review.
 var exceptionForm = { reason: '', note: '' };
+// Which kind of exception is being filed, and — for a store-level one — which
+// stop it covers. A closed store is not a fact about one cooler, so it is filed
+// against the store and answers every unit on it.
+var exceptionKind = null;      // 'store_closed' | 'unit_missing'
+var exceptionStopIdx = null;   // set only for store_closed
 
-function startException() {
-  exceptionForm = { reason: '', note: '' };
+var EXCEPTION_KINDS = {
+  store_closed: {
+    title: 'STORE CLOSED \u2014 NO ASSET',
+    scope: 'store',
+    lead: 'The store is closed and no unit could be serviced. This files a report against every unit on the route at this store, so none of them is left looking unvisited.',
+    photoHint: 'Photograph the storefront \u2014 closed sign, dark windows, whatever you can see. This is the proof you were here.',
+    note: 'What you saw. Papered over? Permanently closed? Anyone to ask?'
+  },
+  unit_missing: {
+    title: 'MISSING ASSET',
+    scope: 'unit',
+    lead: 'The store is open but this unit is not on site. This files a report against this one unit; the rest of the store carries on as normal.',
+    photoHint: 'Photograph the space where the unit should be, or the aisle it was in. This is the proof you looked.',
+    note: 'What you saw and who you asked. Was it moved, pulled, or never there?'
+  }
+};
+
+// Store-level: a closed store, filed from the store card on the route page.
+function startStoreClosed(stopIdx) {
+  var stops = getRouteStops();
+  var stop = stops[stopIdx];
+  if (!stop) return;
+  exceptionStopIdx = stopIdx;
+  currentStopIdx = stopIdx;
+  selectedAsset = stop.assets[0] || null;   // the report names every unit; this is just the anchor
+  startException('store_closed');
+}
+
+// Unit-level: the store is open, this one machine is gone.
+function startUnitMissing(assetIdx, stopIdx) {
+  selectedAsset = ASSETS[assetIdx];
+  selectedAssetIdx = assetIdx;
+  if (stopIdx != null) { currentStopIdx = stopIdx; routeFromChecklist = true; }
+  exceptionStopIdx = null;
+  startException('unit_missing');
+}
+
+function startException(kind) {
+  exceptionKind = EXCEPTION_KINDS[kind] ? kind : 'unit_missing';
+  // Zero prefill. Nothing is carried in from a PM form and no answer is
+  // suggested — the whole point of this report is what the tech actually found.
+  exceptionForm = { reason: exceptionKind, note: '' };
   photos = [];
   screen = 'exception';
   render();
 }
 
+// Every unit this exception speaks for. A closed store answers all of them.
+function exceptionAssets() {
+  if (exceptionKind === 'store_closed' && exceptionStopIdx != null) {
+    var stop = getRouteStops()[exceptionStopIdx];
+    if (stop && stop.assets.length) return stop.assets;
+  }
+  return selectedAsset ? [selectedAsset] : [];
+}
+
 function renderException() {
-  var a = selectedAsset;
-  var backFn = routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()';
+  var k = EXCEPTION_KINDS[exceptionKind] || EXCEPTION_KINDS.unit_missing;
+  var units = exceptionAssets();
+  var a = selectedAsset || {};
+  var backFn = exceptionKind === 'store_closed'
+    ? 'backToRoute(' + (exceptionStopIdx == null ? 'currentStopIdx' : exceptionStopIdx) + ')'
+    : (routeFromChecklist ? 'goBackToRouteStop()' : 'goSelect()');
+
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
-    '<button class="btn back-btn" onclick="screen=\'checklist\';render()">←</button>' +
-    '<div style="flex:1"><h2 style="margin:0;font-size:22px">Site visit exception</h2>' +
-    '<div style="font-size:15px;color:var(--dim)">' + esc(a.store) + ' — ' + esc(a.city) + ' · S/N ' + esc(a.serial) + '</div></div>' +
+    '<button class="btn back-btn" onclick="' + backFn + '">←</button>' +
+    '<div style="flex:1"><h2 style="margin:0;font-size:22px">' + esc(k.title) + '</h2>' +
+    '<div style="font-size:15px;color:var(--dim)">' + esc(a.store || '') +
+      (a.city ? ' — ' + esc(a.city) : '') + '</div></div>' +
   '</div>';
-  h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--or)">This files an exception report instead of a PM: it documents that the stop could not be serviced and why. It is flagged for office review and is not billed as a PM.</div>';
+
+  h += '<div class="card" style="padding:12px 14px;border-left:4px solid var(--rd)">'
+    + '<div style="font-weight:700;color:var(--rd);letter-spacing:.02em">' + esc(k.title) + '</div>'
+    + '<div style="font-size:14px;margin-top:5px">' + esc(k.lead) + '</div>'
+    + '<div style="font-size:13px;color:var(--dim);margin-top:6px">Nothing is filled in for you on this form. It is not a PM, it is not billed to Freshpet, and it is flagged for the office.</div>'
+    + '</div>';
+
+  // Name every unit the report speaks for, so it is never a surprise later how
+  // many units one closed store accounted for.
+  if (units.length) {
+    h += '<div class="card"><h3 style="margin-top:0">'
+      + (units.length === 1 ? 'Unit' : units.length + ' units at this store') + '</h3>';
+    units.forEach(function(u) {
+      h += '<div style="padding:7px 0;border-top:1px solid var(--bd)">'
+        + '<div style="font-weight:700">' + esc([u.manufacturer, u.model].filter(Boolean).join(' ') || 'Unit') + '</div>'
+        + '<div style="font-family:ui-monospace,Menlo,Consolas,monospace;font-size:14px;color:var(--tx2)">S/N ' + esc(u.serial || '—') + '</div>'
+        + '</div>';
+    });
+    h += '</div>';
+  }
+
   h += '<div class="card">';
   h += lbl('What did you find? (required)');
-  h += '<select id="excReason">' +
-    '<option value=""' + (!exceptionForm.reason ? ' selected' : '') + '>— select —</option>' +
-    [['store_closed','Store permanently closed'],['unit_missing','Store open, Freshpet unit not on site'],['no_access','Could not access the unit (refused / blocked)'],['other','Other (explain below)']].map(function(o){
-      return '<option value="' + o[0] + '"' + (exceptionForm.reason === o[0] ? ' selected' : '') + '>' + o[1] + '</option>';
-    }).join('') + '</select>';
-  h += lbl('Notes'); h += '<textarea id="excNote" placeholder="What you saw, who you spoke to...">' + esc(exceptionForm.note || '') + '</textarea>';
-  h += '<h3>Photo of the site (required)</h3>';
-  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">Photograph the storefront or the space where the unit should be — this is the proof of the visit.</div>';
-  h += '<button class="btn btn-o" style="padding:10px" onclick="captureExceptionMeta();takePhoto(\'site\')">'+icon('camera')+' Take site photo</button>';
+  h += '<textarea id="excNote" placeholder="' + esc(k.note) + '">' + esc(exceptionForm.note || '') + '</textarea>';
+  h += '<h3>Photo (required)</h3>';
+  h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">' + esc(k.photoHint) + '</div>';
+  h += '<button class="btn btn-o" style="padding:12px" onclick="captureExceptionMeta();takePhoto(\'site\')">'+icon('camera')+' Take photo</button>';
   if (photos.length) {
     h += '<div class="photo-grid" style="margin-top:8px">';
     photos.forEach(function(p, i) {
@@ -3070,27 +3176,27 @@ function renderException() {
     h += '</div>';
   }
   h += '</div>';
+
   if (submitting) {
-    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Filing exception report...</div>';
+    h += '<div class="card" style="text-align:center"><span class="spinner"></span> Filing report...</div>';
   } else {
-    h += '<button class="btn btn-s" onclick="submitException()" style="font-size:17px;padding:16px">'+icon('check')+' File exception report</button>';
+    h += '<button class="btn btn-d" onclick="submitException()" style="font-size:17px;padding:16px">'+icon('alert')+' File ' + esc(k.title) + '</button>';
     h += '<button class="btn btn-o" style="margin-top:8px" onclick="' + backFn + '">Cancel</button>';
   }
   return h;
 }
 
 function captureExceptionMeta() {
-  var r = document.getElementById('excReason');
   var n = document.getElementById('excNote');
-  if (r) exceptionForm.reason = r.value;
   if (n) exceptionForm.note = n.value;
+  exceptionForm.reason = exceptionKind;   // set by which button was pressed
 }
 
 async function submitException() {
   if (submitting) return;
   captureExceptionMeta();
-  if (!exceptionForm.reason) { showStatus('Select what you found at the site', 'err'); return; }
-  if (!photos.length) { showStatus('A site photo is required — it is the proof of the visit', 'err'); return; }
+  if (!(exceptionForm.note || '').trim()) { showStatus('Write what you found — this report is nothing without it', 'err'); return; }
+  if (!photos.length) { showStatus('A photo is required — it is the proof of the visit', 'err'); return; }
   submitting = true;
   render();
   try {
@@ -3110,49 +3216,71 @@ async function submitException() {
       else { photoPaths.push(photoPath); photoHashes.push(np.hash || (await sha256Hex(np.d).catch(function(){ return null; }))); }
     }
 
-    var pdfDoc = generateExceptionPDF(a, exceptionForm, photos, { signedAt: signedAt, gps: gps, techName: shortTechName() });
+    // A closed store answers EVERY unit on the route there, so the report names
+    // all of them and one row is written per unit. One visit, one document —
+    // the same PDF is attached to each row rather than generating near-identical
+    // copies — but each unit gets its own answer for the day instead of some of
+    // them silently staying open on the route.
+    var units = exceptionAssets();
+    if (!units.length) { throw new Error('No unit to file this against'); }
+    var pdfDoc = generateExceptionPDF(a, exceptionForm, photos,
+      { signedAt: signedAt, gps: gps, techName: shortTechName(), kind: exceptionKind, units: units });
     var pdfPath = baseName + '_' + timestamp + '.pdf';
     var { error: pdfErr } = await sb.storage.from('fp-pdfs').upload(pdfPath, pdfDoc.output('blob'), { contentType: 'application/pdf', upsert: false });
     if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
 
-    // If this stop was carrying an open re-visit, the exception answers it: we
-    // went back and recorded why the documentation could not be redone.
-    var exRevisit = openRevisitPm(a.serial);
-    var { data: exRow, error: dbErr } = await sb.from('completed_pms').insert({
-      asset_id: a.id,
-      tech_user_id: currentUser.id,
-      tech_name: shortTechName(),
-      service_company: 'Freeflow Beverage Solutions',
-      revisit_of: exRevisit ? exRevisit.id : null,
-      pm_date: new Date().toISOString().split('T')[0],
-      form_data: { exception: true, exceptionReason: exceptionForm.reason, comments: exceptionForm.note || '', gpsStatus: gps ? 'captured' : 'unavailable' },
-      pdf_path: pdfPath,
-      photo_paths: photoPaths,
-      photo_hashes: photoHashes,
-      visit_type: 'exception',
-      exception_reason: exceptionForm.reason,
-      store: a.store,
-      serial: a.serial,
-      signed_at: signedAt,
-      gps_lat: gps ? gps.lat : null,
-      gps_lng: gps ? gps.lng : null,
-      gps_accuracy: gps ? gps.accuracy : null,
-      needs_review: true,
-      added_asset: false
-    }).select('id').single();
-    if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+    var today = new Date().toISOString().split('T')[0];
+    for (var u = 0; u < units.length; u++) {
+      var un = units[u];
+      // A unit already serviced today keeps its PM — a closed store cannot
+      // retroactively un-service a unit somebody actually worked on.
+      if (isCompleted(un.serial) && !isRevisit(un.serial)) continue;
+      // If this unit was carrying an open re-visit, the exception answers it:
+      // we went back and recorded why the documentation could not be redone.
+      var exRevisit = openRevisitPm(un.serial);
+      var { data: exRow, error: dbErr } = await sb.from('completed_pms').insert({
+        asset_id: un.id,
+        tech_user_id: currentUser.id,
+        tech_name: shortTechName(),
+        service_company: 'Freeflow Beverage Solutions',
+        revisit_of: exRevisit ? exRevisit.id : null,
+        pm_date: today,
+        form_data: { exception: true, exceptionReason: exceptionForm.reason, exceptionKind: exceptionKind,
+                     exceptionScope: (EXCEPTION_KINDS[exceptionKind] || {}).scope || 'unit',
+                     exceptionUnits: units.map(function(x){ return x.serial; }),
+                     comments: exceptionForm.note || '', gpsStatus: gps ? 'captured' : 'unavailable' },
+        pdf_path: pdfPath,
+        photo_paths: photoPaths,
+        photo_hashes: u === 0 ? photoHashes : [],   // the dedup guard must not see one photo as reused across its own rows
+        visit_type: 'exception',
+        exception_reason: exceptionForm.reason,
+        store: un.store,
+        serial: un.serial,
+        signed_at: signedAt,
+        gps_lat: gps ? gps.lat : null,
+        gps_lng: gps ? gps.lng : null,
+        gps_accuracy: gps ? gps.accuracy : null,
+        needs_review: true,
+        added_asset: false
+      }).select('id').single();
+      if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
 
-    if (exRevisit && exRow && exRow.id) {
-      var exCloseErr = (await sb.rpc('fn_close_revisit', { p_original_id: exRevisit.id, p_reshoot_id: exRow.id })).error;
-      if (exCloseErr) console.warn('Re-visit close failed:', exCloseErr);
+      if (exRevisit && exRow && exRow.id) {
+        var exCloseErr = (await sb.rpc('fn_close_revisit', { p_original_id: exRevisit.id, p_reshoot_id: exRow.id })).error;
+        if (exCloseErr) console.warn('Re-visit close failed:', exCloseErr);
+      }
     }
 
     await loadCompletedPMs();
     clearProgress();
     submitting = false;
-    if (routeFromChecklist) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
+    var wasStore = exceptionKind === 'store_closed';
+    exceptionKind = null; exceptionStopIdx = null;
+    if (routeFromChecklist || wasStore) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
     else { screen = 'select'; }
-    showStatus('Exception report filed — flagged for office review', 'ok');
+    showStatus(wasStore
+      ? 'STORE CLOSED filed for ' + units.length + ' unit' + (units.length === 1 ? '' : 's') + ' — flagged for the office'
+      : 'MISSING ASSET filed — flagged for the office', 'ok');
     render();
   } catch (err) {
     submitting = false;
@@ -3164,19 +3292,43 @@ async function submitException() {
 function generateExceptionPDF(a, exc, ph, meta) {
   var jsPDF = window.jspdf.jsPDF;
   var doc = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-  var W = 612, LM = 40, RM = W - 40;
+  var W = 612, H = 792, LM = 40, RM = W - 40;
   var y = 40;
-  var REASONS = { store_closed: 'Store permanently closed', unit_missing: 'Store open — Freshpet unit not on site', no_access: 'Could not access the unit', other: 'Other' };
-  doc.setFont('helvetica', 'bold'); doc.setFontSize(14);
-  doc.text('Site Visit Exception Report', W/2, y, { align: 'center' }); y += 16;
-  doc.setFontSize(9); doc.setTextColor(200, 60, 10);
-  doc.text('NOT A COMPLETED PM — this visit could not be serviced. Filed for review.', W/2, y, { align: 'center' });
+  var REASONS = { store_closed: 'STORE CLOSED — NO ASSET', unit_missing: 'MISSING ASSET', no_access: 'Could not access the unit', other: 'Other' };
+  var TITLE = (meta && meta.kind === 'store_closed') ? 'STORE CLOSED — NO ASSET' : 'MISSING ASSET';
+  var units = (meta && meta.units && meta.units.length) ? meta.units : [a];
+
+  // Red paper, every page. A PM is white, a re-shoot audit is blue, and a stop
+  // that produced no service at all is red — the colour says which before a
+  // word is read.
+  function paintPage() { doc.setFillColor(251, 226, 223); doc.rect(0, 0, W, H, 'F'); doc.setFillColor(255,255,255); }
+  var _addPage = doc.addPage.bind(doc);
+  doc.addPage = function() { var r = _addPage.apply(null, arguments); paintPage(); return r; };
+  paintPage();
+
+  doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.setTextColor(179, 38, 30);
+  doc.text(TITLE, W/2, y, { align: 'center' }); y += 18;
+  doc.setFontSize(9);
+  doc.text('NOT A COMPLETED PM — no unit was serviced on this visit. Filed for review, not billed to Freshpet.', W/2, y, { align: 'center' });
   doc.setTextColor(0,0,0); y += 22;
   doc.setFontSize(9);
-  [['Store', a.store], ['Address', a.address + ', ' + a.city + ' ' + (a.zip||'')], ['Listed serial', a.serial], ['Visit date', new Date().toISOString().split('T')[0]], ['Technician', meta.techName || ''], ['Finding', REASONS[exc.reason] || exc.reason]].forEach(function(r) {
+  [['Store', a.store], ['Address', a.address + ', ' + a.city + ' ' + (a.zip||'')],
+   ['Visit date', new Date().toISOString().split('T')[0]], ['Technician', meta.techName || ''],
+   ['Finding', REASONS[exc.reason] || exc.reason]].forEach(function(r) {
     doc.setFont('helvetica','bold'); doc.text(r[0] + ':', LM, y);
     doc.setFont('helvetica','normal'); doc.text(String(r[1] || ''), LM + 90, y); y += 15;
   });
+
+  // Name every unit this report answers for, so a closed store never leaves it
+  // ambiguous which machines went unserviced.
+  y += 4; doc.setFont('helvetica','bold');
+  doc.text(units.length === 1 ? 'Unit not serviced:' : 'Units not serviced (' + units.length + '):', LM, y); y += 13;
+  doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
+  units.forEach(function(u) {
+    doc.text('\u2022  ' + [u.manufacturer, u.model].filter(Boolean).join(' ') + '   S/N ' + (u.serial || '—'), LM + 8, y);
+    y += 12;
+  });
+  doc.setFontSize(9);
   y += 4; doc.setFont('helvetica','bold'); doc.text('Notes:', LM, y); y += 12;
   doc.setFont('helvetica','normal');
   var nt = doc.splitTextToSize(exc.note || '(none)', RM-LM); doc.text(nt, LM, y); y += nt.length * 11 + 8;
@@ -3187,7 +3339,9 @@ function generateExceptionPDF(a, exc, ph, meta) {
   for (var i = 0; i < ph.length; i++) {
     var pp = normPhoto(ph[i]);
     doc.addPage(); doc.setFont('helvetica','bold'); doc.setFontSize(11);
-    doc.text('Site photo ' + (i+1) + ' of ' + ph.length + ' — ' + a.store, W/2, 30, { align: 'center' });
+    doc.setTextColor(179,38,30);
+    doc.text(TITLE + ' — photo ' + (i+1) + ' of ' + ph.length + ' — ' + a.store, W/2, 30, { align: 'center' });
+    doc.setTextColor(0,0,0);
     try { var ip = doc.getImageProperties(pp.d); var iw = ip.width, ih = ip.height; var sc = Math.min((RM-LM)/iw, 680/ih, 1); iw *= sc; ih *= sc; doc.addImage(pp.d, 'JPEG', LM + ((RM-LM)-iw)/2, 50, iw, ih); } catch(e) {}
   }
   return doc;
@@ -3679,6 +3833,7 @@ render = function() {
     if (statusMsg) { html += '<div class="status ' + statusType + '">' + esc(statusMsg) + '</div>'; }
     html += renderAdminAssetPicker();
     document.body.classList.remove('audit');
+    document.body.classList.remove('exception');
     el.innerHTML = html;
     bindEvents();
     return;
