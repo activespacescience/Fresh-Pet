@@ -127,3 +127,58 @@ The batch is one technician's. The visits occurred; the documentation shortcuts 
 - `visit-verification.csv` — all 196 reports: timestamps, photo status, contact, route context
 - `reverification-units.csv` — the 47-unit re-verification worklist
 - `freshpet-response-draft.md` — draft response language for Freshpet
+
+## Addendum — the paperwork defect, measured (2026-09-01)
+
+Asked directly: is the paperwork bad on the units we are sending someone back to,
+and does it need refilling? The answer is that the paperwork weakness is **not
+concentrated in the re-shoot list — it is uniform across the whole corpus**, and
+the two defects are independent of each other.
+
+Until PR #53 the app's `defaultForm()` pre-filled every reading and pre-ticked
+every work box: `sp1 = 41°F`, `voltage = 120`, `intTemp = 38°F`, and all sixteen
+checkboxes true. A report therefore carried a *measurement* only where the tech
+actively changed something.
+
+Across the 522 app-filed PM reports (the 143 legacy Bill Pace imports carry no
+readings at all and are excluded):
+
+| | reports |
+|---|---|
+| Byte-identical to the pre-filled default — no reading was ever entered | **451** (86%) |
+| Show any edit at all | 61 |
+| …of which the edit was the temperature alone | 58 |
+| Voltage changed from `120` | **0 of 522** |
+| A work box left unticked | **1 of 522** |
+| A free-text comment added | 48 |
+
+`voltage` reads exactly `120` on all 511 reports that carry one. Interior temp
+reads `38°F` on 453 of 511. Neither is plausible as a measurement across 500+
+outlets and cabinets.
+
+Broken out by audit finding, the rate is flat:
+
+| Audit finding | reports | pure default | |
+|---|---|---|---|
+| needs_plate_photo (the re-shoot list) | 166 | 137 | 82.5% |
+| asset_list_confirm | 29 | 25 | 86.2% |
+| no finding | 325 | 287 | 88.3% |
+
+**So: yes, the paperwork should be refilled on the re-shoots — and it is, by
+construction.** A re-shoot is a brand-new report filed on the current app, whose
+`defaultForm()` now carries identity fields only. Readings start empty and the
+submit gates (plate photo, interior temp, set point, working-on-arrival, store
+signature or an explicit "no contact available") refuse a report without them.
+Nothing extra had to be built for that.
+
+Two things follow that are worth stating plainly:
+
+1. **Re-shooting the 160 does not fix the other ~450.** The photo problem was
+   concentrated; the paperwork problem is not. If Freshpet reads down the
+   temperature column of any batch they will find `38°F` and `120V` repeating.
+   That exposure is not addressed by the re-shoot programme and should not be
+   presented as if it were.
+2. **Voltage is now gated too** (2026-09-01), with an honest escape: a tech
+   without a meter ticks "No meter on hand — voltage not measured" and the
+   report prints *not measured (no meter)* rather than a number nobody read. A
+   blank field and a fabricated reading are both worse than a stated gap.

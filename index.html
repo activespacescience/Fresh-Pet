@@ -349,16 +349,28 @@ async function loadMyRoute() {
 
 // ===== Helpers =====
 function isCompleted(serial) {
-  // A PM with an OPEN re-visit does not count as done — its documentation was
-  // disconnected, so the stop has to be serviced and photographed again.
-  return completedPMs.some(function(pm) {
-    return pm.serial === serial && !(pm.revisit_requested_at && !pm.revisit_done_at);
-  });
+  // A unit is done only when it has a report AND no report on it is carrying an
+  // open re-visit. Testing "some report has no open re-visit" is not the same
+  // thing and gets it wrong for a unit with more than one report on file — 16 of
+  // the 160 units in the plate-photo re-shoot list have two — where an unflagged
+  // older report would keep the stop closed and the tech would never be shown it.
+  var mine = completedPMs.filter(function(pm) { return pm.serial === serial; });
+  if (!mine.length) return false;
+  return !mine.some(function(pm) { return pm.revisit_requested_at && !pm.revisit_done_at; });
 }
 function isRevisit(serial) {
   return completedPMs.some(function(pm) {
     return pm.serial === serial && pm.revisit_requested_at && !pm.revisit_done_at;
-  }) && !isCompleted(serial);
+  });
+}
+// The open re-visit this unit is carrying, if any. A PM filed against it is a
+// RE-SHOOT: paid to the tech like any other stop, never billed to Freshpet.
+function openRevisitPm(serial) {
+  return completedPMs.filter(function(pm) {
+    return pm.serial === serial && pm.revisit_requested_at && !pm.revisit_done_at;
+  }).sort(function(a, b) {
+    return String(b.revisit_requested_at).localeCompare(String(a.revisit_requested_at));
+  })[0] || null;
 }
 var REVISIT_LABEL = {
   no_plate_photo:  'no serial-plate photo on file',
@@ -879,6 +891,15 @@ function renderChecklist() {
   if (!selectedAsset) { screen = 'home'; return renderHome(); }
   var a = selectedAsset;
   var reopenBanner = reopenPmId ? '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('pencil')+' Editing a previously submitted PM — submitting will update it and timestamp the modification</div>' : '';
+  var reshootPm = reopenPmId ? null : openRevisitPm(a.serial);
+  if (reshootPm) {
+    reopenBanner += '<div class="card" style="padding:10px 14px;border-left:4px solid #7C3ABE">'
+      + '<div style="font-weight:700;color:#7C3ABE;letter-spacing:.02em">RE-SHOOT</div>'
+      + '<div style="font-size:14px;margin-top:4px">The earlier report for this unit was pulled — ' + esc(revisitReason(a.serial)) + '. '
+      + 'Service the unit and document it fresh: a clear photograph of the serial plate on <strong>this</strong> machine, taken here, plus the usual pictures. Nothing from the old report carries over.</div>'
+      + '<div style="font-size:13px;color:var(--dim);margin-top:6px">You are paid for this stop at your normal rate. It is not billed to Freshpet.</div>'
+      + '</div>';
+  }
   if (addedAssetFlag) {
     reopenBanner += '<div class="card" style="padding:10px 14px;border-left:4px solid var(--or)">'+icon('plus')+' New field-added asset — this PM will be flagged NEEDS REVIEW · ADDED ASSET</div>';
   }
@@ -900,6 +921,7 @@ function renderChecklist() {
   h += '<h3>Settings on Arrival</h3>';
   h += fld('Set Point 1', 'sp1', 'text', 'SP1');
   h += fld('Voltage', 'voltage', 'text', 'Voltage reading');
+  h += chk('noMeter', 'No meter on hand — voltage not measured');
   h += lbl('Interior Temp');
   h += '<select name="intTemp">';
   h += '<option value=""' + (!form.intTemp ? ' selected' : '') + '>— measure &amp; select —</option>';
@@ -983,7 +1005,7 @@ function renderChecklist() {
   if (submitting) {
     h += '<div class="card" style="text-align:center"><span class="spinner"></span> Uploading PM...</div>';
   } else {
-    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">'+icon('check')+' ' + (reopenPmId ? 'Update PM' : 'Submit PM') + '</button>';
+    h += '<button class="btn btn-s" onclick="submitForm()" style="font-size:17px;padding:16px">'+icon('check')+' ' + (reopenPmId ? 'Update PM' : (reshootPm ? 'Submit Re-Shoot' : 'Submit PM')) + '</button>';
     h += '<button class="btn btn-d" style="margin-top:8px" onclick="openServiceTicket()">'+icon('alert')+' Open Service Ticket</button>';
     if (!reopenPmId) {
       h += '<button class="btn btn-o" style="margin-top:8px" onclick="markPrevComp()">'+icon('clipboard')+' PM PREV COMP (done elsewhere)</button>';
@@ -2647,6 +2669,11 @@ async function submitForm() {
   if (platePhotoCount() < 1) { showStatus('Serial plate photo required — use the “Serial plate” camera button on THIS unit’s plate', 'err'); return; }
   if (!form.intTemp) { showStatus('Measure and select the interior temperature', 'err'); return; }
   if (!form.sp1) { showStatus('Enter Set Point 1 as read on the unit', 'err'); return; }
+  // Voltage read as 120 on all 511 reports that carried one, because it was a
+  // pre-filled default nobody ever changed. Ask for it, and take "no meter" as an
+  // honest answer — a blank field and a fake reading are both worse.
+  if (form.noMeter) { form.voltage = ''; }
+  else if (!(form.voltage || '').trim()) { showStatus('Enter the voltage you measured, or check \u201cNo meter on hand\u201d', 'err'); return; }
   if (!form.workingArrival && !form.notWorkingArrival) { showStatus('Mark whether the unit was working on arrival', 'err'); return; }
   if (form.noContact) {
     sigs.store = null; // never both — the report states no contact was available
@@ -2719,6 +2746,12 @@ async function submitForm() {
     if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
 
     var prevPm = reopenPmId ? completedPMs.find(function(p) { return p.id === reopenPmId; }) : null;
+    // A stop carrying an open re-visit files a RE-SHOOT: a new, complete report
+    // that replaces documentation we could not stand behind. It is paid to the
+    // tech at the normal rate and is NEVER charged to Freshpet — they already
+    // paid for this stop once, and the re-do is ours, not theirs. Enforced in
+    // admin.html (billableList), freshpet-invoice.mjs, and a DB trigger.
+    var openRevisit = reopenPmId ? null : openRevisitPm(a.serial);
     var record = {
       asset_id: a.id,
       tech_user_id: currentUser.id,
@@ -2729,7 +2762,8 @@ async function submitForm() {
       pdf_path: pdfPath,
       photo_paths: photoPaths,
       photo_hashes: photoHashes,
-      visit_type: 'pm',
+      visit_type: openRevisit ? 'reshoot' : 'pm',
+      revisit_of: openRevisit ? openRevisit.id : null,
       store: a.store,
       serial: a.serial,
       signed_at: signedAt,
@@ -2745,14 +2779,31 @@ async function submitForm() {
       record.modified_at = signedAt;
       record.modified_by = currentUser.email;
     }
-    var dbErr;
+    var dbErr, savedId = null;
     if (reopenPmId) {
       dbErr = (await sb.from('completed_pms').update(record).eq('id', reopenPmId)).error;
+      savedId = reopenPmId;
     } else {
-      dbErr = (await sb.from('completed_pms').insert(record)).error;
+      var ins = await sb.from('completed_pms').insert(record).select('id').single();
+      dbErr = ins.error;
+      savedId = ins.data && ins.data.id;
     }
 
     if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+    // Close the re-visit only after its replacement is safely saved — if the
+    // insert had failed the stop must stay open on the route, not silently
+    // disappear with nothing filed in its place.
+    if (openRevisit && savedId) {
+      // Through the RPC, not a direct update: the original may have been filed
+      // by a different tech, and RLS only lets a tech update their own rows.
+      var closeErr = (await sb.rpc('fn_close_revisit', {
+        p_original_id: openRevisit.id, p_reshoot_id: savedId
+      })).error;
+      // A failed close leaves the stop on the route — annoying, not wrong. The
+      // re-shoot report itself is filed either way, so nothing is lost.
+      if (closeErr) console.warn('Re-visit close failed:', closeErr);
+    }
 
     var wasTicket = ticketFlag;
     var wasReopen = !!reopenPmId;
@@ -2929,11 +2980,15 @@ async function submitException() {
     var { error: pdfErr } = await sb.storage.from('fp-pdfs').upload(pdfPath, pdfDoc.output('blob'), { contentType: 'application/pdf', upsert: false });
     if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
 
-    var { error: dbErr } = await sb.from('completed_pms').insert({
+    // If this stop was carrying an open re-visit, the exception answers it: we
+    // went back and recorded why the documentation could not be redone.
+    var exRevisit = openRevisitPm(a.serial);
+    var { data: exRow, error: dbErr } = await sb.from('completed_pms').insert({
       asset_id: a.id,
       tech_user_id: currentUser.id,
       tech_name: shortTechName(),
       service_company: 'Freeflow Beverage Solutions',
+      revisit_of: exRevisit ? exRevisit.id : null,
       pm_date: new Date().toISOString().split('T')[0],
       form_data: { exception: true, exceptionReason: exceptionForm.reason, comments: exceptionForm.note || '', gpsStatus: gps ? 'captured' : 'unavailable' },
       pdf_path: pdfPath,
@@ -2949,8 +3004,13 @@ async function submitException() {
       gps_accuracy: gps ? gps.accuracy : null,
       needs_review: true,
       added_asset: false
-    });
+    }).select('id').single();
     if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+    if (exRevisit && exRow && exRow.id) {
+      var exCloseErr = (await sb.rpc('fn_close_revisit', { p_original_id: exRevisit.id, p_reshoot_id: exRow.id })).error;
+      if (exCloseErr) console.warn('Re-visit close failed:', exCloseErr);
+    }
 
     await loadCompletedPMs();
     clearProgress();
@@ -3008,6 +3068,7 @@ async function reopenPM(pmId, fromRoute) {
   if (!pm) return;
   if (pm.prev_comp) { showStatus('PREV COMP entries have no checklist to edit', 'err'); return; }
   if (pm.visit_type === 'exception') { showStatus('Exception reports document a failed visit — file a new PM instead once the unit is serviceable', 'err'); return; }
+  if (pm.revisit_requested_at && !pm.revisit_done_at) { showStatus('This stop is flagged for a re-visit — service it and file a fresh report. Editing the old one is exactly what we are undoing.', 'err'); return; }
   if (pm.tech_user_id !== currentUser.id && userRole !== 'admin') { showStatus('Only the tech who submitted this PM (or an admin) can reopen it', 'err'); return; }
   var idx = ASSETS.findIndex(function(x) { return x.id === pm.asset_id; });
   if (idx === -1) { showStatus('Asset is no longer active', 'err'); return; }
@@ -3088,7 +3149,7 @@ function generatePDF(a, f, ph, sg, meta, cb) {
 
   doc.setFont('helvetica','bold');doc.setFontSize(8);
   doc.text('Tech: '+(f.techName||''),LM,y);doc.text('Company: '+(f.serviceCompany||''),COL2,y);y+=12;
-  doc.text('SP1: '+(f.sp1||'___'),LM,y);doc.text('Voltage: '+(f.voltage||'___'),180,y);doc.text('Temp: '+(f.intTemp||'___'),340,y);y+=14;
+  doc.text('SP1: '+(f.sp1||'___'),LM,y);doc.text('Voltage: '+(f.noMeter?'not measured (no meter)':(f.voltage||'___')),180,y);doc.text('Temp: '+(f.intTemp||'___'),340,y);y+=14;
 
   doc.setFont('helvetica','bold');doc.setFontSize(9);doc.text('A. Unit Location',LM,y);y+=12;
   doc.setFont('helvetica','normal');doc.setFontSize(8);
@@ -3371,6 +3432,11 @@ function bindEvents() {
           if (el.name === 'noContact') {
             // A "no contact" report must not also carry a store signature.
             if (el.checked) { sigs.store = null; }
+            saveProgress(); render(); return;
+          }
+          if (el.name === 'noMeter') {
+            // Ticking it clears any typed voltage so the two can't disagree.
+            if (el.checked) { form.voltage = ''; }
             saveProgress(); render(); return;
           }
         } else {

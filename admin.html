@@ -333,7 +333,14 @@ function selectRouteTech(email){
   render();
 }
 // A serviced stop is COMPLETED and locked — it can't be moved or removed.
-function stopCompleted(id){ return completedPMs.some(function(p){ return !p.prev_comp && p.asset_id===id; }); }
+// A stop is locked only while it is genuinely finished. A unit carrying an open
+// re-visit is back in play — the tech has to service it again — so the stop must
+// stay movable and removable. Matches isCompleted() in the field app.
+function stopCompleted(id){
+  var mine = completedPMs.filter(function(p){ return !p.prev_comp && p.asset_id===id; });
+  if(!mine.length) return false;
+  return !mine.some(function(p){ return p.revisit_requested_at && !p.revisit_done_at; });
+}
 function moveStop(i, dir){ var j=i+dir; if(j<0||j>=routeStops.length) return; if(stopCompleted(routeStops[i].asset_id)||stopCompleted(routeStops[j].asset_id)){ toast('Completed stops are locked','info'); return; } var t=routeStops[i]; routeStops[i]=routeStops[j]; routeStops[j]=t; render(); }
 function removeStop(i){ if(stopCompleted(routeStops[i].asset_id)){ toast('Completed stops are locked — can\'t remove','info'); return; } routeStops.splice(i,1); render(); }
 function addStop(id){ if(routeStops.some(function(s){return s.asset_id===id;})) return; if(assetLockedElsewhere(id)){ toast('That store is on another tech\'s route','err'); return; } var as=assetById(id); if(as){ routeStops.push({asset_id:id, asset:as}); render(); } }
@@ -675,7 +682,9 @@ async function createPayoutBill(techUserId){
   var rate = t.pm_rate!=null ? Number(t.pm_rate) : null;
   if(rate==null || rate<=0) return toast('Set a per-PM rate for '+(t.name||t.email)+' first (below)','err');
   if(!unpaid.length) return toast('No unpaid PMs for this tech','err');
-  if(!confirm('Create a QuickBooks BILL to '+(t.name||t.email)+' for '+unpaid.length+' PM'+(unpaid.length===1?'':'s')+' @ '+money(rate)+' = '+money(unpaid.length*rate)+'?\n\nThis posts a real vendor bill in QBO and marks these PMs paid out.')) return;
+  var reshoots = unpaid.filter(function(p){ return p.visit_type==='reshoot'; }).length;
+  if(!confirm('Create a QuickBooks BILL to '+(t.name||t.email)+' for '+unpaid.length+' PM'+(unpaid.length===1?'':'s')+' @ '+money(rate)+' = '+money(unpaid.length*rate)+'?\n\nThis posts a real vendor bill in QBO and marks these PMs paid out.'
+    + (reshoots?('\n\nIncludes '+reshoots+' re-shoot visit'+(reshoots===1?'':'s')+' — paid in full to the tech and NOT billed to Freshpet.'):''))) return;
   payBusy=true; payBillResult=null; render();
   try{
     var token = await billToken();
@@ -698,7 +707,7 @@ function renderTechPay(){
     if(p.prev_comp) return;
     (byTech[p.tech_user_id]=byTech[p.tech_user_id]||[]).push(p);
   });
-  var h = '<div class="card"><h3>Technician pay</h3><div class="hint">Each completed PM (per asset, <span class="mono">PREV COMP</span> excluded) earns the tech their per-PM rate. Create a QuickBooks <strong>bill</strong> (what we owe the tech) for their unpaid PMs — separate from what we invoice Freshpet. Set/edit rates in the Per-PM rates section below.</div>';
+  var h = '<div class="card"><h3>Technician pay</h3><div class="hint">Each completed PM (per asset, <span class="mono">PREV COMP</span> excluded) earns the tech their per-PM rate. Create a QuickBooks <strong>bill</strong> (what we owe the tech) for their unpaid PMs — separate from what we invoice Freshpet. Set/edit rates in the Per-PM rates section below. <strong>Re-shoot visits are paid here at the full rate</strong> even though they are never charged to Freshpet — the tech drove the stop and did the work; the bad paperwork was ours.</div>';
 
   if(payBillResult){
     var b=payBillResult.bill||{};
@@ -712,11 +721,13 @@ function renderTechPay(){
   if(!rows.length){ h += '<div class="empty" style="padding:20px">No technician pay to show yet.</div>'; h += '</div>'; return h; }
   h += '<div style="overflow-x:auto"><table><thead><tr><th>Technician</th><th class="num">Unpaid PMs</th><th class="num">Rate / PM</th><th class="num">Owed</th><th>Paid to date</th><th></th></tr></thead><tbody>';
   rows.forEach(function(t){
-    var unpaid = (byTech[t.user_id]||[]).length;
+    var mine = byTech[t.user_id]||[];
+    var unpaid = mine.length;
+    var reshoots = mine.filter(function(p){ return p.visit_type==='reshoot'; }).length;
     var rate = t.pm_rate!=null?Number(t.pm_rate):null;
     var owed = rate!=null ? unpaid*rate : null;
     h += '<tr><td>'+esc(t.name||t.email)+'<div class="muted" style="font-size:.72rem">'+esc(t.email)+'</div></td>'
-       + '<td class="num">'+unpaid+'</td>'
+       + '<td class="num">'+unpaid+(reshoots?' <span class="pill pu" title="Re-shoots — paid to the tech, not billed to Freshpet">'+reshoots+' re-shoot</span>':'')+'</td>'
        + '<td class="num">'+(rate!=null?money(rate):'<span class="muted">—</span>')+'</td>'
        + '<td class="num">'+(owed!=null?money(owed):'<span class="muted">set rate</span>')+'</td>'
        + '<td>'+(paidCount[t.user_id]?'<span class="pill gn">'+paidCount[t.user_id]+' paid</span>':'<span class="muted">—</span>')+'</td>'
@@ -759,7 +770,7 @@ function renderPayReport(){
 
   var rangeLbl = (!payFrom && !payTo) ? 'All time' : ((payFrom?fmtDate(payFrom):'…')+' – '+(payTo?fmtDate(payTo):'…'));
   var h = '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap"><div style="flex:1;min-width:200px"><h3>Pay report <span class="muted" style="font-weight:600">· '+esc(rangeLbl)+'</span></h3>'
-    + '<div class="hint">Per-contractor pay for any date range, from the full completed-PM history. Each completed PM earns '+money(DEFAULT_PM_RATE)+' (or the tech\'s set rate). Credited to whoever\'s route the stop is on. Pick a range to see past periods.</div></div>'
+    + '<div class="hint">Per-contractor pay for any date range, from the full completed-PM history. Each completed PM earns '+money(DEFAULT_PM_RATE)+' (or the tech\'s set rate). Credited to whoever\'s route the stop is on. Pick a range to see past periods. Re-shoot visits count here and are paid normally — they are excluded only from what we invoice Freshpet.</div></div>'
     + '<div class="seg" style="flex:none">'
     + '<button onclick="payPreset(\'this\')">This month</button><button onclick="payPreset(\'last\')">Last month</button><button onclick="payPreset(\'all\')">All time</button>'
     + '</div></div>';
@@ -841,6 +852,7 @@ function billableList(){
   return completedPMs.filter(function(p){
     if (p.prev_comp) return false;                 // done elsewhere — never billed
     if (p.visit_type === 'exception') return false; // failed visit (closed store / missing unit) — never a billable PM
+    if (p.visit_type === 'reshoot') return false;   // re-visit of a stop already billed once — remediation, we absorb it
     if (!billShowBilled && p.billed) return false;
     if (!q) return true;
     return ((p.store||'')+' '+cityOf(p)+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)>=0;
@@ -982,7 +994,7 @@ function renderBilling(){
   var list = billableList();
   var sel = selectedIds();
   var rate = Number(billRate)||30;
-  h += '<div class="card"><h3>Bill completed PMs to Freshpet</h3><div class="hint">Every completed service stop is listed below. Tick the ones to bill, then create a QuickBooks invoice to <strong>FRESH PET</strong> (a single summary line, qty × rate) with a per-visit report attached. The billed stops are stamped with the invoice # and surface — with their photos + signed report — in the customer portal. <span class="mono">PREV COMP</span> visits are excluded (done elsewhere), and <span class="mono">EXCEPTION</span> reports (store closed / unit missing) are never billable as PMs.</div>';
+  h += '<div class="card"><h3>Bill completed PMs to Freshpet</h3><div class="hint">Every completed service stop is listed below. Tick the ones to bill, then create a QuickBooks invoice to <strong>FRESH PET</strong> (a single summary line, qty × rate) with a per-visit report attached. The billed stops are stamped with the invoice # and surface — with their photos + signed report — in the customer portal. <span class="mono">PREV COMP</span> visits are excluded (done elsewhere), <span class="mono">EXCEPTION</span> reports (store closed / unit missing) are never billable as PMs, and <span class="mono">RE-SHOOT</span> visits — a stop we sent someone back to because our own documentation was bad — are <strong>never charged to Freshpet</strong>. The technician is still paid for a re-shoot in full; we absorb it.</div>';
 
   h += '<div class="row" style="align-items:flex-end">'
      + '<div style="flex:none"><label class="f">Rate / PM</label><input type="number" step="0.01" min="0" value="'+rate+'" oninput="billRate=this.value;billPreview=null" style="max-width:120px;text-align:right"></div>'
@@ -1033,6 +1045,18 @@ function renderBilling(){
     });
     h += '</tbody></table></div>';
     h += '<div class="muted" style="margin-top:8px;font-size:.78rem">'+selectableCount+' unbilled shown.</div>';
+  }
+  // Say out loud what has been held back, so a missing stop is never a mystery.
+  var heldBack = completedPMs.filter(function(p){ return !p.prev_comp && (p.visit_type==='reshoot' || p.visit_type==='exception'); });
+  if(heldBack.length){
+    var nRe = heldBack.filter(function(p){ return p.visit_type==='reshoot'; }).length;
+    var nEx = heldBack.length - nRe;
+    h += '<div class="muted" style="margin-top:6px;font-size:.78rem">'
+       + 'Not on this list and not billable: '
+       + (nRe?'<span class="pill pu">'+nRe+' re-shoot'+(nRe===1?'':'s')+'</span> (our remediation — tech is paid, Freshpet is not charged)':'')
+       + (nRe&&nEx?' · ':'')
+       + (nEx?'<span class="pill am">'+nEx+' exception'+(nEx===1?'':'s')+'</span> (store closed / unit not found)':'')
+       + '</div>';
   }
   h += '</div>';
   return h;
