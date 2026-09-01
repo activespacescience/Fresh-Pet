@@ -1477,6 +1477,67 @@ var AUDIT_LABEL = {
   no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
 };
 var auditBusy = false;
+var auditSel = {};   // { finding id: true }
+
+function auditToggle(id){ if(auditSel[id]) delete auditSel[id]; else auditSel[id]=true; render(); }
+function auditSelectedIds(){ return Object.keys(auditSel).filter(function(k){ return auditSel[k]; }).map(Number); }
+function auditSelectedFindings(){
+  var ids = auditSelectedIds();
+  return auditFindings.filter(function(f){ return ids.indexOf(f.id) >= 0; });
+}
+// Select-all over a named group, or over everything when no check is given.
+function auditSelectAll(check){
+  var list = check ? auditFindings.filter(function(f){ return f.check_name===check; }) : auditFindings;
+  var allSel = list.length && list.every(function(f){ return auditSel[f.id]; });
+  list.forEach(function(f){ if(allSel) delete auditSel[f.id]; else auditSel[f.id]=true; });
+  render();
+}
+
+// Clearing findings you have looked at is the whole point of a worklist: the
+// board is supposed to go quiet once you have been through it and stay quiet.
+// The reason is required and recorded, so "cleared" never means "hidden".
+async function bulkDismiss(){
+  var ids = auditSelectedIds();
+  if(!ids.length) return toast('Select the findings to clear','err');
+  var why = prompt('Clearing ' + ids.length + ' finding' + (ids.length===1?'':'s') + '.\n\n'
+    + 'Why? (recorded on each row — say what you checked or did)');
+  if(why === null) return;
+  if(!String(why).trim()) return toast('A reason is required','err');
+  auditBusy = true; render();
+  try{
+    var { data:{ user: u } } = await sb.auth.getUser();
+    var { error } = await sb.from('pm_audit_findings').update({
+      dismissed_at: new Date().toISOString(),
+      dismissed_by: ((u && u.email) || 'admin') + ' — ' + String(why).trim()
+    }).in('id', ids);
+    if(error) throw error;
+    auditSel = {};
+    await loadAll();
+    toast(ids.length + ' finding' + (ids.length===1?'':'s') + ' cleared','ok');
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+  auditBusy = false; render();
+}
+
+// Send the selected stops back out. The findings do not need dismissing
+// afterwards — the board drops anything a re-shoot supersedes on its next read.
+async function bulkReshootFromAudit(){
+  var fs = auditSelectedFindings();
+  if(!fs.length) return toast('Select the findings to send back out','err');
+  var pmIds = []; fs.forEach(function(f){ if(pmIds.indexOf(f.pm_id)<0) pmIds.push(f.pm_id); });
+  var reason = (document.getElementById('auditRvReason')||{}).value || 'unverifiable';
+  if(!confirm('Send ' + pmIds.length + ' stop' + (pmIds.length===1?'':'s') + ' back out for a re-shoot?\n\n'
+    + 'Reason: ' + (REVISIT_REASONS[reason]||reason) + '\n\n'
+    + 'Each one has its photographs disconnected (kept on file) and goes back on the route.\n'
+    + 'They drop off this board straight away — they are tracked on the re-shoot banner from then on.')) return;
+  auditBusy = true; render();
+  var r = await orderReshootFor(pmIds, reason);
+  auditSel = {};
+  await loadAll();
+  toast(r.ok + ' stop' + (r.ok===1?'':'s') + ' sent back out'
+    + (r.skipped ? ' · ' + r.skipped + ' already open' : '')
+    + (r.fail ? ' · ' + r.fail + ' failed' : ''), r.fail ? 'err' : 'ok');
+  auditBusy = false; render();
+}
 // The finding row carries the report's own details (the view joins them), so a
 // finding renders correctly even for a report outside the loaded page set.
 function auditPm(id, f){
@@ -1526,9 +1587,36 @@ function renderAudit(){
     + '</div></div>';
 
   if(!auditFindings.length){
-    h += '<div class="card"><div class="empty" style="padding:26px">Nothing outstanding. Every PM in the last 45 days passes every check.</div></div>';
+    h += '<div class="card"><div class="empty" style="padding:26px">'
+      + '<div style="font-size:1.05rem;color:var(--gn);font-weight:700">Nothing outstanding</div>'
+      + '<div class="muted" style="margin-top:6px">Every PM in the last 45 days passes every check, or has been cleared or sent back out. '
+      + 'It stays this way until something new comes in.</div></div></div>';
     return h;
   }
+
+  // Bulk bar. A worklist you can only clear one row at a time is a worklist
+  // nobody finishes, and an audit that never goes quiet stops being read.
+  var sel = auditSelectedIds();
+  var allSelected = auditFindings.length && auditFindings.every(function(f){ return auditSel[f.id]; });
+  h += '<div class="card" style="position:sticky;top:0;z-index:5">'
+    + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    + '<button class="btn o sm" onclick="auditSelectAll()">'+(allSelected?'Deselect all':'Select all '+auditFindings.length)+'</button>'
+    + '<span class="muted">'+sel.length+' selected</span>'
+    + '<div style="margin-left:auto;display:flex;gap:8px;align-items:center;flex-wrap:wrap">'
+    + '<select id="auditRvReason" style="max-width:230px">'
+    + Object.keys(REVISIT_REASONS).map(function(k){
+        return '<option value="'+k+'"'+(k==='unverifiable'?' selected':'')+'>'+esc(REVISIT_REASONS[k])+'</option>'; }).join('')
+    + '</select>'
+    + '<button class="btn pu sm" onclick="bulkReshootFromAudit()" '+(auditBusy||!sel.length?'disabled':'')+'>'
+    + icon('refresh')+' Send back out</button>'
+    + '<button class="btn o sm" onclick="bulkDismiss()" '+(auditBusy||!sel.length?'disabled':'')+'>'
+    + icon('check')+' Clear selected</button>'
+    + '</div></div>'
+    + '<div class="muted" style="font-size:.76rem;margin-top:8px">'
+    + '<strong>Clear</strong> = you looked and it is fine or already handled; a reason is required and recorded. '
+    + '<strong>Send back out</strong> = order a re-shoot; the stop moves to the re-shoot board and leaves this one. '
+    + 'Either way it does not come back.</div>'
+    + '</div>';
 
   var byCheck = {};
   auditFindings.forEach(function(f){ (byCheck[f.check_name]=byCheck[f.check_name]||[]).push(f); });
@@ -1544,12 +1632,16 @@ function renderAudit(){
   order.forEach(function(k){
     var meta = AUDIT_LABEL[k] || ['dim', k, ''];
     var rows = byCheck[k];
-    h += '<div class="card"><h3><span class="pill '+meta[0]+'">'+rows.length+'</span> '+esc(meta[1])+'</h3>';
+    var groupAll = rows.every(function(f){ return auditSel[f.id]; });
+    h += '<div class="card"><div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+      + '<h3 style="margin:0;flex:1"><span class="pill '+meta[0]+'">'+rows.length+'</span> '+esc(meta[1])+'</h3>'
+      + '<button class="btn o sm" style="flex:none" onclick="auditSelectAll(\''+k+'\')">'+(groupAll?'Deselect':'Select these '+rows.length)+'</button></div>';
     if(meta[2]) h += '<div class="hint">'+esc(meta[2])+'</div>';
-    h += '<div style="overflow-x:auto;max-height:360px;overflow-y:auto"><table><thead><tr><th>Date</th><th>Store</th><th>Serial</th><th class="hide">Tech</th><th>What the audit saw</th><th></th></tr></thead><tbody>';
+    h += '<div style="overflow-x:auto;max-height:360px;overflow-y:auto"><table><thead><tr><th style="width:34px"></th><th>Date</th><th>Store</th><th>Serial</th><th class="hide">Tech</th><th>What the audit saw</th><th></th></tr></thead><tbody>';
     rows.forEach(function(f){
       var p = auditPm(f.pm_id, f);
-      h += '<tr><td style="white-space:nowrap">'+esc(p.pm_date||'')+'</td>'
+      h += '<tr><td><input type="checkbox" '+(auditSel[f.id]?'checked':'')+' onclick="auditToggle('+f.id+')"></td>'
+        + '<td style="white-space:nowrap">'+esc(p.pm_date||'')+'</td>'
         + '<td>'+esc(p.store||('report '+f.pm_id))+'</td>'
         + '<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
         + '<td class="hide">'+esc(p.tech_name||'')+'</td>'
@@ -1696,6 +1788,90 @@ function revisitPicker(p){
     + '<select id="rvr_' + p.id + '" style="margin-left:6px;padding:3px 6px;font-size:.72rem;max-width:150px">' + opts + '</select>';
 }
 
+// Ordering a re-visit, once. Called from the Report Issues tab and from the
+// Nightly Audit tab — two entry points must not grow two slightly different
+// ideas of what a re-visit does to a report.
+async function orderReshootFor(ids, reason){
+  var ok = 0, skipped = 0, fail = 0;
+  for(var i=0;i<ids.length;i++){
+    var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
+    // Already open: ordering again would wipe the cleared-photo record it is
+    // holding, which is the only copy of what was disconnected.
+    if(!p || (p.revisit_requested_at && !p.revisit_done_at)) { skipped++; continue; }
+    try{
+      var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
+      var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
+      var fd = cur && cur.form_data ? cur.form_data : {};
+      if(cleared.length) fd.revisit_cleared_photos = cleared;
+      fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
+        + 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': ' + (REVISIT_REASONS[reason]||reason)
+        + '. Photograph(s) disconnected and kept on file; the stop is scheduled to be serviced and photographed again.');
+      var { error } = await sb.from('completed_pms').update({
+        photo_paths: [], photo_hashes: [],
+        revisit_requested_at: new Date().toISOString(),
+        revisit_requested_by: (user && user.email) || 'admin',
+        revisit_reason: reason, needs_review: true, form_data: fd,
+        modified_at: new Date().toISOString(),
+        modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
+      }).eq('id', p.id);
+      if(error) throw error; ok++;
+    }catch(e){ fail++; }
+  }
+  return { ok: ok, skipped: skipped, fail: fail };
+}
+
+// Clearing an issue a re-shoot cannot answer.
+//
+// Two of the flags are questions for FRESHPET, not work for a tech: a serial
+// that is not on their asset list, and a billing credit. Driving somebody back
+// out changes nothing about either, so ordering a re-shoot is the wrong button
+// and the row would otherwise sit on the board forever. This is the right one:
+// it records what settled the question and takes the row off.
+//
+// The prior flag is written into the audit note before 'resolved' overwrites
+// it, so clearing a row never erases what it was flagged for.
+async function bulkMarkHandled(){
+  var ids = riSelectedIds();
+  if(!ids.length) return toast('Select the rows to clear','err');
+  var why = prompt('Mark ' + ids.length + ' issue' + (ids.length===1?'':'s') + ' handled.\n\n'
+    + 'Say what settled it. This is written onto each report and is the record of\n'
+    + 'why it left the board.\n\n'
+    + 'e.g. Freshpet confirmed both serials and added them to the asset list.');
+  if(why === null) return;
+  why = (why||'').trim();
+  if(!why) return toast('Say what settled it — a row cannot leave the board silently','err');
+
+  rvBusy = true; render();
+  var ok = 0, skipped = 0, fail = 0;
+  for(var i=0;i<ids.length;i++){
+    var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
+    // A stop the tech still owes is not handled. Its flags stay until the
+    // re-shoot closes them (fn_close_revisit).
+    if(!p || (p.revisit_requested_at && !p.revisit_done_at)) { skipped++; continue; }
+    try{
+      var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
+      var fd = cur && cur.form_data ? cur.form_data : {};
+      fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
+        + 'HANDLED ' + new Date().toISOString().slice(0,10) + ' by ' + ((user && user.email) || 'admin')
+        + (p.audit_flag ? ' (was flagged: ' + p.audit_flag + ')' : '') + ': ' + why);
+      var { error } = await sb.from('completed_pms').update({
+        needs_review: false,
+        audit_flag: p.audit_flag ? 'resolved' : null,
+        form_data: fd,
+        modified_at: new Date().toISOString(),
+        modified_by: 'issue marked handled by ' + ((user && user.email) || 'admin')
+      }).eq('id', p.id);
+      if(error) throw error; ok++;
+    }catch(e){ fail++; }
+  }
+  riSel = {};
+  await loadAll();
+  toast(ok + ' issue' + (ok===1?'':'s') + ' cleared'
+    + (skipped ? ' · ' + skipped + ' skipped (re-shoot still open)' : '')
+    + (fail ? ' · ' + fail + ' failed' : ''), fail ? 'err' : 'ok');
+  rvBusy = false; render();
+}
+
 function bulkRevisit(){
   var ids = riSelectedIds();
   if(!ids.length) return toast('Select the stops to re-visit','err');
@@ -1705,29 +1881,8 @@ function bulkRevisit(){
     + 'Each one has its photo evidence disconnected (kept on file) and goes back on the route to be redone.')) return;
   (async function(){
     rvBusy = true; render();
-    var ok = 0, fail = 0;
-    for(var i=0;i<ids.length;i++){
-      var p = completedPMs.filter(function(x){ return x.id === ids[i]; })[0];
-      if(!p || (p.revisit_requested_at && !p.revisit_done_at)) continue;
-      try{
-        var cleared = Array.isArray(p.photo_paths) ? p.photo_paths.slice() : [];
-        var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', p.id).single();
-        var fd = cur && cur.form_data ? cur.form_data : {};
-        if(cleared.length) fd.revisit_cleared_photos = cleared;
-        fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
-          + 'RE-VISIT ORDERED ' + new Date().toISOString().slice(0,10) + ': ' + (REVISIT_REASONS[reason]||reason)
-          + '. Photograph(s) disconnected and kept on file; the stop is scheduled to be serviced and photographed again.');
-        var { error } = await sb.from('completed_pms').update({
-          photo_paths: [], photo_hashes: [],
-          revisit_requested_at: new Date().toISOString(),
-          revisit_requested_by: (user && user.email) || 'admin',
-          revisit_reason: reason, needs_review: true, form_data: fd,
-          modified_at: new Date().toISOString(),
-          modified_by: 're-visit ordered by ' + ((user && user.email) || 'admin')
-        }).eq('id', p.id);
-        if(error) throw error; ok++;
-      }catch(e){ fail++; }
-    }
+    var r = await orderReshootFor(ids, reason);
+    var ok = r.ok, fail = r.fail;
     riSel = {};
     await loadAll();
     toast(ok + ' stop' + (ok===1?'':'s') + ' queued for re-visit' + (fail ? ' · ' + fail + ' failed' : ''), fail ? 'err' : 'ok');
@@ -1823,7 +1978,7 @@ function renderReportIssues(){
       +'<button class="'+(riFilter==='all'?'on':'')+'" onclick="riFilter=\'all\';render()">All PMs</button>'
     +'</div>'
     +'<input type="search" placeholder="Search store, serial, tech…" value="'+esc(riSearch)+'" oninput="riSearch=this.value;render();this.focus()" style="flex:1;min-width:180px">'
-    +(list.length?'<button class="btn o sm" onclick="riSelectAll()">'+(list.every(function(p){return riSel[p.id];})&&list.length?'Deselect shown':'✓ Select shown')+'</button>':'')
+    +(list.length?'<button class="btn o sm" onclick="riSelectAll()" title="Selects every row this filter and search are showing — not just the visible scroll">'+(list.every(function(p){return riSel[p.id];})?'Deselect all '+list.length:'✓ Select all '+list.length)+'</button>':'')
     +'<span class="muted" style="font-size:.8rem">'+sel.length+' selected</span>'
     +'</div>';
 
@@ -1834,7 +1989,8 @@ function renderReportIssues(){
       +Object.keys(REVISIT_REASONS).map(function(k){ return '<option value="'+k+'">'+esc(REVISIT_REASONS[k])+'</option>'; }).join('')
       +'</select>'
       +'<button class="btn pu sm" onclick="bulkRevisit()" '+(rvBusy?'disabled':'')+'>'+icon('refresh')+' Order re-visits</button>'
-      +'<span class="muted" style="font-size:.76rem">Disconnects each report\'s photo evidence (kept on file) and puts the stop back on the route.</span>'
+      +'<button class="btn o sm" onclick="bulkMarkHandled()" '+(rvBusy?'disabled':'')+'>Mark handled</button>'
+      +'<span class="muted" style="font-size:.76rem;flex:1 1 100%"><strong>Order re-visits</strong> disconnects each report\'s photo evidence (kept on file) and puts the stop back on the route — use it for a missing or reused photograph. <strong>Mark handled</strong> clears the row for something a re-shoot cannot fix (a serial Freshpet needs to add, a billing credit); it asks what settled it and writes that onto the report.</span>'
     +'</div>';
   }
 
