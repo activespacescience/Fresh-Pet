@@ -305,7 +305,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,comments:form_data->>comments').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
@@ -1551,6 +1551,8 @@ function riList(){
     if(riFilter==='added' && !p.added_asset) return false;
     if(riFilter==='review' && !p.needs_review) return false;
     if(riFilter==='revisit' && !(p.revisit_requested_at && !p.revisit_done_at)) return false;
+    if(riFilter==='needphoto' && p.audit_flag!=='needs_plate_photo') return false;
+    if(riFilter==='assetlist' && p.audit_flag!=='asset_list_confirm') return false;
     if(q && ((p.store||'')+' '+(p.serial||'')+' '+(p.tech_name||'')).toLowerCase().indexOf(q)<0) return false;
     return true;
   });
@@ -1600,13 +1602,17 @@ function renderReportIssues(){
   var addedN=completedPMs.filter(function(p){ return !p.prev_comp && p.added_asset; }).length;
   var reviewN=completedPMs.filter(function(p){ return !p.prev_comp && p.needs_review; }).length;
   var revisitN=completedPMs.filter(function(p){ return p.revisit_requested_at && !p.revisit_done_at; }).length;
+  var needPhotoN=completedPMs.filter(function(p){ return p.audit_flag==='needs_plate_photo'; }).length;
+  var assetListN=completedPMs.filter(function(p){ return p.audit_flag==='asset_list_confirm'; }).length;
 
   var h='<div class="card"><h3>'+icon('alert')+' Report issues to Freshpet</h3>'
-    +'<div class="hint">Email Freshpet a list of extra coolers found in the field and coolers with service issues so they can record them. Each selected unit\'s <strong>photos</strong> and <strong>signed PM report PDF</strong> are attached to the email (very large batches auto-trim to stay under email size limits — send in smaller batches if files get skipped). Sent units are stamped so you can see what Freshpet already has.</div>';
+    +'<div class="hint"><strong>Needs photo</strong> and <strong>Asset list</strong> are the outcome of the 2026-08 photo-integrity audit. <em>Needs photo</em> means no photograph of that unit\'s own serial plate exists anywhere in our records — select those rows and use the purple bar to order re-visits. <em>Asset list</em> means the plate we photographed reads a serial Freshpet does not list, which needs confirming with them rather than re-shooting.</div>'+'<div class="hint">Email Freshpet a list of extra coolers found in the field and coolers with service issues so they can record them. Each selected unit\'s <strong>photos</strong> and <strong>signed PM report PDF</strong> are attached to the email (very large batches auto-trim to stay under email size limits — send in smaller batches if files get skipped). Sent units are stamped so you can see what Freshpet already has.</div>';
 
   // filters + search
   h+='<div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;flex-wrap:wrap">'
     +'<div class="seg">'
+      +'<button class="'+(riFilter==='needphoto'?'on':'')+'" onclick="riFilter=\'needphoto\';render()" title="No photograph of this unit\'s own serial plate exists - a re-visit is required">Needs photo ('+needPhotoN+')</button>'
+      +'<button class="'+(riFilter==='assetlist'?'on':'')+'" onclick="riFilter=\'assetlist\';render()" title="The plate photographed reads a serial that is not on the Freshpet asset list">Asset list ('+assetListN+')</button>'
       +'<button class="'+(riFilter==='issues'?'on':'')+'" onclick="riFilter=\'issues\';render()">Issues ('+allIssues.length+')</button>'
       +'<button class="'+(riFilter==='added'?'on':'')+'" onclick="riFilter=\'added\';render()">Added assets ('+addedN+')</button>'
       +'<button class="'+(riFilter==='review'?'on':'')+'" onclick="riFilter=\'review\';render()">Needs review ('+reviewN+')</button>'
@@ -1636,10 +1642,12 @@ function renderReportIssues(){
     list.forEach(function(p){
       var nPh=Array.isArray(p.photo_paths)?p.photo_paths.length:0;
       var type=(p.added_asset?'<span class="pill ac">Added asset</span> ':'')+(p.needs_review?'<span class="pill rd">Needs review</span>':'')||'<span class="pill dim">PM</span>';
+      var AF={ needs_plate_photo:['rd','Needs photo'], asset_list_confirm:['am','Asset list'], credit_review:['am','Credit review'], resolved:['gn','Resolved'] };
+      if(p.audit_flag && AF[p.audit_flag]) type='<span class="pill '+AF[p.audit_flag][0]+'">'+AF[p.audit_flag][1]+'</span>';
       if(p.revisit_requested_at && !p.revisit_done_at) type='<span class="pill pu">Re-visit ordered</span>';
       h+='<tr>'
         +'<td><input type="checkbox" '+(riSel[p.id]?'checked':'')+' onclick="riToggle('+p.id+')"></td>'
-        +'<td>'+esc(p.store||'')+(p.comments?'<div class="muted" style="font-size:.72rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(p.comments)+'">'+esc(p.comments)+'</div>':'')+'</td>'
+        +'<td>'+esc(p.store||'')+(p.comments?'<div class="muted" style="font-size:.72rem;max-width:260px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="'+esc(p.comments)+'">'+esc(p.comments)+'</div>':'')+(p.audit_note?'<div class="muted" style="font-size:.7rem;max-width:300px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-style:italic" title="'+esc(p.audit_note)+'">'+esc(p.audit_note)+'</div>':'')+'</td>'
         +'<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
         +'<td>'+esc(p.pm_date||'')+'</td>'
         +'<td class="hide">'+esc(p.tech_name||'')+'</td>'
