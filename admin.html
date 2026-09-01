@@ -206,6 +206,7 @@ var riResult = null;
 
 // ── Reactive / CSV upload ──
 var QUARTERLY_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-quarterly-invoice';
+var auditFindings = [];   // open findings from the nightly audit
 var rvBatches = [];           // existing reactive_batches
 var rvFileName = '';
 var rvMode = '';              // '' | 'pm' | 'reactive'
@@ -309,13 +310,15 @@ async function loadAll(){
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
-    sb.from('incident_entries').select('*').order('entry_at')
+    sb.from('incident_entries').select('*').order('entry_at'),
+    sb.from('pm_audit_findings').select('*').is('resolved_at', null).is('dismissed_at', null).order('severity').order('first_seen', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
   completedPMs = r[4].data || [];
   rvBatches = r[5].data || [];
   incidents = r[7] ? (r[7].data || []) : [];
   incidentEntries = r[8] ? (r[8].data || []) : [];
+  auditFindings = r[9] ? (r[9].data || []) : [];
   rvSaved = r[6].data || [];
   if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
 }
@@ -442,6 +445,8 @@ function render(){
         return '<button class="tab '+(tab==='added'?'on':'')+'" onclick="tab=\'added\';render()">'+icon('plus')+' Added Assets'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + (function(){ var n=completedPMs.filter(function(p){ return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
         return '<button class="tab '+(tab==='issues'?'on':'')+'" onclick="tab=\'issues\';render()">'+icon('alert')+' Report Issues'+(n?' <span class="pill am" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
+     + (function(){ var n=auditFindings.filter(function(f){ return f.severity==='red'; }).length;
+        return '<button class="tab '+(tab==='audit'?'on':'')+'" onclick="tab=\'audit\';render()">'+icon('shield')+' Nightly Audit'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">'+icon('download')+' Upload / Reactive</button>'
      + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">'+icon('mail')+' Send Invoice</button>'
      + (function(){ var n=incidents.filter(function(i){ return i.status!=='closed'; }).length;
@@ -455,6 +460,7 @@ function render(){
      : tab==='reactive' ? renderReactive()
      : tab==='send' ? renderSendInvoice()
      : tab==='incidents' ? renderIncidents()
+     : tab==='audit' ? renderAudit()
      : renderBilling();
   h += '</div>';
   app.innerHTML = h;
@@ -1392,6 +1398,104 @@ function renderIncidentDetail(inc){
       + 'placeholder="What happened, what you found, or what you decided…" oninput="incDraft.body=this.value">'+esc(incDraft.body)+'</textarea>'
     + '<div style="margin-top:8px"><button class="btn sm" onclick="incAddEntry('+inc.id+')" '+(incBusy?'disabled':'')+'>'+icon('save')+' Add entry</button></div>'
     + '</div></div>';
+  return h;
+}
+
+// ═══ Nightly audit ═══
+// The findings written by fn_pm_nightly_audit, which runs in Postgres at 02:10
+// Pacific every night. This board is the record of record: the digest email is
+// a convenience on top of it, and if that email fails the list here is still
+// right. Findings resolve themselves once the underlying report is fixed, so
+// this is a worklist rather than a log.
+var AUDIT_LABEL = {
+  photos_none:      ['red',  'No photographs at all',                          'Nothing ties this report to a machine or to the visit.'],
+  photos_missing:   ['red',  'Missing one of the three required photographs',  'Full pic of unit, serial plate, bottom of unit.'],
+  photo_reused:     ['red',  'A photograph also appears on another report',    'The defect Freshpet found: one unit standing in for another.'],
+  duplicate_report: ['am',   'Two reports for one unit within ten days',       'Sometimes right, often a double submission — read it.'],
+  default_readings: ['am',   'Readings are exactly the old pre-filled values',  'SP1 41F / 120V / 38F. The form no longer suggests these.'],
+  signature_missing:['red',  'No store signature and no reason given',         'The form requires one or the other.'],
+  exception_thin:   ['am',   'Exception with no note or no photograph',        'The shape of the five closed-store reports on #172825.'],
+  no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
+};
+var auditBusy = false;
+function auditPm(id){ return completedPMs.find(function(p){ return p.id===id; }) || {}; }
+// fp-pdfs is a public bucket, so the report opens straight from the row.
+function openPdf(path){ window.open(SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + encodeURIComponent(path), '_blank', 'noopener'); }
+
+async function runAuditNow(){
+  if(auditBusy) return;
+  auditBusy = true; render();
+  try{
+    var { error } = await sb.rpc('fn_pm_nightly_audit', { p_days: 45 });
+    if(error) throw error;
+    await loadAll(); toast('Audit re-run','ok');
+  }catch(e){ toast('Audit failed: '+e.message,'err'); }
+  auditBusy = false; render();
+}
+
+async function dismissFinding(id){
+  var why = prompt('Dismissing this finding. Why? (recorded on the row)');
+  if(why===null) return;
+  var { data:{ user } } = await sb.auth.getUser();
+  var { error } = await sb.from('pm_audit_findings')
+    .update({ dismissed_at: new Date().toISOString(), dismissed_by: ((user&&user.email)||'admin') + (why ? ' — ' + why : '') })
+    .eq('id', id);
+  if(error) return toast('Failed: '+error.message,'err');
+  await loadAll(); toast('Dismissed','ok'); render();
+}
+
+function renderAudit(){
+  var reds = auditFindings.filter(function(f){ return f.severity==='red'; });
+  var ambers = auditFindings.filter(function(f){ return f.severity==='amber'; });
+  var infos = auditFindings.filter(function(f){ return f.severity==='info'; });
+
+  var h = '<div class="card"><div style="display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap">'
+    + '<div style="flex:1;min-width:220px"><h3>Nightly audit</h3>'
+    + '<div class="hint">Every check here is a defect the invoice #172825 review had to find by hand. It runs automatically at <strong>02:10 Pacific</strong> over the last 45 days of work and re-checks everything, so a problem is caught the night it happens rather than when a customer reads an invoice. Findings <strong>clear themselves</strong> once the report is fixed — this is a worklist, not a log.</div></div>'
+    + '<button class="btn o sm" style="flex:none" onclick="runAuditNow()" '+(auditBusy?'disabled':'')+'>'+(auditBusy?'Running…':icon('refresh')+' Run it now')+'</button>'
+    + '</div>';
+  h += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:12px">'
+    + '<span class="pill rd">'+reds.length+' to fix</span>'
+    + '<span class="pill am">'+ambers.length+' to check</span>'
+    + '<span class="pill dim">'+infos.length+' for information</span>'
+    + '</div></div>';
+
+  if(!auditFindings.length){
+    h += '<div class="card"><div class="empty" style="padding:26px">Nothing outstanding. Every PM in the last 45 days passes every check.</div></div>';
+    return h;
+  }
+
+  var byCheck = {};
+  auditFindings.forEach(function(f){ (byCheck[f.check_name]=byCheck[f.check_name]||[]).push(f); });
+  // Severity first, then size. Note the lookup must not use `||` for a default:
+  // red ranks 0, and `0 || 9` is 9, which sorted the worst findings to the
+  // bottom of the page.
+  var RANK = { red:0, amber:1, info:2 };
+  var rank = function(k){ var v = RANK[byCheck[k][0].severity]; return v == null ? 9 : v; };
+  var order = Object.keys(byCheck).sort(function(a,b){
+    return rank(a)-rank(b) || byCheck[b].length-byCheck[a].length;
+  });
+
+  order.forEach(function(k){
+    var meta = AUDIT_LABEL[k] || ['dim', k, ''];
+    var rows = byCheck[k];
+    h += '<div class="card"><h3><span class="pill '+meta[0]+'">'+rows.length+'</span> '+esc(meta[1])+'</h3>';
+    if(meta[2]) h += '<div class="hint">'+esc(meta[2])+'</div>';
+    h += '<div style="overflow-x:auto;max-height:360px;overflow-y:auto"><table><thead><tr><th>Date</th><th>Store</th><th>Serial</th><th class="hide">Tech</th><th>What the audit saw</th><th></th></tr></thead><tbody>';
+    rows.forEach(function(f){
+      var p = auditPm(f.pm_id);
+      h += '<tr><td style="white-space:nowrap">'+esc(p.pm_date||'')+'</td>'
+        + '<td>'+esc(p.store||('report '+f.pm_id))+'</td>'
+        + '<td class="mono" style="font-size:.8rem">'+esc(p.serial||'')+'</td>'
+        + '<td class="hide">'+esc(p.tech_name||'')+'</td>'
+        + '<td class="muted" style="font-size:.78rem">'+esc(f.detail)+'</td>'
+        + '<td style="text-align:right;white-space:nowrap">'
+        + (p.pdf_path?'<button class="btn o sm" onclick="openPdf(\''+esc(p.pdf_path)+'\')">'+icon('file-text')+' Report</button> ':'')
+        + '<button class="btn o sm" onclick="dismissFinding('+f.id+')" title="Clear this finding with a reason">Dismiss</button>'
+        + '</td></tr>';
+    });
+    h += '</tbody></table></div></div>';
+  });
   return h;
 }
 

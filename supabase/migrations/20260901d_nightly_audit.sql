@@ -1,0 +1,20 @@
+-- Applied live 2026-09-01. See migrations 20260901d..i in the Supabase project.
+-- Kept here as the record of what was applied; the authoritative definitions are
+-- fn_pm_nightly_audit() and the two cron jobs pm-nightly-audit / pm-audit-digest.
+--
+-- The nightly audit re-runs, every night, every check that the invoice #172825
+-- review had to run by hand:
+--   photos_none        no photographs at all
+--   photos_missing     one of the three required shots absent
+--   photo_reused       a photograph also on another report  <- the customer's complaint
+--   duplicate_report   two reports for one unit within ten days
+--   default_readings   exactly SP1 41F / 120V / 38F, the old pre-filled values
+--   signature_missing  no store signature and no reason given
+--   exception_thin     exception with no note or no photograph
+--   no_serial_plate    informational worklist
+--
+-- Findings land in public.pm_audit_findings and RESOLVE THEMSELVES when the
+-- underlying report is fixed, so the table is a worklist rather than a log.
+-- Legacy imports from the previous system are excluded: they have no photos or
+-- signatures by nature, and 143 permanently-unfixable rows at the top of a list
+-- is how a monitor gets ignored.
