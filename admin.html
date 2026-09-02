@@ -1525,6 +1525,19 @@ async function incSetStatus(id, status){
     if(note === null) return;
     note = String(note).trim();
     if(!note) return toast('A closing statement is required','err');
+  } else if(inc.status === 'closed'){
+    // Reopening carries the same discipline as closing. An incident that
+    // silently comes back off the shelf loses the one thing the log is for:
+    // being able to say later what was believed, and when.
+    note = prompt('Reopen ' + (inc.ref||'this incident') + '?\n\n'
+      + 'It was closed' + (inc.closed_at ? ' on ' + fmtWhen(inc.closed_at) : '')
+      + (inc.closed_by ? ' by ' + inc.closed_by : '') + '.\n'
+      + 'Say what brought it back \u2014 this goes on the record beside the closing\n'
+      + 'statement it contradicts.\n\n'
+      + 'e.g. Two re-shot stops failed the audit again on the second visit.');
+    if(note === null) return;
+    note = String(note).trim();
+    if(!note) return toast('Say what brought it back','err');
   } else if(status === 'paused'){
     reason = prompt('Pause ' + (inc.ref||'this incident') + '?\n\n'
       + 'Say what it is waiting on. Paused is honest about stalled work in a way\n'
@@ -1547,13 +1560,14 @@ async function incSetStatus(id, status){
     if(error) throw error;
     var body = status === 'closed' ? 'CLOSED. ' + note
              : status === 'paused' ? 'PAUSED \u2014 waiting on: ' + reason
-             : inc.status === 'closed' ? 'Reopened (status ' + status + ').'
+             : inc.status === 'closed' ? 'REOPENED. ' + note
              : 'Status changed to ' + status + '.';
     await sb.from('incident_entries').insert({ incident_id:id, kind:'decision',
       author:(user && user.email)||'admin', body: body });
     await loadAll();
     notifyIncident(Object.assign({}, inc, { status: status }),
-                   status === 'closed' ? 'closed' : 'status', body);
+                   status === 'closed' ? 'closed'
+                   : inc.status === 'closed' ? 'reopened' : 'status', body);
     toast(status === 'closed' ? 'Incident closed' : 'Status updated','ok');
   }catch(e){ toast('Could not update: '+e.message,'err'); }
   incBusy = false; render();
@@ -1689,12 +1703,29 @@ function renderIncidentDetail(inc){
        + 'Timeline entries are <strong>internal by default</strong>: this log holds candid notes, so nothing '
        + 'from it reaches the customer until you tick it, one entry at a time.</div>';
   }
-  h += '<div style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
-    + '<span class="f" style="margin:0">Status</span>'
-    + INC_STATUS.map(function(st){
-        return '<button class="btn '+(inc.status===st?'':'o')+' sm" onclick="incSetStatus('+inc.id+',\''+st+'\')" '+(incBusy?'disabled':'')+'>'+esc(st)+'</button>';
+  // Closing and reopening are the two decisions on an incident, so they are
+  // BUTTONS THAT SAY SO rather than two words in a row of six statuses. The
+  // working states stay available underneath for the day-to-day move.
+  var isClosed = inc.status === 'closed';
+  h += '<div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--line)">'
+    + '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'
+    + (isClosed
+       ? '<button class="btn sm" onclick="incSetStatus('+inc.id+',\'investigating\')" '+(incBusy?'disabled':'')+'>'
+         + icon('refresh')+' Reopen incident</button>'
+         + '<span class="muted" style="font-size:.78rem">Something came back, or the fix did not hold.</span>'
+       : '<button class="btn gn sm" onclick="incSetStatus('+inc.id+',\'closed\')" '+(incBusy?'disabled':'')+'>'
+         + icon('check')+' Close incident</button>'
+         + '<span class="muted" style="font-size:.78rem">Asks what finished it, and records the answer.</span>')
+    + '</div>';
+
+  var working = INC_STATUS.filter(function(st){ return st !== 'closed'; });
+  h += '<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:14px">'
+    + '<span class="f" style="margin:0">While it is open</span>'
+    + working.map(function(st){
+        return '<button class="btn '+(inc.status===st?'':'o')+' sm" onclick="incSetStatus('+inc.id+',\''+st+'\')" '
+          + ((incBusy || inc.status===st)?'disabled':'') + '>'+esc(st)+'</button>';
       }).join('')
-    + '</div></div>';
+    + '</div></div></div>';
 
   // timeline
   h += '<div class="card"><h3>'+icon('alert')+' Timeline <span class="muted" style="font-weight:400;font-size:.8rem">'+entries.length+' entr'+(entries.length===1?'y':'ies')+'</span></h3>';
