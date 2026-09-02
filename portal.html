@@ -235,6 +235,11 @@ var expanded = {};         // { sectionKey: true } — invoice sections start co
 var authBusy = false;
 var section = 'pm';        // 'pm' | 'reactive' | 'assetlist'
 var showSettledAssets = false;
+var incidents = [], incidentEntries = [];
+var auditSub = 'assets';      // assets | incidents
+var openIncident = null;
+function setAuditSub(v){ auditSub = v; openIncident = null; render(); }
+function toggleIncident(id){ openIncident = (openIncident===id ? null : id); render(); }
 function toggleSettledAssets(){ showSettledAssets = !showSettledAssets; render(); }
 var reBatches = [];        // reactive_batches (invoiced)
 var reAssets = {};         // { batch_id: [assets] }
@@ -568,10 +573,16 @@ async function loadData(){
     sb.from('completed_pms').select('*').order('pm_date', { ascending:false }).order('created_at', { ascending:false }),
     sb.from('assets').select('id,store,address,city,state,zip,manufacturer,model,serial,source,no_serial,active,reported,reported_at,added_at,added_by,found_on_pm_id'),
     sb.from('reactive_batches').select('*').eq('status','invoiced').order('created_at', { ascending:false }),
-    sb.from('reactive_assets').select('*').order('store')
+    sb.from('reactive_assets').select('*').order('store'),
+    // The customer-safe projection only — the base tables are staff-only and
+    // hold candid internal notes. See migration 20260902a.
+    sb.from('v_customer_incidents').select('*').order('opened_at', { ascending:false }),
+    sb.from('v_customer_incident_entries').select('*').order('entry_at')
   ]);
   pms = (r[0].data || []);
   assets = {}; (r[1].data || []).forEach(function(a){ assets[a.id]=a; });
+  incidents = r[4] && r[4].data ? r[4].data : [];
+  incidentEntries = r[5] && r[5].data ? r[5].data : [];
   reBatches = (r[2].data || []);
   reAssets = {}; (r[3].data || []).forEach(function(a){ (reAssets[a.batch_id]=reAssets[a.batch_id]||[]).push(a); });
 }
@@ -716,11 +727,11 @@ function render(){
   h += '<div class="tabs">'
      + '<button class="tab '+(section==='pm'?'on':'')+'" onclick="setSection(\'pm\')">PM service calls</button>'
      + '<button class="tab '+(section==='reactive'?'on':'')+'" onclick="setSection(\'reactive\')">Quarterly Reactive'+(reBatches.length?'<span class="ct">'+reBatches.length+'</span>':'')+'</button>'
-     + '<button class="tab '+(section==='assetlist'?'on':'')+'" onclick="setSection(\'assetlist\')">Asset list'+(assetListOpenCount()?'<span class="ct">'+assetListOpenCount()+'</span>':'')+'</button>'
+     + '<button class="tab '+(section==='audits'?'on':'')+'" onclick="setSection(\'audits\')">Audits'+(assetListOpenCount()?'<span class="ct">'+assetListOpenCount()+'</span>':'')+'</button>'
      + '</div>';
 
   if (section === 'reactive') { h += renderReactive(); h += '</div>'; app.innerHTML = h; return; }
-  if (section === 'assetlist') { h += renderAssetList(); h += '</div>'; app.innerHTML = h; return; }
+  if (section === 'audits') { h += renderAudits(); h += '</div>'; app.innerHTML = h; return; }
 
   // stats
   var thisMonth = monthKey(new Date().toISOString().slice(0,10));
@@ -858,6 +869,73 @@ function assetSection(title, ask, note, rows, kind, cols){
     + cols.map(function(c){ return '<th>' + c + '</th>'; }).join('') + '<th></th></tr></thead><tbody>'
     + rows.map(function(r){ return assetRowCard(r, kind); }).join('')
     + '</tbody></table></div>';
+}
+
+// ── Audits ──────────────────────────────────────────────────────────────────
+// Everything about the review of our own work, in one place: the asset-list
+// differences, and the incident record behind why the review is happening.
+function renderAudits(){
+  var openInc = incidents.filter(function(i){ return i.status !== 'closed'; }).length;
+  var h = '<div class="seg" style="margin:0 0 16px">'
+    + '<button class="'+(auditSub==='assets'?'on':'')+'" onclick="setAuditSub(\'assets\')">Asset list'
+      + (assetListOpenCount()?' <span class="pill hold" style="margin-left:5px">'+assetListOpenCount()+'</span>':'')+'</button>'
+    + '<button class="'+(auditSub==='incidents'?'on':'')+'" onclick="setAuditSub(\'incidents\')">Incident log'
+      + (openInc?' <span class="pill hold" style="margin-left:5px">'+openInc+'</span>':'')+'</button>'
+    + '</div>';
+  return h + (auditSub==='incidents' ? renderIncidentLog() : renderAssetList());
+}
+
+var INC_STATE = {
+  open:'Open', investigating:'Investigating', remediating:'Being fixed',
+  monitoring:'Monitoring', paused:'Paused', closed:'Closed'
+};
+function renderIncidentLog(){
+  if(!incidents.length){
+    return '<div class="empty">No incidents to report. If something goes wrong with your service or your '
+         + 'records, it is written up here \u2014 what happened, why, what we did about it, and what stops '
+         + 'it happening again.</div>';
+  }
+  var h = '<div class="holdbar" style="border-color:#8FC4EA;background:#EAF3FB;color:#12405F">'
+    + '<h4 style="color:#155E9B">'+icon('alert')+' INCIDENT LOG</h4>'
+    + '<p>When something goes wrong with your service or your records we write it up: what happened, the '
+    + 'root cause, who and what it affected, what we did about the damage, and what we changed so it does '
+    + 'not happen again. You see it as we work it, not after the fact.</p></div>';
+
+  incidents.forEach(function(i){
+    var entries = incidentEntries.filter(function(e){ return e.incident_id === i.id; });
+    var closed = i.status === 'closed';
+    var open = openIncident === i.id;
+    h += '<div class="inv"><div class="inv-h'+(open?' open':'')+'" onclick="toggleIncident('+i.id+')">'
+      + '<span class="chev">'+(open?'\u25be':'\u25b8')+'</span>'
+      + '<div class="inv-t"><div class="ttl">'+esc(i.title)+'</div>'
+      + '<div class="sub">'+esc(i.ref||'')+' \u00b7 opened '+esc(fmtDate(String(i.opened_at||'').slice(0,10)))
+      + (closed && i.closed_at ? ' \u00b7 closed '+esc(fmtDate(String(i.closed_at).slice(0,10))) : '')
+      + (i.reports_affected!=null ? ' \u00b7 '+i.reports_affected+' reports affected' : '')
+      + '</div></div>'
+      + '<span class="pill '+(closed?'gn':'hold')+'">'+esc(INC_STATE[i.status]||i.status)+'</span>'
+      + '</div>';
+    if(open){
+      h += '<div style="padding:16px 4px 4px">';
+      [['What happened', i.summary],['Root cause', i.root_cause],['Impact', i.impact],
+       ['What we did about it', i.corrective],['What stops it happening again', i.preventive]]
+      .forEach(function(sec){
+        if(!sec[1]) return;
+        h += '<div class="sec-h">'+esc(sec[0])+'</div><div class="notes">'+esc(sec[1]).replace(/\n/g,'<br>')+'</div>';
+      });
+      if(entries.length){
+        h += '<div class="sec-h">Updates</div>';
+        entries.forEach(function(e){
+          h += '<div class="notes" style="margin-bottom:8px">'
+            + '<div class="ct" style="font-size:.74rem;margin-bottom:3px">'
+            + esc(fmtDate(String(e.entry_at||'').slice(0,10)))+' \u00b7 '+esc(e.kind)+'</div>'
+            + esc(e.body).replace(/\n/g,'<br>')+'</div>';
+        });
+      }
+      h += '</div>';
+    }
+    h += '</div>';
+  });
+  return h;
 }
 
 function renderAssetList(){
