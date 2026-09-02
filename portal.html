@@ -236,6 +236,7 @@ var authBusy = false;
 var section = 'pm';        // 'pm' | 'reactive' | 'assetlist'
 var showSettledAssets = false;
 var incidents = [], incidentEntries = [];
+var assetListStatus = null;   // from fn_asset_list_status — never recomputed here
 var auditSub = 'assets';      // assets | incidents
 var openIncident = null;
 function setAuditSub(v){ auditSub = v; openIncident = null; render(); }
@@ -366,6 +367,9 @@ function missingAssets(){
     .sort(function(x,y){ return String(y.pm.pm_date||'').localeCompare(String(x.pm.pm_date||'')); });
 }
 function assetListOpenCount(){
+  // The database's count is authoritative. The local one is a fallback for the
+  // moment before the first load returns, not a second opinion.
+  if(assetListStatus) return Number(assetListStatus.found_open||0) + Number(assetListStatus.missing_open||0);
   return foundAssets().filter(function(r){ return !r.settled; }).length
        + missingAssets().filter(function(r){ return !r.settled; }).length;
 }
@@ -577,12 +581,17 @@ async function loadData(){
     // The customer-safe projection only — the base tables are staff-only and
     // hold candid internal notes. See migration 20260902a.
     sb.from('v_customer_incidents').select('*').order('opened_at', { ascending:false }),
-    sb.from('v_customer_incident_entries').select('*').order('entry_at')
+    sb.from('v_customer_incident_entries').select('*').order('entry_at'),
+    // The SAME function the back-office console reads. The incident log once
+    // said one number for the asset-list gap and this page said another,
+    // because each worked it out for itself. Neither does now.
+    sb.rpc('fn_asset_list_status')
   ]);
   pms = (r[0].data || []);
   assets = {}; (r[1].data || []).forEach(function(a){ assets[a.id]=a; });
   incidents = r[4] && r[4].data ? r[4].data : [];
   incidentEntries = r[5] && r[5].data ? r[5].data : [];
+  assetListStatus = (r[6] && r[6].data && r[6].data[0]) || null;
   reBatches = (r[2].data || []);
   reAssets = {}; (r[3].data || []).forEach(function(a){ (reAssets[a.batch_id]=reAssets[a.batch_id]||[]).push(a); });
 }
