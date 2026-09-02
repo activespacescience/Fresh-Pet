@@ -1797,7 +1797,7 @@ var AUDIT_LABEL = {
   default_readings: ['am',   'Readings are exactly the old pre-filled values',  'SP1 41F / 120V / 38F. The form no longer suggests these.'],
   signature_missing:['red',  'No store signature and no reason given',         'The form requires one or the other.'],
   exception_thin:   ['am',   'Exception with no note or no photograph',        'The shape of the five closed-store reports on #172825.'],
-  no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
+  no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Record it on the asset list and the question stops being asked — the form pre-ticks it next cycle and the portal shows the unit as having no plate.']
 };
 var auditBusy = false;
 var auditSub = 'findings';   // findings | issues | added | loose
@@ -1893,6 +1893,34 @@ async function runAuditNow(){
   auditBusy = false; render();
 }
 
+// A technician found no plate on a unit Freshpet's list gives a serial for.
+// Recording it on the ASSET is what closes the loop: the field app pre-ticks
+// the box next cycle, the portal stops showing a serial nobody can read off the
+// machine, and the audit stops asking — its own words are "reconcile against
+// the asset list", and this is that reconciliation. Nothing is deleted: the
+// serial stays on the record, it is the PLATE that is gone.
+async function recordNoPlate(findingId, assetId, store){
+  if(!assetId) return toast('This finding has no unit attached','err');
+  if(!confirm('Record on the asset list: this unit at ' + (store||'this store') + ' carries no readable serial plate.\n\n'
+    + 'The serial stays on the record. From now on the form pre-ticks "no serial number" here, '
+    + 'Freshpet\'s portal shows the unit as having no plate, and the audit stops raising it.')) return;
+  auditBusy = true; render();
+  try{
+    var { data:{ user: u } } = await sb.auth.getUser();
+    var who = (u && u.email) || 'admin';
+    var { error } = await sb.from('assets').update({ no_serial: true }).eq('id', assetId);
+    if(error) throw error;
+    var { error: e2 } = await sb.from('pm_audit_findings').update({
+      dismissed_at: new Date().toISOString(),
+      dismissed_by: who + ' — recorded on the asset list: no readable serial plate'
+    }).eq('id', findingId);
+    if(e2) throw e2;
+    await loadAll();
+    toast('Recorded on the asset list','ok');
+  }catch(e){ toast('Failed: '+e.message,'err'); }
+  auditBusy = false; render();
+}
+
 async function dismissFinding(id){
   var why = prompt('Dismissing this finding. Why? (recorded on the row)');
   if(why===null) return;
@@ -1983,6 +2011,9 @@ function renderAudit(){
         + '<td class="muted" style="font-size:.78rem">'+esc(f.detail)+'</td>'
         + '<td style="text-align:right;white-space:nowrap">'
         + (p.pdf_path?'<button class="btn o sm" onclick="openPdf(\''+esc(p.pdf_path)+'\')">'+icon('file-text')+' Report</button> ':'')
+        + (f.check_name==='no_serial_plate' && f.asset_id && !f.asset_no_serial
+            ? '<button class="btn sm" onclick="recordNoPlate('+f.id+','+f.asset_id+',\''+esc(String(p.store||'').replace(/'/g,"")) +'\')" title="Record on the asset list so the question stops being asked">Record: no plate</button> '
+            : '')
         + '<button class="btn o sm" onclick="dismissFinding('+f.id+')" title="Clear this finding with a reason">Dismiss</button>'
         + '</td></tr>';
     });
