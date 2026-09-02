@@ -218,6 +218,69 @@ var routeFromChecklist = false; // track if we came from route view
 // checklist — a silent loss is what makes a tech distrust the app.
 var draftPhotosDropped = 0;
 
+// ═══ Sync with the office ═══
+//
+// "Does he need to log out?" No — and logging out would not have helped, which
+// is the point. signOut() only drops the Supabase session; it never reloads the
+// page, so the OLD JavaScript keeps running and the tech is back where he
+// started, now also logged out. There was no way, from inside the app, to make
+// it go and ask the server what is true.
+//
+// Sync does two separate jobs and says which one it did:
+//   1. RE-READ THE DATA. Assets, reports, candidates. This is what fixes a
+//      route that disagrees with what the technician just filed — including the
+//      case that started this: a stop that shows as owed because the app has
+//      not seen the report yet.
+//   2. CHECK FOR A NEW APP. It fetches this page with cache: 'no-store' and
+//      compares the stamp below. Only if that differs does it offer to reload,
+//      because a reload on a store's wifi is the one thing that can leave a
+//      technician looking at a blank screen — it is never done silently and
+//      never done just to refresh data.
+//
+// An unfinished PM survives either path: the draft lives in localStorage and
+// the resume prompt is on the home screen. Sync says so before reloading rather
+// than letting him find out.
+var APP_VERSION = '2026-09-02.3';
+var syncing = false;
+var updateReady = false;   // a newer build is on the server
+
+async function syncNow() {
+  if (syncing) return;
+  syncing = true; render();
+  var before = { assets: ASSETS.length, pms: completedPMs.length };
+  try {
+    await loadAssets();
+    await loadCompletedPMs();
+    await loadAssetCandidates();
+  } catch (e) {
+    syncing = false; render();
+    showStatus('Could not reach the office — check your signal and try again', 'err');
+    return;
+  }
+  // Did the app itself change? A version stamp is the only honest way to know;
+  // guessing from a timestamp or a cache header is not.
+  try {
+    var r = await fetch(location.pathname + '?v=' + Date.now(), { cache: 'no-store' });
+    var t = await r.text();
+    var m = /var APP_VERSION = '([^']+)'/.exec(t);
+    if (m && m[1] !== APP_VERSION) updateReady = true;
+  } catch (e) { /* offline or blocked — the data sync still counted */ }
+
+  syncing = false; render();
+  var gained = (completedPMs.length - before.pms);
+  showStatus('Synced with the office'
+    + (gained > 0 ? ' \u00b7 ' + gained + ' new report' + (gained===1?'':'s') : '')
+    + (updateReady ? ' \u00b7 a newer version of the app is available' : ''), 'ok');
+}
+
+function applyUpdate() {
+  if (localStorage.getItem('fp_progress')
+      && !confirm('You have a PM in progress.\n\nIt is saved and will still be here after the update — '
+        + 'the home screen will offer to resume it.\n\nUpdate now?')) return;
+  // Cache-bust so a home-screen app on iOS cannot serve the old file back.
+  location.replace(location.pathname + '?v=' + Date.now());
+}
+
 // ===== LocalStorage helpers =====
 function saveProgress() {
   try {
@@ -1046,6 +1109,19 @@ function renderHome() {
       '<button class="btn btn-o" style="margin-top:8px" onclick="clearProgress();render()">Discard</button>' +
     '</div>';
   }
+
+  // The answer to "the app and I disagree about what is done". Above the route,
+  // because that is the screen the disagreement shows up on.
+  if (updateReady) {
+    h += '<div class="card" style="border-left:4px solid var(--gn);margin-bottom:10px">'
+      + '<div style="font-weight:700;color:var(--gn)">A newer version of the app is ready</div>'
+      + '<div style="font-size:13px;color:var(--dim);margin-top:3px">Your work in progress is saved and will still be here.</div>'
+      + '<button class="btn btn-p" style="margin-top:8px" onclick="applyUpdate()">Update now</button></div>';
+  }
+  h += '<button class="btn btn-o" style="margin-bottom:10px" onclick="syncNow()" ' + (syncing?'disabled':'') + '>'
+    + (syncing ? '<span class="spinner"></span> Syncing\u2026'
+               : icon('refresh') + ' Sync with the office')
+    + '</button>';
 
   // Route button (for techs with assigned routes)
   h += '<button class="btn btn-p" style="margin-bottom:10px" onclick="goRoute()">'+icon('map')+' My Route</button>';
@@ -2490,6 +2566,13 @@ function renderRoute() {
     '<div style="font-size:24px;font-weight:700">' + doneCount + '/' + stops.length + '</div>' +
     '<div style="color:var(--dim);font-size:16px">Stops Completed</div>' +
     '<div class="progress-bar"><div class="fill" style="width:' + (stops.length > 0 ? (doneCount / stops.length * 100) : 0) + '%"></div></div>' +
+    // This count is the thing that gets argued with — "I did that one" — so the
+    // way to make the app go and check is on the same card, not two screens away.
+    '<button class="btn btn-o" style="margin-top:10px;padding:8px;font-size:13px" onclick="syncNow()" ' +
+      (syncing?'disabled':'') + '>' +
+      (syncing ? '<span class="spinner"></span> Syncing\u2026' : icon('refresh') + ' Sync with the office') +
+    '</button>' +
+    (updateReady ? '<button class="btn btn-p" style="margin-top:6px;padding:8px;font-size:13px" onclick="applyUpdate()">Update the app</button>' : '') +
   '</div>';
 
   // Start/End day: re-optimize remaining stops from wherever you are
