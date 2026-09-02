@@ -214,6 +214,9 @@ var doneUnitsOpen = {};   // { stop index: true } - show finished units on a par
 function toggleDoneStops(){ showDoneStops = !showDoneStops; render(); }
 function toggleDoneUnits(i){ if(doneUnitsOpen[i]) delete doneUnitsOpen[i]; else doneUnitsOpen[i] = true; render(); }
 var routeFromChecklist = false; // track if we came from route view
+// How many photographs the last saved draft could not hold. Surfaced on the
+// checklist — a silent loss is what makes a tech distrust the app.
+var draftPhotosDropped = 0;
 
 // ===== LocalStorage helpers =====
 function saveProgress() {
@@ -223,13 +226,21 @@ function saveProgress() {
     var draftPhotos = photos.map(function(p){
       var n = normPhoto(p); return { d: n.d, kind: n.kind, hash: n.hash };
     });
-    var d = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, photos: draftPhotos, reopenId: reopenPmId, aa: addedAssetFlag };
-    try {
-      localStorage.setItem('fp_progress', JSON.stringify(d));
-    } catch (e) {
-      // photos can overflow localStorage — keep at least the form & signatures
-      d.photos = [];
-      localStorage.setItem('fp_progress', JSON.stringify(d));
+    var base = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, reopenId: reopenPmId, aa: addedAssetFlag };
+    // Photographs can overflow localStorage. The old fallback threw ALL of them
+    // away and said nothing, so a draft restored after the phone reloaded the
+    // page came back with an empty photo strip — the tech retook shots he had
+    // already taken, or worse, submitted thinking they were still attached.
+    // Now: keep as many as fit, newest first (the one just taken is the one he
+    // is thinking about), and RECORD how many had to go so the checklist can
+    // say so out loud.
+    for (var keep = draftPhotos.length; keep >= 0; keep--) {
+      var d = { si: base.si, ai: base.ai, serial: base.serial, form: base.form, sigs: base.sigs,
+                reopenId: base.reopenId, aa: base.aa,
+                photos: draftPhotos.slice(draftPhotos.length - keep),
+                dropped: draftPhotos.length - keep };
+      try { localStorage.setItem('fp_progress', JSON.stringify(d)); return; }
+      catch (e) { /* quota — go round again with one fewer photograph */ }
     }
   } catch(e) {}
 }
@@ -242,6 +253,7 @@ function loadProgress() {
       form = d.form || {};
       sigs = d.sigs || { store: null, tech: null };
       photos = (d.photos || []).map(normPhoto);
+      draftPhotosDropped = Number(d.dropped) || 0;
       reopenPmId = d.reopenId || null;
       addedAssetFlag = !!d.aa;
       // Resume strictly by serial. The saved numeric index is NOT trusted:
@@ -260,6 +272,7 @@ function loadProgress() {
 }
 function clearProgress() {
   localStorage.removeItem('fp_progress');
+  draftPhotosDropped = 0;
   photos = [];
   sigs = { store: null, tech: null };
   reopenPmId = null;
@@ -737,15 +750,26 @@ function sha256Hex(str) {
   });
 }
 
+// The phone asks: Take Photo, or Photo Library. It used to force the camera
+// with capture='environment', and that one attribute caused most of the grief
+// in the field:
+//   * iOS opens the camera INSIDE the browser, so the shot never reaches the
+//     camera roll — the tech has no copy of his own work;
+//   * coming back from that in-browser camera can RELOAD the page, which is how
+//     a half-finished re-shoot ends up restored from a draft;
+//   * and a photo already taken on the phone (a clear plate shot from two
+//     minutes earlier) could not be used at all — the tech had to re-stage it.
+// Integrity does not rest on this attribute and never did: handlePhotos
+// fingerprints every image and refuses one that is already on ANY report, on
+// this phone or anyone else's, which is the control that actually caught the
+// re-used plates.
 function takePhoto(kind) {
   var i = document.createElement('input');
-  i.type = 'file'; i.accept = 'image/*'; i.capture = 'environment';
+  i.type = 'file'; i.accept = 'image/*';
   i.onchange = function() { handlePhotos(i, kind || 'other'); };
   i.click();
 }
 
-// Gallery upload is allowed ONLY for supplemental 'other' photos; the
-// evidentiary shots (plate/unit/site) must come through the camera.
 function uploadPhoto() {
   var i = document.createElement('input');
   i.type = 'file'; i.accept = 'image/*'; i.multiple = true;
@@ -782,10 +806,12 @@ function handlePhotos(input, kind) {
 
 // ── Saving the photos to the phone's own camera roll ────────────────────────
 //
-// This is not a nicety. takePhoto() uses <input capture>, which on iOS opens
-// the camera INSIDE the browser — the picture never reaches the camera roll at
-// all. So the manual's "keep the photos on your phone just in case" was advice
-// the app gave no way to follow. Now it does.
+// This is not a nicety. A photo taken through the in-app file picker does not
+// reach the camera roll — on iOS "Take Photo" from a web page hands the image
+// straight to the page and keeps nothing. So the manual's "keep the photos on
+// your phone just in case" was advice the app gave no way to follow. Now it
+// does. (Choosing an existing shot from the library is the one case where he
+// already has his own copy.)
 //
 // navigator.share({files}) is the path that actually lands in Photos: iOS
 // offers "Save N Images" and Android "Save to Photos". An <a download> per file
@@ -1261,6 +1287,20 @@ function renderChecklist() {
   });
   h += '<button class="btn btn-o" style="padding:10px" onclick="uploadPhoto()">'+icon('image')+' Another photo (optional)</button>';
   h += '</div>';
+
+  // The phone could not hold the whole draft. Say it plainly and name the
+  // number — the alternative is a tech who thinks his photographs are attached
+  // and submits a report without them.
+  if (draftPhotosDropped) {
+    h += '<div class="card" style="padding:10px 12px;margin-bottom:8px;border-left:4px solid var(--rd)">'
+      + '<div style="font-weight:700;color:var(--rd)">'
+      + draftPhotosDropped + ' photo' + (draftPhotosDropped===1?'':'s') + ' did not survive the save</div>'
+      + '<div style="font-size:13px;margin-top:4px">Your phone ran out of room for the saved draft, so the '
+      + (draftPhotosDropped===1?'oldest one was':'oldest ones were') + ' dropped. '
+      + '<strong>Take '+(draftPhotosDropped===1?'it':'them')+' again before you submit</strong> — what you see below is all that is attached.</div>'
+      + '<button class="btn btn-o" style="margin-top:8px;padding:8px 12px" onclick="draftPhotosDropped=0;render()">Got it</button>'
+      + '</div>';
+  }
 
   if (photos.length) {
     h += '<div class="photo-grid">';
@@ -2977,6 +3017,15 @@ function tryAutoResume() {
   if (!loadProgress()) return false;
   selectedAsset = ASSETS[selectedAssetIdx];
   if (!selectedAsset) return false;
+  // A draft for a stop that is FINISHED strands the technician on a checklist
+  // he cannot complete — the classic case being a re-shoot: he submits it, the
+  // phone reloads the page on the way back from the camera, and boot drops him
+  // straight back onto the old form for a unit that is already done, with no
+  // audit banner and (before the fix above) an empty photo strip. It reads as
+  // the app being stuck between screens. A finished stop's draft is spent:
+  // throw it away and start him on the route, where the stop shows as done.
+  // reopenPmId is the deliberate exception — that IS an edit of a filed report.
+  if (!reopenPmId && isCompleted(selectedAsset.serial)) { clearProgress(); return false; }
   screen = 'checklist';
   return true;
 }
