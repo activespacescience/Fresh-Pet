@@ -313,7 +313,7 @@ async function loadAll(){
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,audit_flag,no_serial_plate,billing_hold_at,billing_hold_by,billing_hold_reason,billing_hold_outcome,billing_hold_closed_at,credit_amount,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
+    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,revisit_done_pm_id,audit_flag,no_serial_plate,billing_hold_at,billing_hold_by,billing_hold_reason,billing_hold_outcome,billing_hold_closed_at,credit_amount,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
@@ -1096,6 +1096,23 @@ async function closeHold(outcome){
   var patch = { billing_hold_outcome: outcome, billing_hold_closed_at: new Date().toISOString(),
                 billing_hold_closed_by: (user && user.email) || 'admin' };
 
+  // A RE-SHOOT IS NEVER BILLED — the stop, not just the new report. Releasing a
+  // re-shot line means "the charge stands and Freshpet should pay it", which is
+  // the one thing that must never happen here. Postgres refuses it outright
+  // (tg_reshot_never_billed); this stops you wasting the click, and names the
+  // lines rather than failing the whole batch on the first one.
+  var reshot = rows.filter(function(p){ return !!p.revisit_done_pm_id; });
+  if(outcome === 'released' && reshot.length){
+    return toast(reshot.length + ' of those stops ' + (reshot.length===1?'was':'were')
+      + ' re-shot — a re-shoot is never billed. Close ' + (reshot.length===1?'it':'them')
+      + ' as “not billed” instead.', 'err');
+  }
+  if(outcome === 'not_billed' && reshot.length !== rows.length){
+    return toast('“Not billed” is for stops that were re-shot. '
+      + (rows.length - reshot.length) + ' of those ' + ((rows.length-reshot.length)===1?'was':'were')
+      + ' not — release or credit ' + ((rows.length-reshot.length)===1?'it':'them') + '.', 'err');
+  }
+
   if(outcome === 'released'){
     var notRedone = rows.filter(function(p){ return !p.revisit_done_at; });
     if(!confirm('Release ' + rows.length + ' line' + (rows.length===1?'':'s') + ' back onto the invoice?\n\n'
@@ -1103,6 +1120,19 @@ async function closeHold(outcome){
       + (notRedone.length
          ? '\n\u26a0 ' + notRedone.length + ' of these has NOT been re-documented yet — releasing it means the\n'
            + 'original paperwork is what you are standing behind.\n' : ''))) return;
+  } else if(outcome === 'not_billed'){
+    // Two different money situations wear the same label, and the confirm says
+    // which one you are in: a line already on an invoice needs a credit raising,
+    // an unbilled line just never goes out.
+    var invoiced = rows.filter(function(p){ return p.billed; });
+    if(!confirm('Close ' + rows.length + ' re-shot stop' + (rows.length===1?'':'s') + ' as NOT BILLED?\n\n'
+      + 'A re-shoot is never charged to Freshpet — neither the re-shoot nor the visit it replaces.\n'
+      + (invoiced.length
+         ? '\n\u26a0 ' + invoiced.length + ' of these ' + (invoiced.length===1?'is':'are') + ' already on an invoice. '
+           + 'Use Credit instead so the\namount comes back — “not billed” records nothing for QuickBooks to act on.\n'
+         : '\nNone of these were ever invoiced, so nothing goes back — they simply never go out.\n')
+      + '\nThe technician is paid for the work either way.')) return;
+    if(invoiced.length) return toast('Credit the invoiced lines instead','err');
   } else {
     var suggested = rows.reduce(function(t,p){ return t + Number(p.bill_amount||0); }, 0);
     var typed = prompt('Credit ' + rows.length + ' line' + (rows.length===1?'':'s') + '.\n\n'
@@ -1166,13 +1196,24 @@ function renderHolds(){
       + ' been re-documented and ' + (hs.ready===1?'is':'are') + ' ready for you to release or credit.</div>';
   }
 
+  // Every selected line is a re-shot stop => the only honest exits are "not
+  // billed" (never invoiced) or Credit (already invoiced). Mixed selections keep
+  // the ordinary buttons and closeHold names the offending lines.
+  var selReshot = sel.length && sel.every(function(id){
+    var p = completedPMs.find(function(x){ return x.id===id; });
+    return p && p.revisit_done_pm_id;
+  });
+
   h += '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin:12px 0">'
     + '<button class="btn o sm" onclick="holdSelectAll()">'
       + (list.every(function(p){ return holdSel[p.id]; }) ? 'Deselect all' : 'Select all ' + list.length) + '</button>'
     + (hs.ready ? '<button class="btn o sm" onclick="holdSelectAll(true)">Select the ' + hs.ready + ' re-documented</button>' : '')
     + '<span class="muted" style="font-size:.8rem">' + sel.length + ' selected</span>'
-    + '<button class="btn gn sm" onclick="closeHold(\'released\')" ' + ((holdBusy||!sel.length)?'disabled':'') + '>Release — charge stands</button>'
+    + (selReshot
+        ? '<button class="btn gn sm" onclick="closeHold(\'not_billed\')" ' + (holdBusy?'disabled':'') + '>Close as not billed</button>'
+        : '<button class="btn gn sm" onclick="closeHold(\'released\')" ' + ((holdBusy||!sel.length)?'disabled':'') + '>Release — charge stands</button>')
     + '<button class="btn o sm" onclick="closeHold(\'credited\')" ' + ((holdBusy||!sel.length)?'disabled':'') + '>Credit</button>'
+    + (selReshot ? '<span class="muted" style="font-size:.78rem">A re-shot stop is never billed — release is not offered.</span>' : '')
     + '</div>';
 
   h += '<div style="overflow-x:auto;max-height:380px;overflow-y:auto"><table><thead><tr>'
