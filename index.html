@@ -363,9 +363,28 @@ async function loadAssets() {
   ASSETS = data || [];
 }
 
+// PostgREST caps a request at 1000 rows and says nothing about it. This table
+// is at ~674 and grows by a route a day, so an unpaged select('*') is a silent
+// time bomb: the moment it crosses the cap the OLDEST reports stop arriving,
+// isCompleted() stops seeing them, and the route starts presenting stops that
+// were serviced months ago as still owed — a tech sent back to a unit he has
+// already done, and an office that cannot tell which of the two is right.
+// Paged by id so the walk is stable while rows are being inserted (created_at
+// is not unique, and a new report landing mid-walk shifts an offset-ordered
+// page). A page that fails leaves completedPMs ALONE rather than half-built —
+// a partial list is worse than a stale one, because it reads as authoritative.
 async function loadCompletedPMs() {
-  var { data, error } = await sb.from('completed_pms').select('*').order('created_at', { ascending: false });
-  if (!error && data) { completedPMs = data; }
+  var all = [], from = 0, PAGE = 1000;
+  for (;;) {
+    var { data, error } = await sb.from('completed_pms').select('*')
+      .order('id', { ascending: false }).range(from, from + PAGE - 1);
+    if (error) return;                    // keep what we had
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE) break;
+    from += PAGE;
+    if (from > 100000) break;             // never spin forever on a bad cursor
+  }
+  completedPMs = all;
 }
 
 // Stores where we already believe there is a cooler that is not on the asset
