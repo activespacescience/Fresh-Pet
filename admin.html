@@ -307,13 +307,43 @@ async function signIn(){ var { error } = await sb.auth.signInWithOAuth({ provide
 async function signOut(){ await sb.auth.signOut(); }
 
 // ── data ──
+// PostgREST caps a response at 1000 rows and does not say so. This table is at
+// ~674 and grows by a route a day; the day it crosses the cap, every count on
+// this console — stops completed, holds, re-shoots outstanding, the money —
+// would quietly start describing only the most recent 1000 reports. Paged by
+// id, which is stable while rows are being inserted. A failed page returns what
+// it has WITH the error, so loadAll can leave the previous list in place rather
+// than render a half-list as if it were the whole truth.
+var PM_COLS = 'id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,'
+  + 'invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,'
+  + 'modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,'
+  + 'revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,revisit_done_pm_id,'
+  + 'audit_flag,no_serial_plate,billing_hold_at,billing_hold_by,billing_hold_reason,'
+  + 'billing_hold_outcome,billing_hold_closed_at,credit_amount,'
+  + 'comments:form_data->>comments,audit_note:form_data->>audit_note';
+async function fetchAllPms(){
+  var all = [], from = 0, PAGE = 1000;
+  for (;;) {
+    var r = await sb.from('completed_pms').select(PM_COLS)
+      .order('id', { ascending:false }).range(from, from + PAGE - 1);
+    if (r.error) return { data: null, error: r.error };
+    all = all.concat(r.data || []);
+    if (!r.data || r.data.length < PAGE) break;
+    from += PAGE;
+    if (from > 100000) break;
+  }
+  // The console sorts by date everywhere; the id walk is only for a stable page.
+  all.sort(function(a,b){ return String(b.pm_date||'').localeCompare(String(a.pm_date||'')); });
+  return { data: all, error: null };
+}
+
 async function loadAll(){
   var r = await Promise.all([
     sb.from('tech_profiles').select('*').order('role').order('email'),
     sb.from('assets').select('*').eq('active', true).order('city').order('store'),
     sb.from('route_assignments').select('*').eq('active', true).order('stop_order'),
     sb.from('payouts').select('*').order('week_start', { ascending:false }),
-    sb.from('completed_pms').select('id,asset_id,store,serial,pm_date,tech_name,tech_user_id,prev_comp,billed,invoice_doc_number,bill_amount,paid_out,payout_amount,payout_bill_ref,paid_out_at,added_asset,modified_at,needs_review,photo_paths,pdf_path,issue_emailed_at,visit_type,exception_reason,revisit_requested_at,revisit_requested_by,revisit_reason,revisit_done_at,revisit_done_pm_id,audit_flag,no_serial_plate,billing_hold_at,billing_hold_by,billing_hold_reason,billing_hold_outcome,billing_hold_closed_at,credit_amount,comments:form_data->>comments,audit_note:form_data->>audit_note').order('pm_date', { ascending:false }),
+    fetchAllPms(),
     sb.from('reactive_batches').select('*').order('created_at', { ascending:false }),
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
@@ -330,7 +360,8 @@ async function loadAll(){
     sb.from('v_pm_audit_open').select('*').order('severity').order('first_seen', { ascending:false })
   ]);
   techs = r[0].data || []; assets = r[1].data || []; assignments = r[2].data || []; payouts = r[3].data || [];
-  completedPMs = r[4].data || [];
+  // A failed page must not replace a good list with a short one.
+  if (!r[4].error) completedPMs = r[4].data || [];
   rvBatches = r[5].data || [];
   incidents = r[7] ? (r[7].data || []) : [];
   incidentEntries = r[8] ? (r[8].data || []) : [];
@@ -1841,7 +1872,8 @@ var AUDIT_LABEL = {
   no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Record it on the asset list and the question stops being asked — the form pre-ticks it next cycle and the portal shows the unit as having no plate.']
 };
 var auditBusy = false;
-var auditSub = 'findings';   // findings | issues | added | loose
+var auditSub = 'findings';   // findings | issues | added | loose | store
+var storeQ = '';   // Store check: what the office types in
 var candBusy = false;
 var auditSel = {};   // { finding id: true }
 var holdBusy = false;
@@ -2551,7 +2583,8 @@ function renderAudits(){
     ['findings','Nightly Audit', 'shield', c.findings, 'rd'],
     ['issues',  'Report Issues', 'alert',  c.issues,   'am'],
     ['added',   'Added Assets',  'plus',   c.added,    'rd'],
-    ['loose',   'Loose ends',    'shield', c.loose,    'rd']
+    ['loose',   'Loose ends',    'shield', c.loose,    'rd'],
+    ['store',   'Store check',   'search', 0,          'dim']
   ];
   var h = '<div class="card" style="padding-bottom:0"><h3>'+icon('shield')+' Audits</h3>'
     + '<div class="hint">Everything the photo-integrity programme produces, in one place: what the '
@@ -2567,8 +2600,123 @@ function renderAudits(){
     + '</div></div>';
   return h + (auditSub==='issues' ? renderReportIssues()
             : auditSub==='added'  ? renderAddedAssets()
+            : auditSub==='store'  ? renderStoreCheck()
             : auditSub==='loose'  ? renderLooseEnds()
             : renderAudit());
+}
+
+// ═══ Store check ═══
+// The answer to "he says he did both coolers — did he?" without anyone opening
+// a database. Type a store, get every unit the asset list carries at it and,
+// for each, whether a report exists, whether the three photographs are on it,
+// whether the plate shot is there, and whether the paperwork is signed or says
+// why not. A unit with no report at all is the row that matters, and it is
+// listed FIRST rather than left out because nothing was filed for it.
+// Nobody types the "#". Store names carry punctuation the office does not use
+// when speaking about them — "Lucky #700" is asked about as "lucky 700", and a
+// literal substring match finds nothing and reads as "that store isn't in the
+// system", which is the wrong answer to a right question. Match on the letters
+// and digits only, and require every word typed rather than the whole phrase,
+// so "700 lucky" and "lucky700" both land.
+function storeNorm(x){ return String(x||'').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim(); }
+function storeUnits(q){
+  var words = storeNorm(q).split(' ').filter(Boolean);
+  if (!words.length || storeNorm(q).replace(/ /g,'').length < 2) return [];
+  var hits = assets.filter(function(a){
+    var hay = storeNorm(a.store) + ' ' + storeNorm(a.serial) + ' ' + storeNorm(a.city);
+    var tight = hay.replace(/ /g, '');
+    return words.every(function(w){ return hay.indexOf(w) >= 0 || tight.indexOf(w) >= 0; });
+  });
+  return hits.map(function(a){
+    var reports = completedPMs.filter(function(p){ return p.serial === a.serial && !p.prev_comp; })
+      .sort(function(x,y){ return String(y.pm_date||'').localeCompare(String(x.pm_date||'')); });
+    // The report that COUNTS is the newest one that has not been superseded.
+    var current = reports.filter(function(p){ return !p.revisit_done_pm_id; })[0] || reports[0] || null;
+    var kinds = ((current && current.photo_paths) || []).map(function(x){
+      var m = /_photo_[0-9]+_([a-z]+)_/.exec(x); return m ? m[1] : ''; });
+    var owed = reports.some(function(p){ return p.revisit_requested_at && !p.revisit_done_at; });
+    return {
+      a: a, current: current, reports: reports, owed: owed,
+      hasUnit:   kinds.indexOf('unit') >= 0,
+      // interior stands in for the plate on a unit that genuinely carries none
+      hasPlate:  kinds.indexOf('plate') >= 0 || kinds.indexOf('interior') >= 0,
+      hasBottom: kinds.indexOf('bottom') >= 0,
+      noPlateUnit: !!(current && current.no_serial_plate)
+    };
+  }).sort(function(x,y){
+    // no report first, then still owed, then the rest by store/serial
+    var rank = function(r){ return !r.current ? 0 : r.owed ? 1 : 2; };
+    return rank(x) - rank(y)
+        || String(x.a.store||'').localeCompare(String(y.a.store||''))
+        || String(x.a.serial||'').localeCompare(String(y.a.serial||''));
+  });
+}
+
+function renderStoreCheck(){
+  var h = '<div class="card"><h3>' + icon('search') + ' Store check</h3>'
+    + '<div class="hint">Every cooler the asset list carries at a store, and what is actually on file for each. '
+    + 'Use it when a technician says he did a stop and the app or the paperwork says otherwise — '
+    + 'a unit with <strong>no report at all</strong> is listed first, because that is the one that is missing.</div>'
+    + '<input type="text" placeholder="Store name or serial, e.g. Lucky 700" value="' + esc(storeQ) + '" '
+    + 'oninput="storeQ=this.value;render()" '
+    + 'style="width:100%;margin-top:10px;padding:11px 12px;background:var(--sf2);border:1px solid var(--bd);'
+    + 'border-radius:9px;color:var(--tx);font-size:15px">';
+
+  var rows = storeUnits(storeQ);
+  if (String(storeQ).trim().length < 2) {
+    h += '<div class="hint" style="margin-top:10px">Type at least two characters.</div></div>';
+    return h;
+  }
+  if (!rows.length) {
+    h += '<div class="empty" style="margin-top:12px">Nothing on the asset list matches that. '
+      + 'A cooler that is genuinely there but not on their list belongs in Audits → Added Assets.</div></div>';
+    return h;
+  }
+
+  var missing = rows.filter(function(r){ return !r.current; }).length;
+  var owed    = rows.filter(function(r){ return r.owed; }).length;
+  h += '<div style="margin-top:12px;font-size:.9rem">'
+    + '<strong>' + rows.length + '</strong> unit' + (rows.length===1?'':'s') + ' on the list'
+    + (missing ? ' \u00b7 <span style="color:var(--rd);font-weight:700">' + missing + ' with no report</span>' : '')
+    + (owed ? ' \u00b7 <span style="color:var(--am);font-weight:700">' + owed + ' owed a re-shoot</span>' : '')
+    + (!missing && !owed ? ' \u00b7 <span style="color:var(--gn);font-weight:700">all documented</span>' : '')
+    + '</div>';
+
+  h += '<div style="overflow-x:auto;margin-top:12px"><table><thead><tr>'
+    + '<th>Store</th><th>Serial</th><th>Last report</th><th>Unit</th><th>Plate</th><th>Bottom</th>'
+    + '<th>Signed</th><th>State</th><th></th></tr></thead><tbody>';
+  var tick = function(ok, note){
+    return ok ? '<span style="color:var(--gn);font-weight:700">\u2713</span>'
+              : '<span style="color:var(--rd);font-weight:700" title="' + esc(note||'') + '">\u2717</span>'; };
+  rows.forEach(function(r){
+    var p = r.current;
+    var state = !p ? '<span class="pill rd">no report</span>'
+      : r.owed ? '<span class="pill am">re-shoot owed</span>'
+      : p.visit_type === 'exception' ? '<span class="pill am">' + esc(p.exception_reason || 'exception') + '</span>'
+      : p.visit_type === 'reshoot' ? '<span class="pill" style="background:#E2EFF9;color:#155E9B">re-documented</span>'
+      : '<span class="pill gn">done</span>';
+    h += '<tr>'
+      + '<td>' + esc(r.a.store || '') + '</td>'
+      + '<td class="mono" style="font-size:.8rem">' + esc(r.a.serial || '') + '</td>'
+      + '<td style="white-space:nowrap">' + (p ? esc(p.pm_date || '') + '<div class="muted" style="font-size:.7rem">'
+            + esc(p.tech_name || '') + '</div>' : '<span class="muted">\u2014</span>') + '</td>'
+      + '<td>' + (p ? tick(r.hasUnit, 'no full picture of the unit') : '') + '</td>'
+      + '<td>' + (p ? (tick(r.hasPlate, 'no serial-plate photograph')
+            + (r.noPlateUnit ? '<div class="muted" style="font-size:.65rem">no plate on unit</div>' : '')) : '') + '</td>'
+      + '<td>' + (p ? tick(r.hasBottom, 'no photograph underneath') : '') + '</td>'
+      + '<td>' + (p ? tick(!!p.pdf_path, 'no report PDF filed') : '') + '</td>'
+      + '<td>' + state + '</td>'
+      + '<td style="text-align:right;white-space:nowrap">'
+      + (p && p.pdf_path ? '<button class="btn o sm" onclick="openPdf(\'' + esc(p.pdf_path) + '\')">'
+            + icon('file-text') + ' Report</button>' : '')
+      + '</td></tr>';
+  });
+  h += '</tbody></table></div>';
+  h += '<div class="hint" style="margin-top:10px">A red \u2717 under Plate on a unit marked '
+    + '\u201cno plate on unit\u201d is expected \u2014 the inside shot stands in for it. '
+    + 'Anything else red is a report that should not have been accepted; send the stop back out from '
+    + 'Nightly Audit.</div>';
+  return h + '</div>';
 }
 
 function renderReportIssues(){
