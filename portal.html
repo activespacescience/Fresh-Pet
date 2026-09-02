@@ -1152,9 +1152,19 @@ function openCall(id){
           : 'This visit has not been invoiced, and will not be until it is re-documented.')
        + ' ' + esc(p.billing_hold_reason || 'Held pending re-documentation.')
        + (p.revisit_done_at
-          ? ' <strong>It has now been re-documented</strong> and the hold is with us to close \u2014 we will either release the line or credit it.'
+          ? ' <strong>It has now been re-documented.</strong> A stop we had to photograph again is not charged to you'
+            + (p.billed ? ' \u2014 the credit is ours to raise.' : ', so this visit will not be invoiced.')
           : ' The stop is scheduled to be serviced and photographed again at no charge to you.')
        + '</div>';
+  } else if (p.billing_hold_outcome === 'not_billed') {
+    // A re-shot stop that was never invoiced. Nothing comes back because
+    // nothing went out — say that plainly rather than leave a hold that looks
+    // unresolved.
+    h += '<div class="notes" style="border-left:4px solid #2E7D53">'
+       + '<strong style="color:#2E7D53">NOT CHARGED</strong> \u2014 this unit had to be documented again, '
+       + 'so the visit was never invoiced to you'
+       + (p.billing_hold_closed_at ? '. Closed ' + esc(fmtDate((p.billing_hold_closed_at||'').slice(0,10))) : '')
+       + '. There is nothing to pay and nothing to credit.</div>';
   } else if (p.billing_hold_outcome === 'credited') {
     h += '<div class="notes" style="border-left:4px solid #2E7D53">'
        + '<strong style="color:#2E7D53">CREDITED</strong> \u2014 we did not stand behind our documentation of this '
