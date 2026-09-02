@@ -187,6 +187,7 @@ var aaPayResult = null;       // vendor payout bill result
 
 // ── Report Issues to Freshpet (email with photos + reports attached) ──
 var ISSUE_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-issue-report';
+var INCIDENT_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-incident-notify';
 var riSel = {};              // { pm id: true } selected for the report
 var riFilter = 'issues';     // issues | added | review | all
 var rvBusy = false;          // re-visit request in flight
@@ -444,16 +445,8 @@ function render(){
      + '<button class="tab '+(tab==='routes'?'on':'')+'" onclick="tab=\'routes\';render()">'+icon('map')+' Routes</button>'
      + '<button class="tab '+(tab==='payments'?'on':'')+'" onclick="tab=\'payments\';render()">'+icon('dollar')+' Payments</button>'
      + '<button class="tab '+(tab==='billing'?'on':'')+'" onclick="tab=\'billing\';render()">'+icon('receipt')+' Freshpet Billing</button>'
-     + (function(){ var n=assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
-        return '<button class="tab '+(tab==='added'?'on':'')+'" onclick="tab=\'added\';render()">'+icon('plus')+' Added Assets'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
-     + (function(){ var n=completedPMs.filter(function(p){
-          // A stop awaiting a re-shoot is counted by the re-shoot banner. Counting
-          // it here too gives two numbers for one pile that never agree.
-          if (p.revisit_requested_at && !p.revisit_done_at) return false;
-          return !p.prev_comp && (p.added_asset || p.needs_review) && !p.issue_emailed_at; }).length;
-        return '<button class="tab '+(tab==='issues'?'on':'')+'" onclick="tab=\'issues\';render()">'+icon('alert')+' Report Issues'+(n?' <span class="pill am" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
-     + (function(){ var n=auditFindings.filter(function(f){ return f.severity==='red'; }).length;
-        return '<button class="tab '+(tab==='audit'?'on':'')+'" onclick="tab=\'audit\';render()">'+icon('shield')+' Nightly Audit'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
+     + (function(){ var n = auditOpenCounts().total;
+        return '<button class="tab '+(tab==='audits'?'on':'')+'" onclick="tab=\'audits\';render()">'+icon('shield')+' Audits'+(n?' <span class="pill rd" style="margin-left:4px">'+n+'</span>':'')+'</button>'; })()
      + '<button class="tab '+(tab==='reactive'?'on':'')+'" onclick="tab=\'reactive\';render()">'+icon('download')+' Upload / Reactive</button>'
      + '<button class="tab '+(tab==='send'?'on':'')+'" onclick="tab=\'send\';render()">'+icon('mail')+' Send Invoice</button>'
      + (function(){ var n=incidents.filter(function(i){ return i.status!=='closed'; }).length;
@@ -462,12 +455,10 @@ function render(){
   h += tab==='overview' ? renderOverview()
      : tab==='routes' ? renderRoutes()
      : tab==='payments' ? renderPayments()
-     : tab==='added' ? renderAddedAssets()
-     : tab==='issues' ? renderReportIssues()
+     : tab==='audits' ? renderAudits()
      : tab==='reactive' ? renderReactive()
      : tab==='send' ? renderSendInvoice()
      : tab==='incidents' ? renderIncidents()
-     : tab==='audit' ? renderAudit()
      : renderBilling();
   h += '</div>';
   app.innerHTML = h;
@@ -646,7 +637,7 @@ function renderRevisitBanner(){
     + '<div class="muted" style="font-size:.74rem">re-shot so far</div>'
     + (age>0?'<div class="muted" style="font-size:.72rem;margin-top:4px">oldest ordered '+age+' day'+(age===1?'':'s')+' ago</div>':'')
     + '</div></div>'
-    + '<div style="margin-top:12px"><button class="btn pu sm" onclick="tab=\'issues\';riFilter=\'revisit\';render()">'
+    + '<div style="margin-top:12px"><button class="btn pu sm" onclick="tab=\'audits\';auditSub=\'issues\';riFilter=\'revisit\';render()">'
     + icon('refresh')+' See the '+r.open+' open stops</button></div>'
     + '</div>';
 }
@@ -1478,11 +1469,15 @@ function renderAddedAssets(){
 // ═══ Incident Log ═══
 // A durable record of what went wrong, why, what was done, and what stops it recurring.
 // Kept in the app so the record lives beside the data it describes.
-var INC_STATUS = ['open','investigating','remediating','monitoring','closed'];
+var INC_STATUS = ['open','investigating','remediating','monitoring','paused','closed'];
 var INC_SEV    = ['low','medium','high','critical'];
 var INC_KIND   = ['note','finding','action','decision','communication'];
 var SEV_PILL   = { low:'dim', medium:'am', high:'rd', critical:'rd' };
-var STATUS_PILL= { open:'rd', investigating:'am', remediating:'pu', monitoring:'am', closed:'gn' };
+var STATUS_PILL= { open:'rd', investigating:'am', remediating:'pu', monitoring:'am', paused:'dim', closed:'gn' };
+// Where an incident notification goes. Not a config row: this address is the
+// point of the requirement, and a misconfigured setting that silently sends
+// nowhere is worse than a hardcoded one you can read.
+var INC_ALERT_TO = 'skypace@brixbev.com';
 
 function incEntriesFor(id){
   return incidentEntries.filter(function(e){ return e.incident_id === id; })
@@ -1515,20 +1510,98 @@ async function incAddEntry(id){
 
 async function incSetStatus(id, status){
   var inc = incidents.filter(function(i){ return i.id===id; })[0];
-  if(!inc) return;
-  if(status==='closed' && !confirm('Close this incident?\n\nClosing records that the corrective and preventive work is finished. The log stays readable and entries can still be added.')) return;
+  if(!inc || inc.status === status) return;
+  var note = '', reason = null;
+
+  // Closing is the one transition that has to say WHY. An incident closed with
+  // no statement of what finished is a row that went quiet, not a resolution,
+  // and this log exists precisely because "it went quiet" was not good enough.
+  if(status === 'closed'){
+    note = prompt('Close ' + (inc.ref||'this incident') + '?\n\n'
+      + 'Say what finished it \u2014 the corrective and preventive work that is done.\n'
+      + 'This goes on the record and, if the incident is customer-facing, is what\n'
+      + 'you can choose to show Freshpet.\n\n'
+      + 'e.g. All 197 stops re-documented, controls verified live, hold released.');
+    if(note === null) return;
+    note = String(note).trim();
+    if(!note) return toast('A closing statement is required','err');
+  } else if(status === 'paused'){
+    reason = prompt('Pause ' + (inc.ref||'this incident') + '?\n\n'
+      + 'Say what it is waiting on. Paused is honest about stalled work in a way\n'
+      + 'that leaving it "open" for weeks is not.\n\n'
+      + 'e.g. Waiting on Freshpet to confirm the two disputed serials.');
+    if(reason === null) return;
+    reason = String(reason).trim();
+    if(!reason) return toast('Say what it is waiting on','err');
+  }
+
   incBusy = true; render();
   try{
     var patch = { status: status, updated_at: new Date().toISOString() };
-    if(status==='closed') patch.closed_at = new Date().toISOString(); else patch.closed_at = null;
+    // closed_at is the close TIMESTAMP, so it is cleared on reopen — but
+    // closed_by is left in place: who closed it last is history, not state.
+    patch.closed_at = (status === 'closed') ? new Date().toISOString() : null;
+    if(status === 'closed') patch.closed_by = (user && user.email) || 'admin';
+    patch.paused_reason = (status === 'paused') ? reason : null;
     var { error } = await sb.from('incidents').update(patch).eq('id', id);
     if(error) throw error;
+    var body = status === 'closed' ? 'CLOSED. ' + note
+             : status === 'paused' ? 'PAUSED \u2014 waiting on: ' + reason
+             : inc.status === 'closed' ? 'Reopened (status ' + status + ').'
+             : 'Status changed to ' + status + '.';
     await sb.from('incident_entries').insert({ incident_id:id, kind:'decision',
-      author:(user && user.email)||'admin', body:'Status changed to '+status+'.' });
+      author:(user && user.email)||'admin', body: body });
     await loadAll();
-    toast('Status updated','ok');
+    notifyIncident(Object.assign({}, inc, { status: status }),
+                   status === 'closed' ? 'closed' : 'status', body);
+    toast(status === 'closed' ? 'Incident closed' : 'Status updated','ok');
   }catch(e){ toast('Could not update: '+e.message,'err'); }
   incBusy = false; render();
+}
+
+// Sharing ONE entry with the customer. Off by default and one at a time, on
+// purpose: the timeline is where people write candidly, and it already holds a
+// named personnel action. Nothing reaches Freshpet without somebody reading it
+// and choosing to send it.
+async function incShareEntry(entryId, share){
+  var e = incidentEntries.filter(function(x){ return x.id===entryId; })[0];
+  if(!e) return;
+  if(share && !confirm('Show this entry to Freshpet?\n\n'
+      + '\u201c' + String(e.body||'').slice(0,180) + (String(e.body||'').length>180?'\u2026':'') + '\u201d\n\n'
+      + 'It appears on their portal under this incident. Check it names nobody and\n'
+      + 'says nothing internal before you send it.')) return;
+  incBusy = true; render();
+  try{
+    var { error } = await sb.from('incident_entries').update({
+      customer_visible: !!share,
+      shared_at: share ? new Date().toISOString() : null,
+      shared_by: share ? ((user && user.email)||'admin') : null
+    }).eq('id', entryId);
+    if(error) throw error;
+    await loadAll();
+    toast(share ? 'Shared with Freshpet' : 'No longer shown to Freshpet','ok');
+  }catch(e2){ toast('Could not change sharing: '+e2.message,'err'); }
+  incBusy = false; render();
+}
+
+// Every incident event emails INC_ALERT_TO. Best-effort and non-blocking: a
+// mail outage must never stop an incident being recorded, which is the thing
+// that actually matters. A failure says so rather than passing silently.
+async function notifyIncident(inc, event, body){
+  try{
+    var token = await billToken();
+    var res = await fetch(INCIDENT_FN, {
+      method:'POST',
+      headers:{ 'Content-Type':'application/json', 'Authorization':'Bearer '+token },
+      body: JSON.stringify({ to: INC_ALERT_TO, event: event,
+        incident: { id:inc.id, ref:inc.ref, title:inc.title, status:inc.status,
+                    severity:inc.severity, customer_facing:!!inc.customer_facing },
+        note: body || '' })
+    });
+    if(!res.ok) throw new Error('HTTP '+res.status);
+  }catch(e){
+    toast('Recorded, but the notification to '+INC_ALERT_TO+' failed: '+e.message,'err');
+  }
 }
 
 function incStartNew(){
@@ -1537,6 +1610,10 @@ function incStartNew(){
 }
 async function incCreate(){
   if(!incNew || !(incNew.title||'').trim()) return toast('Give the incident a title','err');
+  // Captured before incNew is cleared — the notification describes what was
+  // opened, and reading it off a nulled object sends an empty alert.
+  var incNew2Title = incNew.title.trim(), sevAtCreate = incNew.severity,
+      cfAtCreate = !!incNew.customer_facing, summaryAtCreate = incNew.summary || '';
   incBusy = true; render();
   try{
     var year = new Date().getFullYear();
@@ -1552,6 +1629,8 @@ async function incCreate(){
     await sb.from('incident_entries').insert({ incident_id:data.id, kind:'note',
       author:(user && user.email)||'admin', body:'Incident opened.' });
     incNew = null; await loadAll(); incOpen = data.id;
+    notifyIncident({ id:data.id, ref:ref, title:incNew2Title, status:'open',
+                     severity:sevAtCreate, customer_facing:cfAtCreate }, 'opened', summaryAtCreate);
     toast('Incident '+ref+' opened','ok');
   }catch(e){ toast('Could not open the incident: '+e.message,'err'); }
   incBusy = false; render();
@@ -1592,6 +1671,24 @@ function renderIncidentDetail(inc){
        + '<div class="mono" style="font-size:.78rem;color:var(--tx2)">'+esc(inc.evidence)+'</div></div>';
   }
 
+  if(inc.status === 'paused' && inc.paused_reason){
+    h += '<div class="hint" style="margin-top:14px;border-left:3px solid var(--am);padding-left:10px">'
+       + '<strong>Paused</strong> — waiting on: '+esc(inc.paused_reason)+'</div>';
+  }
+  if(inc.status === 'closed'){
+    h += '<div class="hint" style="margin-top:14px;color:var(--gn)">'+icon('check')+' Closed '
+       + esc(fmtWhen(inc.closed_at))+(inc.closed_by?' by '+esc(inc.closed_by):'')
+       + ' — the closing statement is the last entry on the timeline.</div>';
+  }
+  if(inc.customer_facing){
+    var shared = entries.filter(function(e){ return e.customer_visible; }).length;
+    h += '<div class="hint" style="margin-top:14px;border-left:3px solid var(--ac);padding-left:10px">'
+       + '<strong>Freshpet can see this incident</strong> — the report above (what happened, root cause, '
+       + 'impact, corrective and preventive action) plus <strong>'+shared+'</strong> timeline '
+       + (shared===1?'entry':'entries')+' you have shared. '
+       + 'Timeline entries are <strong>internal by default</strong>: this log holds candid notes, so nothing '
+       + 'from it reaches the customer until you tick it, one entry at a time.</div>';
+  }
   h += '<div style="margin-top:18px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
     + '<span class="f" style="margin:0">Status</span>'
     + INC_STATUS.map(function(st){
@@ -1614,6 +1711,15 @@ function renderIncidentDetail(inc){
           + '<span class="muted" style="font-size:.75rem">'+esc(fmtWhen(e.entry_at))+(e.author?' · '+esc(e.author):'')+'</span>'
         + '</div>'
         + '<div style="font-size:.88rem;line-height:1.6;margin-top:3px">'+nl2br(e.body)+'</div>'
+        + (inc.customer_facing
+            ? '<div style="margin-top:5px;display:flex;align-items:center;gap:8px;flex-wrap:wrap">'
+              + (e.customer_visible
+                 ? '<span class="pill gn">'+icon('eye')+' Shown to Freshpet</span>'
+                   + '<button class="btn o sm" onclick="incShareEntry('+e.id+',false)" '+(incBusy?'disabled':'')+'>Stop showing</button>'
+                 : '<button class="btn o sm" onclick="incShareEntry('+e.id+',true)" '+(incBusy?'disabled':'')+'>Share with Freshpet</button>'
+                   + '<span class="muted" style="font-size:.72rem">internal</span>')
+              + '</div>'
+            : '')
         + '</div>';
     });
     h += '</div>';
@@ -1649,6 +1755,7 @@ var AUDIT_LABEL = {
   no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
 };
 var auditBusy = false;
+var auditSub = 'findings';   // findings | issues | added
 var auditSel = {};   // { finding id: true }
 var holdBusy = false;
 var holdSel = {};    // { pm id: true } — lines whose hold is being closed
@@ -2128,6 +2235,46 @@ async function sendIssueReport(){
     toast('Report sent — '+j.count+' unit(s), '+j.attachedCount+' file(s) attached','ok');
   }catch(e){ toast('Send failed: '+e.message,'err'); }
   riBusy=false; render();
+}
+
+// ── Audits: the three views of one programme ────────────────────────────────
+// The nightly audit finds problems, Report Issues is what we tell Freshpet
+// about them, and a field-found asset is a finding about their asset list.
+// Three tabs for one job is three places to check, and the reason a stop
+// showed up on two boards at once. They are one section with sub-tabs now,
+// each carrying its own count so the section badge is not the only number.
+function auditOpenCounts(){
+  var findings = auditFindings.filter(function(f){ return f.severity==='red'; }).length;
+  var issues = completedPMs.filter(function(p){
+    // A stop awaiting a re-shoot is counted by the re-shoot banner. Counting it
+    // here too gives two numbers for one pile that never agree.
+    if (p.revisit_requested_at && !p.revisit_done_at) return false;
+    return !p.prev_comp && (addedAssetOpen(p) || p.needs_review) && !p.issue_emailed_at; }).length;
+  var added = assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
+  return { findings:findings, issues:issues, added:added, total: findings + issues + added };
+}
+function renderAudits(){
+  var c = auditOpenCounts();
+  var subs = [
+    ['findings','Nightly Audit', 'shield', c.findings, 'rd'],
+    ['issues',  'Report Issues', 'alert',  c.issues,   'am'],
+    ['added',   'Added Assets',  'plus',   c.added,    'rd']
+  ];
+  var h = '<div class="card" style="padding-bottom:0"><h3>'+icon('shield')+' Audits</h3>'
+    + '<div class="hint">Everything the photo-integrity programme produces, in one place: what the '
+    + 'nightly check found, what we are telling Freshpet, and the units their asset list is missing. '
+    + 'Each clears in its own way \u2014 send a stop back out, mark an issue handled, or Mark reported \u2014 '
+    + 'and a stop only ever appears on one of them at a time.</div>'
+    + '<div class="seg" style="margin:14px 0 0">'
+    + subs.map(function(x){
+        return '<button class="'+(auditSub===x[0]?'on':'')+'" onclick="auditSub=\''+x[0]+'\';render()">'
+          + icon(x[2]) + ' ' + x[1]
+          + (x[3] ? ' <span class="pill '+x[4]+'" style="margin-left:5px">'+x[3]+'</span>' : '') + '</button>';
+      }).join('')
+    + '</div></div>';
+  return h + (auditSub==='issues' ? renderReportIssues()
+            : auditSub==='added'  ? renderAddedAssets()
+            : renderAudit());
 }
 
 function renderReportIssues(){
