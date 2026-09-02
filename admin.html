@@ -208,6 +208,12 @@ var riResult = null;
 // ── Reactive / CSV upload ──
 var QUARTERLY_FN = 'https://apbg-billing.netlify.app/.netlify/functions/freshpet-quarterly-invoice';
 var auditFindings = [];   // open findings from the nightly audit
+// Read from the database, never recomputed here — see fn_asset_list_status /
+// fn_integrity_check (migration 20260902b). The whole point is that no surface
+// derives these itself.
+var assetListStatus = null;
+var integrityIssues = [];
+var candidates = [];
 var rvBatches = [];           // existing reactive_batches
 var rvFileName = '';
 var rvMode = '';              // '' | 'pm' | 'reactive'
@@ -312,6 +318,12 @@ async function loadAll(){
     sb.from('reactive_assets').select('*').order('store'),
     sb.from('incidents').select('*').order('opened_at', { ascending:false }),
     sb.from('incident_entries').select('*').order('entry_at'),
+    // ONE source for the asset-list numbers and the loose-ends list. Both the
+    // console and the Freshpet portal read these, so the two can no longer
+    // state different figures for the same fact.
+    sb.rpc('fn_asset_list_status'),
+    sb.rpc('fn_integrity_check'),
+    sb.from('asset_list_candidates').select('*').order('tier').order('store'),
     // v_pm_audit_open, not the raw table: it evaluates the re-shoot rule on
     // every read, so a finding disappears the moment a re-visit is ordered
     // and returns the moment one is cancelled — no waiting for the nightly run.
@@ -322,11 +334,18 @@ async function loadAll(){
   rvBatches = r[5].data || [];
   incidents = r[7] ? (r[7].data || []) : [];
   incidentEntries = r[8] ? (r[8].data || []) : [];
-  auditFindings = r[9] ? (r[9].data || []) : [];
+  // fn_asset_list_status returns one row; fn_integrity_check returns many.
+  assetListStatus = (r[9] && r[9].data && r[9].data[0]) || null;
+  integrityIssues = (r[10] && r[10].data) || [];
+  candidates = (r[11] && r[11].data) || [];
+  auditFindings = r[12] ? (r[12].data || []) : [];
   rvSaved = r[6].data || [];
   if (!payWeek && payouts.length) payWeek = payouts[0].week_start;
 }
-function assetById(id){ return assets.find(function(a){ return a.id===id; }); }
+// One declaration. There were two for a while — the second silently replaced
+// the first for every caller, which happened to behave the same and might not
+// have. Guarded so a call before the first load returns null instead of throwing.
+function assetById(id){ return Array.isArray(assets) ? assets.find(function(a){ return a.id===id; }) || null : null; }
 function techName(email){ var t=techs.find(function(x){ return x.email===email; }); return (t&&t.name) || email; }
 
 // ── Routes ──
@@ -571,11 +590,6 @@ function revisitStats(){
 //
 // An asset row we cannot find is treated as NOT reported: a missing lookup must
 // never silently close somebody's open item.
-function assetById(id){
-  if(!Array.isArray(assets)) return null;
-  for(var i=0;i<assets.length;i++){ if(assets[i].id===id) return assets[i]; }
-  return null;
-}
 function addedAssetSettled(p){
   if(!p.added_asset) return true;
   var a = assetById(p.asset_id);
@@ -1786,7 +1800,8 @@ var AUDIT_LABEL = {
   no_serial_plate:  ['dim',  'Serial plate missing or unreadable',             'Reconcile against the Freshpet asset list.']
 };
 var auditBusy = false;
-var auditSub = 'findings';   // findings | issues | added
+var auditSub = 'findings';   // findings | issues | added | loose
+var candBusy = false;
 var auditSel = {};   // { finding id: true }
 var holdBusy = false;
 var holdSel = {};    // { pm id: true } — lines whose hold is being closed
@@ -2082,16 +2097,62 @@ async function requestRevisit(id, reason){
   rvBusy = false; render();
 }
 
+// Cancelling a re-visit used to strand three things, and it was the single
+// biggest generator of half-closed state in the system:
+//
+//   the BILLING HOLD  -- placed when the re-visit was ordered, and closeable
+//                        only from the Holds panel, which offers "release" and
+//                        "credit". With no re-visit coming, neither is true and
+//                        the money sat held forever.
+//   the PHOTOGRAPHS   -- disconnected into revisit_cleared_photos so the report
+//                        shows none, with nobody going back to take more.
+//   needs_review      -- raised by the order, cleared only by fn_close_revisit,
+//                        which now never runs.
+//
+// So cancelling asks WHY and then finishes the job: photographs go back on the
+// report (they were only ever moved aside, never deleted), the review flag
+// clears, and the hold is put to the person, because releasing a charge is a
+// money decision and must not be a side effect of pressing Cancel.
 async function cancelRevisit(id){
-  if(!confirm('Cancel this re-visit?\n\nThe stop goes back to normal. Photographs that were disconnected are NOT automatically re-attached — they stay on file under revisit_cleared_photos.')) return;
+  var p = completedPMs.filter(function(x){ return x.id === id; })[0];
+  if(!p) return;
+  var fd0 = p.form_data || {};
+  var cleared = Array.isArray(fd0.revisit_cleared_photos) ? fd0.revisit_cleared_photos : [];
+  var held = onHold(p);
+
+  var why = prompt('Cancel the re-visit on ' + (p.store||'this stop') + '?\n\n'
+    + 'Say why \u2014 it goes on the report beside the reason the re-visit was ordered.\n\n'
+    + (cleared.length ? '\u2022 ' + cleared.length + ' photograph' + (cleared.length===1?'':'s')
+        + ' will be RE-ATTACHED to the report\n' : '')
+    + '\u2022 the review flag clears\n'
+    + (held ? '\u2022 the billing hold stays OPEN \u2014 you close it on the Holds panel,\n'
+            + '  because releasing a charge is a money decision, not a side effect\n' : ''));
+  if(why === null) return;
+  why = String(why).trim();
+  if(!why) return toast('Say why you are cancelling','err');
+
   rvBusy = true; render();
   try{
-    var { error } = await sb.from('completed_pms').update({
-      revisit_requested_at: null, revisit_requested_by: null, revisit_reason: null
-    }).eq('id', id);
+    var { data: cur } = await sb.from('completed_pms').select('form_data').eq('id', id).single();
+    var fd = cur && cur.form_data ? cur.form_data : {};
+    var back = Array.isArray(fd.revisit_cleared_photos) ? fd.revisit_cleared_photos : [];
+    fd.audit_note = ((fd.audit_note ? fd.audit_note + ' ' : '')
+      + 'RE-VISIT CANCELLED ' + new Date().toISOString().slice(0,10) + ' by ' + ((user && user.email)||'admin')
+      + ': ' + why + (back.length ? ' ' + back.length + ' photograph(s) re-attached to the report.' : ''));
+    // The cleared list is kept as history of what was moved aside and when it
+    // came back — it is not deleted just because the photos are back on.
+    var patch = {
+      revisit_requested_at: null, revisit_requested_by: null, revisit_reason: null,
+      needs_review: false, form_data: fd,
+      modified_at: new Date().toISOString(),
+      modified_by: 're-visit cancelled by ' + ((user && user.email) || 'admin')
+    };
+    if(back.length) patch.photo_paths = back;
+    var { error } = await sb.from('completed_pms').update(patch).eq('id', id);
     if(error) throw error;
     await loadAll();
-    toast('Re-visit cancelled','ok');
+    toast('Re-visit cancelled' + (back.length ? ' \u00b7 ' + back.length + ' photo(s) re-attached' : '')
+      + (held ? ' \u00b7 the hold is still open, close it on the Holds panel' : ''), held ? 'err' : 'ok');
   }catch(e){ toast('Could not cancel: ' + e.message, 'err'); }
   rvBusy = false; render();
 }
@@ -2281,15 +2342,135 @@ function auditOpenCounts(){
     // here too gives two numbers for one pile that never agree.
     if (p.revisit_requested_at && !p.revisit_done_at) return false;
     return !p.prev_comp && (addedAssetOpen(p) || p.needs_review) && !p.issue_emailed_at; }).length;
-  var added = assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
-  return { findings:findings, issues:issues, added:added, total: findings + issues + added };
+  // The asset count comes from the shared function, not from a filter here —
+  // that is exactly the drift this whole pass is closing.
+  var added = assetListStatus ? assetListStatus.found_open
+            : assets.filter(function(a){ return a.source==='field' && a.reported===false; }).length;
+  var loose = integrityIssues.reduce(function(t,i){ return t + Number(i.n||0); }, 0);
+  return { findings:findings, issues:issues, added:added, loose:loose,
+           total: findings + issues + added + loose };
 }
+// ── Loose ends ──────────────────────────────────────────────────────────────
+// Every state in this system that can be ENTERED but has no path OUT, and every
+// pointer that can dangle, computed in the database by fn_integrity_check so
+// this page cannot disagree with the data it describes.
+//
+// It exists because two things went wrong the same way: a number worked out in
+// three places drifted apart, and an analysis produced a 29-row list that
+// nothing consumed. A check nobody runs is not a control, so it is a tab with a
+// badge on it.
+async function resolveCandidate(id, how){
+  var c = candidates.filter(function(x){ return x.id===id; })[0];
+  if(!c) return;
+  var msg = how==='confirmed'
+    ? 'Confirm ' + (c.store||'this store') + ' has a unit that is not on the asset list?\n\n'
+      + 'Say what confirmed it — a serial read on site, a photograph, a store\n'
+      + 'manager. Then create the asset record from the Added Assets tab so it\n'
+      + 'reaches Freshpet.'
+    : how==='already_listed'
+    ? 'Mark this as already on the list?\n\nSay what you checked.'
+    : 'Dismiss this candidate?\n\nSay why it is not a real second unit — a misread plate,\n'
+      + 'the photograph belonged to another report, the unit was removed.';
+  var note = prompt(msg);
+  if(note === null) return;
+  note = String(note).trim();
+  if(!note) return toast('A reason is required — that is what makes it closed rather than forgotten','err');
+  candBusy = true; render();
+  try{
+    var { error } = await sb.from('asset_list_candidates').update({
+      status: how, resolution: note,
+      resolved_at: new Date().toISOString(),
+      resolved_by: (user && user.email) || 'admin'
+    }).eq('id', id);
+    if(error) throw error;
+    await loadAll();
+    toast('Candidate ' + how.replace('_',' '),'ok');
+  }catch(e){ toast('Could not resolve: '+e.message,'err'); }
+  candBusy = false; render();
+}
+
+function renderLooseEnds(){
+  var reds = integrityIssues.filter(function(i){ return i.severity==='red'; });
+  var open = candidates.filter(function(c){ return c.status==='open'; });
+  var closed = candidates.filter(function(c){ return c.status!=='open'; });
+
+  var h = '<div class="card"><h3>' + icon('shield') + ' Loose ends</h3>'
+    + '<div class="hint">Every state in this system that can be entered but has no way out, and every '
+    + 'reference that can point at something gone. Worked out in the database, not here, so this page '
+    + 'cannot disagree with the data it is describing. <strong>Empty is the correct state.</strong></div>';
+
+  if(!integrityIssues.length){
+    h += '<div class="empty" style="margin-top:12px;color:var(--gn)">' + icon('check')
+      + ' Nothing is half-closed. No stranded holds, no disconnected photographs waiting on a re-visit '
+      + 'nobody ordered, no report pointing at one that was deleted, no unit hidden from both sides.</div>';
+  } else {
+    h += '<div style="overflow-x:auto;margin-top:14px"><table><thead><tr><th>Check</th><th>Count</th>'
+      + '<th>What it means</th></tr></thead><tbody>'
+      + integrityIssues.map(function(i){
+          return '<tr><td><span class="pill ' + (i.severity==='red'?'rd':'am') + '">'
+            + esc(String(i.check_name).replace(/_/g,' ')) + '</span></td>'
+            + '<td class="mono" style="font-weight:700">' + i.n + '</td>'
+            + '<td style="font-size:.83rem">' + esc(i.detail) + '</td></tr>';
+        }).join('')
+      + '</tbody></table></div>'
+      + (reds.length ? '' : '<div class="hint" style="color:var(--gn);margin-top:10px">' + icon('check')
+          + ' Nothing red — everything above is work to finish, not something broken.</div>');
+  }
+  h += '</div>';
+
+  // ── the candidates themselves ──
+  h += '<div class="card"><h3>' + icon('alert') + ' Plate reads not on the asset list</h3>'
+    + '<div class="hint">On 2026-08-26 an audit read 29 serials off plate photographs that Freshpet’s '
+    + 'asset list does not carry. <strong>That list lived in a file and nothing consumed it</strong> — '
+    + '25 of those serials are still not on the list today. They live here now, and each one closes with a '
+    + 'reason. A plate read is evidence a unit exists, not proof of which unit, so <strong>nothing here '
+    + 'reaches Freshpet</strong> until somebody confirms a serial on site and creates the asset record.</div>';
+
+  if(!open.length){
+    h += '<div class="empty" style="margin-top:12px;color:var(--gn)">' + icon('check')
+      + ' Every candidate has been confirmed, dismissed or found already listed.</div>';
+  } else {
+    h += '<div style="overflow-x:auto;max-height:460px;overflow-y:auto;margin-top:14px"><table><thead><tr>'
+      + '<th>Store</th><th>Plate reads</th><th>Tier</th><th>Listed</th><th>Evidence</th><th></th>'
+      + '</tr></thead><tbody>';
+    open.forEach(function(c){
+      h += '<tr><td><strong>' + esc(c.store||'') + '</strong>'
+        + (c.address?'<div class="muted" style="font-size:.72rem">'+esc(c.address)+'</div>':'')
+        + (c.source_pm_id?'<div class="muted" style="font-size:.7rem">report #'+esc(String(c.source_pm_id))+'</div>':'')
+        + '</td>'
+        + '<td class="mono" style="font-size:.8rem">' + (c.serial_read ? esc(c.serial_read)
+            : '<span class="pill dim">not read</span>') + '</td>'
+        + '<td><span class="pill ' + (c.tier==='A'?'rd':c.tier==='B'?'am':'dim') + '">' + esc(c.tier) + '</span></td>'
+        + '<td class="mono">' + (c.units_listed!=null?esc(String(c.units_listed)):'—') + '</td>'
+        + '<td style="font-size:.76rem;max-width:340px">' + esc(c.evidence||'')
+        + (c.signature?'<div class="muted" style="font-size:.7rem">signed: '+esc(c.signature)+'</div>':'') + '</td>'
+        + '<td style="white-space:nowrap">'
+          + '<button class="btn gn sm" onclick="resolveCandidate('+c.id+',\'confirmed\')" '+(candBusy?'disabled':'')+'>Confirmed</button> '
+          + '<button class="btn o sm" onclick="resolveCandidate('+c.id+',\'already_listed\')" '+(candBusy?'disabled':'')+'>Already listed</button> '
+          + '<button class="btn o sm" onclick="resolveCandidate('+c.id+',\'dismissed\')" '+(candBusy?'disabled':'')+'>Dismiss</button>'
+        + '</td></tr>';
+    });
+    h += '</tbody></table></div>';
+  }
+
+  if(closed.length){
+    h += '<div class="hint" style="margin-top:14px">' + closed.length + ' already closed: '
+      + ['confirmed','already_listed','dismissed'].map(function(st){
+          var n = closed.filter(function(c){ return c.status===st; }).length;
+          return n ? n + ' ' + st.replace('_',' ') : null;
+        }).filter(Boolean).join(' · ') + '. Each carries the reason it closed.</div>';
+  }
+  h += '</div>';
+  return h;
+}
+
 function renderAudits(){
   var c = auditOpenCounts();
   var subs = [
     ['findings','Nightly Audit', 'shield', c.findings, 'rd'],
     ['issues',  'Report Issues', 'alert',  c.issues,   'am'],
-    ['added',   'Added Assets',  'plus',   c.added,    'rd']
+    ['added',   'Added Assets',  'plus',   c.added,    'rd'],
+    ['loose',   'Loose ends',    'shield', c.loose,    'rd']
   ];
   var h = '<div class="card" style="padding-bottom:0"><h3>'+icon('shield')+' Audits</h3>'
     + '<div class="hint">Everything the photo-integrity programme produces, in one place: what the '
@@ -2305,6 +2486,7 @@ function renderAudits(){
     + '</div></div>';
   return h + (auditSub==='issues' ? renderReportIssues()
             : auditSub==='added'  ? renderAddedAssets()
+            : auditSub==='loose'  ? renderLooseEnds()
             : renderAudit());
 }
 
