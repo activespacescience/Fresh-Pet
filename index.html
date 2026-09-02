@@ -200,6 +200,8 @@ var adminTechAssets = []; // asset IDs assigned to selected tech
 var pickerSel = {};       // multi-select in the Add-Stores picker: { storeKey: true }
 // Route state (for tech view)
 var myRoute = []; // route assignments + asset data
+var assetCandidates = [];  // open 'there may be another unit here' rows, by store
+var assetCandidates = [];  // open 'there may be another unit here' rows, by store
 var currentStopIdx = 0;
 // Finished work is hidden on the route screen, not deleted. A stop you have
 // already done is not a stop — it competes for the eye with the one you are
@@ -271,6 +273,7 @@ async function initAuth() {
     currentUser = session.user;
     await loadAssets();
     await loadCompletedPMs();
+    await loadAssetCandidates();
     await checkUserRole();
     screen = 'home';
     tryAutoResume(); // reopened mid-PM (e.g. iOS reloaded the page for the camera)
@@ -291,6 +294,7 @@ async function initAuth() {
       currentUser = session.user;
       await loadAssets();
       await loadCompletedPMs();
+      await loadAssetCandidates();
       await checkUserRole();
       screen = 'home';
       tryAutoResume();
@@ -349,6 +353,23 @@ async function loadAssets() {
 async function loadCompletedPMs() {
   var { data, error } = await sb.from('completed_pms').select('*').order('created_at', { ascending: false });
   if (!error && data) { completedPMs = data; }
+}
+
+// Stores where we already believe there is a cooler that is not on the asset
+// list -- a plate we photographed reads a serial the list does not carry.
+//
+// The tech was never told. The assumption that "if there is an extra unit there
+// he will just add it" only holds if he LOOKS, and nothing on his route said to.
+// Of the 25 open candidates, 4 are at a store on the re-shoot route and 21 are
+// at stores nobody is scheduled to visit -- so left silent, most of them wait
+// for the next PM cycle and the rest depend on him happening to notice.
+async function loadAssetCandidates() {
+  var { data, error } = await sb.from('asset_list_candidates')
+    .select('id,store,serial_read,tier,evidence,units_listed,status')
+    .eq('status', 'open');
+  // Non-fatal: a tech with no read access still gets a working route. The
+  // prompt is a help, never a gate on doing the work.
+  assetCandidates = (!error && data) ? data : [];
 }
 
 async function loadTechProfiles() {
@@ -2359,6 +2380,13 @@ function unitCard(a, stopIdx) {
   return h;
 }
 
+// Open candidates at this store, matched on the store name the route carries.
+function candidatesAt(store){
+  var k = String(store||'').trim().toLowerCase();
+  if(!k) return [];
+  return assetCandidates.filter(function(c){ return String(c.store||'').trim().toLowerCase() === k; });
+}
+
 function renderRoute() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="goHome()">←</button>' +
@@ -2453,6 +2481,28 @@ function renderRoute() {
     h += '<div style="margin-top:8px">';
     h += '<button class="nav-btn" onclick="openNavigation(\'' + esc(s.address).replace(/'/g, "\\'") + '\',\'' + esc(s.city).replace(/'/g, "\\'") + '\',\'' + esc(s.state).replace(/'/g, "\\'") + '\',\'' + esc(s.zip).replace(/'/g, "\\'") + '\')">'+icon('map')+' Navigate</button>';
     h += '</div>';
+
+    // "There may be another cooler here." Said BEFORE the unit list, because it
+    // is an instruction about the store, not about any machine on it — and
+    // because a tech who is not told to look has no reason to.
+    var cands = candidatesAt(s.store);
+    if (cands.length) {
+      h += '<div style="margin:10px 0 0;padding:10px 12px;border:1px solid var(--or);border-left-width:4px;'
+        + 'border-radius:9px;background:rgba(229,106,21,.09)">'
+        + '<div style="font-weight:800;font-size:14px;color:var(--or);letter-spacing:.02em">'
+        + icon('alert') + ' CHECK FOR ' + (cands.length === 1 ? 'ANOTHER COOLER' : cands.length + ' MORE COOLERS') + ' HERE</div>'
+        + '<div style="font-size:13px;color:var(--dim);margin-top:4px">'
+        + 'Our records say this store may have a unit that is not on the list. '
+        + 'Walk the store. If you find one, use <strong>Add an asset</strong> below and do a full PM on it. '
+        + 'If there is only what is listed, tell the office \u2014 that closes it too.</div>'
+        + cands.map(function(c){
+            return '<div style="font-size:12px;color:var(--dim);margin-top:6px">'
+              + (c.serial_read ? 'Plate photographed reads <strong class="mono">' + esc(c.serial_read) + '</strong>'
+                               : 'Reported by the technician on a previous visit')
+              + (c.units_listed != null ? ' \u00b7 list carries ' + c.units_listed : '') + '</div>';
+          }).join('')
+        + '</div>';
+    }
 
     // Every unit at this store, on the store card. The tech picks the next one
     // from here instead of walking back out to a stop screen — at a store with
@@ -2601,6 +2651,25 @@ async function saveNewAsset() {
       added_by: currentUser.email, added_at: new Date().toISOString()
     }).select().single();
     if (error) { throw new Error(error.message); }
+
+    // The candidate that predicted this unit is now answered by the unit itself.
+    // Closing it here is what makes "he'll just add it" actually close the loop
+    // — otherwise the office is still chasing a store the tech has already
+    // settled. Best-effort: a failed close never costs the asset.
+    try {
+      var openHere = candidatesAt(ref.store).filter(function(c){ return c.status === 'open'; });
+      if (openHere.length) {
+        await sb.from('asset_list_candidates').update({
+          status: 'confirmed', asset_id: newAsset.id,
+          resolution: 'Confirmed on site ' + new Date().toISOString().slice(0,10) + ' by '
+            + (currentUser.email || 'the technician') + ' — the unit was found and added from the route'
+            + (noSerial ? ' with no readable serial plate.' : ' as S/N ' + serial + '.'),
+          resolved_at: new Date().toISOString(),
+          resolved_by: currentUser.email || 'field'
+        }).eq('id', openHere[0].id);
+        await loadAssetCandidates();
+      }
+    } catch (e) { /* the asset is what matters; the office can close the row */ }
 
     // Pin the new unit onto MY route at this same stop so it stays with the
     // store (best-effort — the PM works either way).
