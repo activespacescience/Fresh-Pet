@@ -2424,14 +2424,18 @@ function renderLooseEnds(){
     + 'asset list does not carry. <strong>That list lived in a file and nothing consumed it</strong> — '
     + '25 of those serials are still not on the list today. They live here now, and each one closes with a '
     + 'reason. A plate read is evidence a unit exists, not proof of which unit, so <strong>nothing here '
-    + 'reaches Freshpet</strong> until somebody confirms a serial on site and creates the asset record.</div>';
+    + 'reaches Freshpet</strong> until somebody confirms a serial on site and creates the asset record.</div>'
+    + '<div class="hint">The technician is now <strong>prompted on the route card</strong> at any store with '
+    + 'an open row here, and adding the unit closes the row by itself. <strong>Who is going</strong> says '
+    + 'when that prompt actually fires: a booked re-shoot is soon, "next PM cycle" is whenever the store '
+    + 'next comes round, and "nobody is going" needs a trip scheduling.</div>';
 
   if(!open.length){
     h += '<div class="empty" style="margin-top:12px;color:var(--gn)">' + icon('check')
       + ' Every candidate has been confirmed, dismissed or found already listed.</div>';
   } else {
     h += '<div style="overflow-x:auto;max-height:460px;overflow-y:auto;margin-top:14px"><table><thead><tr>'
-      + '<th>Store</th><th>Plate reads</th><th>Tier</th><th>Listed</th><th>Evidence</th><th></th>'
+      + '<th>Store</th><th>Plate reads</th><th>Tier</th><th>Listed</th><th>Who is going</th><th>Evidence</th><th></th>'
       + '</tr></thead><tbody>';
     open.forEach(function(c){
       h += '<tr><td><strong>' + esc(c.store||'') + '</strong>'
@@ -2441,7 +2445,12 @@ function renderLooseEnds(){
         + '<td class="mono" style="font-size:.8rem">' + (c.serial_read ? esc(c.serial_read)
             : '<span class="pill dim">not read</span>') + '</td>'
         + '<td><span class="pill ' + (c.tier==='A'?'rd':c.tier==='B'?'am':'dim') + '">' + esc(c.tier) + '</span></td>'
-        + '<td class="mono">' + (c.units_listed!=null?esc(String(c.units_listed)):'—') + '</td>'
+        + '<td class="mono">' + (c.units_listed!=null?esc(String(c.units_listed)):'\u2014') + '</td>'
+        + '<td style="white-space:nowrap">' + (c.revisit_scheduled
+            ? '<span class="pill gn">re-shoot booked</span>'
+            : c.on_someones_route
+              ? '<span class="pill am">next PM cycle</span>'
+              : '<span class="pill rd">nobody is going</span>') + '</td>'
         + '<td style="font-size:.76rem;max-width:340px">' + esc(c.evidence||'')
         + (c.signature?'<div class="muted" style="font-size:.7rem">signed: '+esc(c.signature)+'</div>':'') + '</td>'
         + '<td style="white-space:nowrap">'
