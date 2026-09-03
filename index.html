@@ -278,7 +278,7 @@ var photosLater = false;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.7';
+var APP_VERSION = '2026-09-03.8';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -4033,28 +4033,58 @@ async function goAddAssets() {
 async function optimizeAndSaveRoute() {
   if (adminTechAssets.length === 0) { showStatus('No assets to optimize', 'err'); return; }
 
-  // Run nearest-neighbor optimization
-  var optimized = optimizeRoute(adminTechAssets);
-
-  // Delete existing assignments for this tech
-  await sb.from('route_assignments').delete().eq('tech_email', adminSelectedTech);
-
-  // Insert new assignments with optimized order
-  var inserts = optimized.map(function(item) {
-    return {
-      tech_email: adminSelectedTech,
-      asset_id: item.id,
-      stop_order: item.order,
-      route_name: 'Primary Route',
-      active: true
-    };
+  // The areas are the route. This function rebuilds the tech's assignments by
+  // DELETE + INSERT, so anything it does not carry across is destroyed — and
+  // dropping region would silently collapse a regionalised route back into one
+  // 356-stop thread, which is the exact fault the areas exist to fix. So:
+  // carry the region across, and optimise INSIDE each area rather than over
+  // the whole territory.
+  var areaOf = {}, seqOf = {};
+  allAssignments.forEach(function(r) {
+    if (r.tech_email !== adminSelectedTech) return;
+    if (r.region) { areaOf[r.asset_id] = r.region; seqOf[r.asset_id] = (r.region_seq == null ? 999 : r.region_seq); }
   });
+
+  var buckets = {}, order = [];
+  adminTechAssets.forEach(function(id) {
+    var key = areaOf[id] || '';
+    if (!buckets[key]) { buckets[key] = { name: areaOf[id] || null, seq: (seqOf[id] == null ? 999 : seqOf[id]), ids: [] }; order.push(buckets[key]); }
+    if (seqOf[id] != null && seqOf[id] < buckets[key].seq) buckets[key].seq = seqOf[id];
+    buckets[key].ids.push(id);
+  });
+  order.sort(function(a, b) { return a.seq - b.seq; });
+
+  var inserts = [];
+  var next = 0;
+  order.forEach(function(bucket) {
+    // Each area gets a contiguous band of stop_orders, so the areas stay in
+    // their travelling order and one area's numbers cannot land inside another's.
+    var opt = optimizeRoute(bucket.ids);
+    var byOrder = {};
+    opt.forEach(function(item) { (byOrder[item.order] = byOrder[item.order] || []).push(item.id); });
+    Object.keys(byOrder).map(Number).sort(function(a, b) { return a - b; }).forEach(function(o) {
+      var stopOrder = next++;
+      byOrder[o].forEach(function(id) {
+        inserts.push({
+          tech_email: adminSelectedTech, asset_id: id, stop_order: stopOrder,
+          region: bucket.name, region_seq: (bucket.name ? bucket.seq : null),
+          route_name: 'Primary Route', active: true
+        });
+      });
+    });
+  });
+
+  var del = await sb.from('route_assignments').delete().eq('tech_email', adminSelectedTech);
+  if (del.error) { showStatus('Error clearing route: ' + del.error.message, 'err'); return; }
 
   var { error } = await sb.from('route_assignments').insert(inserts);
   if (error) { showStatus('Error saving route: ' + error.message, 'err'); return; }
 
-  showStatus('Route optimized and saved! (' + optimized.length + ' assets)', 'ok');
+  var areaCount = order.filter(function(b) { return b.name; }).length;
+  showStatus('Route optimized and saved \u2014 ' + inserts.length + ' assets'
+    + (areaCount ? ' across ' + areaCount + ' area' + (areaCount === 1 ? '' : 's') : ''), 'ok');
   await loadTechRoute(adminSelectedTech);
+  await loadAllAssignments();
   render();
 }
 

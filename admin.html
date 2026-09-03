@@ -452,7 +452,17 @@ async function saveRoute(){
   var del = await sb.from('route_assignments').delete().eq('tech_email', routeTech);
   if(del.error){ saving=false; render(); return toast('Save failed: '+del.error.message,'err'); }
   if(routeStops.length){
-    var rows = routeStops.map(function(s, i){ return { tech_email:routeTech, asset_id:s.asset_id, stop_order:i, route_name:'Primary Route', active:true }; });
+    // Carry the AREA across the rebuild. This is a DELETE + INSERT, so a column
+    // it does not write is destroyed — and losing region collapses the tech's
+    // areas back into one long list on the phone.
+    var areaOf = {}, seqOf = {};
+    assignments.forEach(function(r){
+      if(r.tech_email !== routeTech || !r.region) return;
+      areaOf[r.asset_id] = r.region; seqOf[r.asset_id] = r.region_seq;
+    });
+    var rows = routeStops.map(function(s, i){ return { tech_email:routeTech, asset_id:s.asset_id, stop_order:i,
+      region: areaOf[s.asset_id] || null, region_seq: (areaOf[s.asset_id] ? seqOf[s.asset_id] : null),
+      route_name:'Primary Route', active:true }; });
     var ins = await sb.from('route_assignments').insert(rows);
     if(ins.error){ saving=false; render(); return toast(ins.error.code==='23505'?'Save failed: a store is already on another tech\'s route':'Save failed: '+ins.error.message,'err'); }
   }
