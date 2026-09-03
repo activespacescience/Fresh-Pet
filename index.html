@@ -136,6 +136,40 @@ body.dark input:focus,body.dark textarea:focus,body.dark select:focus{background
 body.dark .stop-card.current{background:#2E2016}
 body.dark .login-btn{background:#fff;color:#1c1c1e}
 body.dark .status.info{background:#5a5a5e}
+
+/* ═══ Paper route sheet ═══
+   Hidden until printRouteSheet asks for it, then it is the ONLY thing on the
+   page — the app's own chrome, cards and dark theme would otherwise print too
+   and waste a technician's ink and paper. Deliberately black on white and in
+   points, because this is a document, not a screen. */
+#printArea { display: none; }
+@media print {
+  body.printing-route > *:not(#printArea) { display: none !important; }
+  body.printing-route { background: #fff !important; margin: 0; }
+  body.printing-route #printArea { display: block; }
+  @page { size: letter; margin: 0.4in; }
+}
+#printArea .rs { color: #000; background: #fff; font: 10pt/1.3 "Helvetica Neue",Helvetica,Arial,sans-serif; }
+#printArea .rs-head { display: flex; align-items: flex-start; gap: 10pt; border-bottom: 2pt solid #E56A15; padding-bottom: 5pt; margin-bottom: 7pt; }
+#printArea .rs-t { font-size: 15pt; font-weight: 800; letter-spacing: -.3pt; }
+#printArea .rs-s { font-size: 9pt; color: #5b5349; margin-top: 1pt; }
+#printArea .rs-n { margin-left: auto; font-size: 8pt; font-weight: 800; color: #E56A15; border: 1.2pt solid #E56A15; border-radius: 4pt; padding: 2pt 6pt; white-space: nowrap; }
+#printArea .rs-note { font-size: 8.5pt; background: #f6efe5; border-left: 3pt solid #E56A15; padding: 5pt 7pt; margin-bottom: 8pt; }
+#printArea .rs-store { break-inside: avoid; page-break-inside: avoid; margin-bottom: 7pt; }
+#printArea .rs-sh { border-bottom: 1pt solid #333; padding-bottom: 2pt; margin-bottom: 3pt; }
+#printArea .rs-i { display: inline-block; min-width: 15pt; font-weight: 800; color: #E56A15; }
+#printArea .rs-name { font-weight: 800; font-size: 10.5pt; }
+#printArea .rs-addr { font-size: 8.5pt; color: #5b5349; margin-left: 6pt; }
+#printArea .rs-u { border-bottom: .5pt dotted #b9ada0; padding: 3pt 0 3pt 15pt; break-inside: avoid; page-break-inside: avoid; }
+#printArea .rs-u1 { font-size: 9.5pt; }
+#printArea .rs-sn { font-family: "Courier New",monospace; font-weight: 800; font-size: 10.5pt; }
+#printArea .rs-mm { color: #5b5349; font-size: 8.5pt; margin-left: 6pt; }
+#printArea .rs-flag { margin-left: 6pt; font-size: 7.5pt; font-weight: 800; color: #155E9B; border: 1pt solid #155E9B; border-radius: 3pt; padding: 0 4pt; }
+#printArea .rs-u2 { font-size: 8.5pt; margin-top: 2pt; display: flex; flex-wrap: wrap; gap: 4pt 12pt; }
+#printArea .rs-u2 u { display: inline-block; min-width: 34pt; border-bottom: .8pt solid #000; text-decoration: none; }
+#printArea .rs-p b, #printArea .rs-f b { font-size: 11pt; font-weight: 400; }
+#printArea .rs-u3 { font-size: 8pt; color: #5b5349; margin-top: 3pt; display: flex; align-items: flex-end; gap: 5pt; }
+#printArea .rs-u3 u { flex: 1; border-bottom: .8pt solid #000; text-decoration: none; height: 11pt; }
 </style>
 </head>
 <body>
@@ -240,7 +274,7 @@ var draftPhotosDropped = 0;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-02.6';
+var APP_VERSION = '2026-09-03.1';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -983,6 +1017,86 @@ function addUnitFromPlate(){
     var el = document.getElementById('naSerial');
     if (el) el.value = serial;
   }, 60);
+}
+
+// ═══ The paper route sheet ═══
+//
+// For the outskirts, where the signal is bad enough that the app is not a
+// dependable way to work. It is not a directory — it is a WORKSHEET, so a stop
+// done on paper can be keyed in afterwards without anybody trying to remember
+// what the temperature was. Every field the form demands has a box here, in the
+// same order, and the three photographs have a tick each so he can see at a
+// glance which unit he still owes a picture of.
+//
+// Rendered from the SAME route the app drives from, so a sheet cannot describe
+// a route the phone disagrees with. Printing is the browser's own print dialog,
+// which on both phones offers Save as PDF — no library, nothing to install, and
+// it works with no signal once the page is loaded.
+function routeSheetHTML(stops, opts) {
+  opts = opts || {};
+  var when = new Date().toLocaleDateString(undefined, { weekday:'long', year:'numeric', month:'long', day:'numeric' });
+  var units = stops.reduce(function(n, s){ return n + s.assets.length; }, 0);
+  var esc2 = esc;
+  var h = '<div class="rs">'
+    + '<div class="rs-head">'
+      + '<div><div class="rs-t">Freshpet PM — route sheet</div>'
+      + '<div class="rs-s">' + esc2(opts.techName || shortTechName() || '') + ' \u00b7 ' + esc2(when)
+      + ' \u00b7 ' + stops.length + ' store' + (stops.length===1?'':'s') + ', ' + units + ' unit' + (units===1?'':'s')
+      + (opts.owedOnly ? ' \u00b7 re-shoots only' : '') + '</div></div>'
+      + '<div class="rs-n">Paper backup</div>'
+    + '</div>'
+    + '<div class="rs-note"><strong>Use this when the phone cannot.</strong> Write the readings and tick the photographs '
+    + 'you took. Take the pictures on the phone as normal \u2014 they upload when you are back in signal. '
+    + 'Key the stop in when you can, from this sheet. '
+    + '<strong>Never write a reading you did not measure.</strong></div>';
+
+  stops.forEach(function(st, i) {
+    h += '<div class="rs-store">'
+      + '<div class="rs-sh"><span class="rs-i">' + (i+1) + '</span>'
+      + '<span class="rs-name">' + esc2(st.store) + '</span>'
+      + '<span class="rs-addr">' + esc2([st.address, st.city, st.state, st.zip].filter(Boolean).join(', '))
+      + (st.phone ? ' \u00b7 ' + esc2(st.phone) : '') + '</span></div>';
+    st.assets.forEach(function(a) {
+      var owed = typeof isRevisit === 'function' && isRevisit(a.serial);
+      h += '<div class="rs-u">'
+        + '<div class="rs-u1">'
+          + '<span class="rs-sn">' + esc2(a.no_serial ? 'NO PLATE' : (a.serial || '—')) + '</span>'
+          + '<span class="rs-mm">' + esc2([a.manufacturer, a.model].filter(Boolean).join(' ')) + '</span>'
+          + (owed ? '<span class="rs-flag">RE-SHOOT</span>' : '')
+        + '</div>'
+        + '<div class="rs-u2">'
+          + '<span class="rs-f">Interior <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u>&deg;F</span>'
+          + '<span class="rs-f">Set pt <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span>'
+          + '<span class="rs-f">Volts <u>&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</u></span>'
+          + '<span class="rs-p">Photos <b>&#9744;</b> unit <b>&#9744;</b> plate <b>&#9744;</b> bottom</span>'
+          + '<span class="rs-f">Working on arrival <b>&#9744;</b> Y <b>&#9744;</b> N</span>'
+        + '</div>'
+        + '<div class="rs-u3"><span>Notes</span><u></u></div>'
+        + '</div>';
+    });
+    h += '</div>';
+  });
+  return h + '</div>';
+}
+
+function printRouteSheet(owedOnly) {
+  var stops = getRouteStops();
+  if (owedOnly) {
+    stops = stops.map(function(s){
+      var keep = s.assets.filter(function(a){ return isRevisit(a.serial); });
+      return keep.length ? Object.assign({}, s, { assets: keep }) : null;
+    }).filter(Boolean);
+  }
+  if (!stops.length) { showStatus(owedOnly ? 'Nothing is owed a re-shoot right now' : 'No route to print', 'err'); return; }
+  var host = document.getElementById('printArea');
+  if (!host) { host = document.createElement('div'); host.id = 'printArea'; document.body.appendChild(host); }
+  host.innerHTML = routeSheetHTML(stops, { owedOnly: owedOnly });
+  document.body.classList.add('printing-route');
+  // The class must be on before print and off after, whether he prints or
+  // cancels — afterprint fires either way, onprint-cancel included.
+  var done = function(){ document.body.classList.remove('printing-route'); window.removeEventListener('afterprint', done); };
+  window.addEventListener('afterprint', done);
+  setTimeout(function(){ window.print(); setTimeout(done, 1500); }, 60);
 }
 
 function retakePlate(){
@@ -2774,6 +2888,16 @@ function renderRoute() {
       (syncing ? '<span class="spinner"></span> Syncing\u2026' : icon('refresh') + ' Sync with the office') +
     '</button>' +
     (updateReady ? '<button class="btn btn-p" style="margin-top:6px;padding:8px;font-size:13px" onclick="applyUpdate()">Update the app</button>' : '') +
+    // Paper backup, printed from the route it is a backup FOR. On both phones
+    // the print dialog offers Save as PDF, so "print" also means "keep a copy
+    // on the phone" — which is the version that survives a dead zone.
+    '<div style="display:flex;gap:6px;margin-top:6px">' +
+      '<button class="btn btn-o" style="flex:1;padding:8px;font-size:13px" onclick="printRouteSheet(false)">' +
+        icon('file-text') + ' Print route</button>' +
+      (doneCount < stops.length
+        ? '<button class="btn btn-o" style="flex:1;padding:8px;font-size:13px" onclick="printRouteSheet(true)">' +
+            icon('camera') + ' Print re-shoots</button>' : '') +
+    '</div>' +
   '</div>';
 
   // Start/End day: re-optimize remaining stops from wherever you are
