@@ -278,7 +278,7 @@ var photosLater = false;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.3';
+var APP_VERSION = '2026-09-03.7';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -817,29 +817,15 @@ function haversine(lat1, lng1, lat2, lng2) {
   return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
-function optimizeRoute(assetIds) {
-  // Group assets by unique location (lat/lng)
-  var stops = [];
-  var seenAddr = {};
-  assetIds.forEach(function(id) {
-    var a = ASSETS.find(function(x) { return x.id === id; });
-    if (!a) return;
-    var key = (a.address || '') + '|' + (a.city || '');
-    if (!seenAddr[key]) {
-      seenAddr[key] = { lat: a.lat, lng: a.lng, ids: [id], addr: key };
-      stops.push(seenAddr[key]);
-    } else {
-      seenAddr[key].ids.push(id);
-    }
-  });
-  if (stops.length <= 1) {
-    var flat = [];
-    stops.forEach(function(s, i) { s.ids.forEach(function(id) { flat.push({ id: id, order: i }); }); });
-    return flat;
-  }
-  // Nearest-neighbor from first stop
-  var ordered = [stops[0]];
-  var remaining = stops.slice(1);
+function routeTourMiles(list) {
+  var m = 0;
+  for (var i = 1; i < list.length; i++) m += haversine(list[i-1].lat, list[i-1].lng, list[i].lat, list[i].lng);
+  return m;
+}
+// Greedy nearest-neighbour from one starting stop.
+function nearestNeighbourFrom(stops, startIdx) {
+  var remaining = stops.slice();
+  var ordered = [remaining.splice(startIdx, 1)[0]];
   while (remaining.length > 0) {
     var last = ordered[ordered.length - 1];
     var nearIdx = 0, nearDist = Infinity;
@@ -850,6 +836,119 @@ function optimizeRoute(assetIds) {
     ordered.push(remaining[nearIdx]);
     remaining.splice(nearIdx, 1);
   }
+  return ordered;
+}
+// 2-opt: repeatedly un-cross two legs that cross each other. This is what kills
+// the long doubling-back — greedy nearest-neighbour paints itself into a corner
+// and then has to sprint across the state to pick up what it skipped, which is
+// how one Bakersfield stop landed between two Sacramento blocks (259 miles down,
+// 257 back, for a single cooler).
+function twoOptRoute(tour, budgetMs) {
+  var deadline = Date.now() + (budgetMs || 4000);
+  var improved = true;
+  while (improved) {
+    improved = false;
+    for (var i = 0; i < tour.length - 2; i++) {
+      if (Date.now() > deadline) return tour;   // a good route now beats a perfect one never
+      for (var k = i + 2; k < tour.length; k++) {
+        var a = tour[i], b = tour[i+1], c = tour[k], d = tour[k+1];
+        var before = haversine(a.lat,a.lng,b.lat,b.lng) + (d ? haversine(c.lat,c.lng,d.lat,d.lng) : 0);
+        var after  = haversine(a.lat,a.lng,c.lat,c.lng) + (d ? haversine(b.lat,b.lng,d.lat,d.lng) : 0);
+        if (after < before - 1e-9) {
+          var lo = i + 1, hi = k;
+          while (lo < hi) { var t = tour[lo]; tour[lo] = tour[hi]; tour[hi] = t; lo++; hi--; }
+          improved = true;
+        }
+      }
+    }
+  }
+  return tour;
+}
+// The city is the unit of work, and that is the whole point of this function.
+// Optimising purely for shortest total distance produces a thread that wanders
+// in and out of the same metro — mathematically shorter, useless as a work plan,
+// and it is what had the route leaving Sacramento for Pinole and coming back to
+// Sacramento 180 stops later. Ordering CITIES first and only then the stops
+// inside each one guarantees a city is finished before it is left. On Mike's
+// route that costs 38 miles and takes returns-to-a-city-already-worked from 44
+// to zero.
+function normCity(c) {
+  return (c || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
+function optimizeRoute(assetIds) {
+  // Group by the STORE, not just the address — two different stores can share a
+  // plaza address, and merging them makes one of them unreachable on the route.
+  var stops = [];
+  var seenAddr = {};
+  assetIds.forEach(function(id) {
+    var a = ASSETS.find(function(x) { return x.id === id; });
+    if (!a) return;
+    var key = routeStopKey(a);
+    if (!seenAddr[key]) {
+      seenAddr[key] = { lat: a.lat, lng: a.lng, city: a.city, ids: [id], hasGeo: (a.lat != null && a.lng != null) };
+      stops.push(seenAddr[key]);
+    } else {
+      seenAddr[key].ids.push(id);
+    }
+  });
+  // A stop with no coordinates can't be placed. Keep it — never drop a store
+  // from a route — but park it at the end rather than let NaN distances quietly
+  // freeze the ordering from that point on (every NaN comparison is false, so a
+  // single missing coordinate used to turn the rest of the optimizer into a
+  // no-op that returned the input order and looked like it had worked).
+  var placeable = stops.filter(function(s) { return s.hasGeo; });
+  var unplaceable = stops.filter(function(s) { return !s.hasGeo; });
+
+  var ordered = [];
+  if (placeable.length <= 1) {
+    ordered = placeable;
+  } else {
+    // Cities, normalised — the data holds "CHICO" and "Chico" as two spellings
+    // of one place, and splitting on that would send a tech back to a city the
+    // route thinks it has never been to.
+    var byCity = {};
+    var cities = [];
+    placeable.forEach(function(s) {
+      var k = normCity(s.city);
+      if (!byCity[k]) { byCity[k] = { stops: [], lat: 0, lng: 0 }; cities.push(byCity[k]); }
+      byCity[k].stops.push(s);
+    });
+    cities.forEach(function(c) {
+      c.lat = c.stops.reduce(function(t, p) { return t + p.lat; }, 0) / c.stops.length;
+      c.lng = c.stops.reduce(function(t, p) { return t + p.lng; }, 0) / c.stops.length;
+    });
+
+    // Anchor on the route's CURRENT first stop, so optimising keeps the tech
+    // starting where he already starts instead of relocating him to whichever
+    // end of the state happens to make the total shortest.
+    var origin = placeable[0];
+    var startIdx = 0, startDist = Infinity;
+    cities.forEach(function(c, i) {
+      var d = haversine(origin.lat, origin.lng, c.lat, c.lng);
+      if (d < startDist) { startDist = d; startIdx = i; }
+    });
+    var cityOrder = cities.length > 2
+      ? twoOptRoute(nearestNeighbourFrom(cities, startIdx), 3000)
+      : nearestNeighbourFrom(cities, startIdx);
+
+    // Inside a city, enter at whichever stop is closest to where the last city
+    // left off, then untangle.
+    var from = origin;
+    cityOrder.forEach(function(c) {
+      var ei = 0, ed = Infinity;
+      c.stops.forEach(function(p, i) {
+        var d = haversine(from.lat, from.lng, p.lat, p.lng);
+        if (d < ed) { ed = d; ei = i; }
+      });
+      var inner = c.stops.length > 2
+        ? twoOptRoute(nearestNeighbourFrom(c.stops, ei), 300)
+        : nearestNeighbourFrom(c.stops, ei);
+      ordered = ordered.concat(inner);
+      from = inner[inner.length - 1];
+    });
+  }
+  ordered = ordered.concat(unplaceable);
+
   var flat = [];
   ordered.forEach(function(s, i) { s.ids.forEach(function(id) { flat.push({ id: id, order: i }); }); });
   return flat;
@@ -2661,9 +2760,18 @@ function renderUnassignedStores() {
   return h;
 }
 
+// Next free stop_order for a tech. This used to be the COUNT of their
+// assignments, which is not the same number the moment any stop_order is
+// duplicated or sparse — and when it collides, two different stores end up
+// sharing a position. On Mike's route 11 pairs collided that way.
+function nextStopOrder(rows) {
+  var max = -1;
+  rows.forEach(function(r) { if (typeof r.stop_order === 'number' && r.stop_order > max) max = r.stop_order; });
+  return max + 1;
+}
 async function assignStoreToTech(assetIds) {
   if (!unassignTech) { showStatus('Choose a technician first', 'err'); return; }
-  var base = allAssignments.filter(function(r) { return r.tech_email === unassignTech; }).length;
+  var base = nextStopOrder(allAssignments.filter(function(r) { return r.tech_email === unassignTech; }));
   var inserts = assetIds.map(function(id, i) {
     return { tech_email: unassignTech, asset_id: id, stop_order: base + i, route_name: 'Primary Route', active: true };
   });
@@ -3022,6 +3130,157 @@ function candidatesAt(store){
   return assetCandidates.filter(function(c){ return String(c.store||'').trim().toLowerCase() === k; });
 }
 
+// ===== Areas =====
+// A route is worked one AREA at a time, not as one long thread. The techs are
+// on the road and sleep somewhere different every night, so there is no home
+// base to anchor on — the only anchor that means anything is where the phone
+// says they are right now. So: the area list is sorted by distance from the
+// CURRENT location every time it is opened, you open an area, re-route it from
+// where you are, work it, close it out, and the list re-sorts from wherever
+// that left you.
+var currentArea = null;          // area name being worked, null = the picker
+var myPos = null;                // last known position, for sorting areas
+var locating = false;
+
+function routeAreas(stops) {
+  var seen = {}, areas = [];
+  stops.forEach(function(s) {
+    var name = s.region || 'My route';
+    if (!seen[name]) {
+      seen[name] = { name: name, seq: (s.region_seq == null ? 999 : s.region_seq), stops: [] };
+      areas.push(seen[name]);
+    }
+    // An area's position is its EARLIEST region_seq, the same rule stops use.
+    if (s.region_seq != null && s.region_seq < seen[name].seq) seen[name].seq = s.region_seq;
+    seen[name].stops.push(s);
+  });
+  areas.forEach(function(a) {
+    a.total = a.stops.length;
+    a.done = a.stops.filter(function(x) { return x.allDone; }).length;
+    a.left = a.total - a.done;
+    // Distance is measured to the NEAREST owed stop in the area, not to its
+    // centre: what matters is how far the next bit of work is, and a big area
+    // whose near edge is 5 miles away is not "40 miles away".
+    a.miles = null;
+    if (myPos) {
+      var best = Infinity;
+      a.stops.forEach(function(x) {
+        if (x.allDone) return;
+        var a0 = x.assets[0];
+        if (!a0 || a0.lat == null || a0.lng == null) return;
+        var d = haversine(myPos.lat, myPos.lng, a0.lat, a0.lng);
+        if (d < best) best = d;
+      });
+      if (best < Infinity) a.miles = best;
+    }
+  });
+  areas.sort(function(x, y) {
+    // Finished areas sink to the bottom.
+    if ((x.left === 0) !== (y.left === 0)) return x.left === 0 ? 1 : -1;
+    // An area already STARTED outranks an untouched one, even a nearer
+    // untouched one. Otherwise "always show me the closest" quietly turns into
+    // half-worked areas all over the state, each with three stragglers in it —
+    // finishing what is open is worth a few miles.
+    var xs = x.done > 0, ys = y.done > 0;
+    if (xs !== ys) return xs ? -1 : 1;
+    if (x.miles != null && y.miles != null) return x.miles - y.miles;
+    if (x.miles != null) return -1;
+    if (y.miles != null) return 1;
+    return x.seq - y.seq;
+  });
+  return areas;
+}
+
+async function useMyLocation() {
+  if (locating) return;
+  locating = true; render();
+  myPos = await getPosition();
+  locating = false;
+  if (!myPos) showStatus('Could not get your location — areas are in their normal order', 'err');
+  render();
+}
+
+function openArea(name) {
+  currentArea = name;
+  showDoneStops = false;
+  window.scrollTo(0, 0);
+  render();
+}
+function closeArea() {
+  currentArea = null;
+  window.scrollTo(0, 0);
+  // Coming out of an area, the next question is "what is nearest to me NOW",
+  // and the answer moved while he was working. Refresh the fix rather than
+  // sorting the list against where he was this morning.
+  useMyLocation();
+}
+
+function renderAreaPicker(areas, allStops) {
+  var doneAll = allStops.filter(function(s) { return s.allDone; }).length;
+  var h = '';
+
+  h += '<div class="card" style="text-align:center">' +
+    '<div style="font-size:24px;font-weight:700">' + doneAll + '/' + allStops.length + '</div>' +
+    '<div style="color:var(--dim);font-size:16px">Stops Completed</div>' +
+    '<div class="progress-bar"><div class="fill" style="width:' +
+      (allStops.length ? (doneAll / allStops.length * 100) : 0) + '%"></div></div>' +
+    '<button class="btn btn-o" style="margin-top:10px;padding:8px;font-size:13px" onclick="syncNow()" ' +
+      (syncing ? 'disabled' : '') + '>' +
+      (syncing ? '<span class="spinner"></span> Syncing\u2026' : icon('refresh') + ' Sync with the office') +
+    '</button>' +
+    (updateReady ? '<button class="btn btn-p" style="margin-top:6px;padding:8px;font-size:13px" onclick="applyUpdate()">Update the app</button>' : '') +
+    '<div style="display:flex;gap:6px;margin-top:6px">' +
+      '<button class="btn btn-o" style="flex:1;padding:8px;font-size:13px" onclick="printRouteSheet(false)">' +
+        icon('file-text') + ' Print route</button>' +
+      (doneAll < allStops.length
+        ? '<button class="btn btn-o" style="flex:1;padding:8px;font-size:13px" onclick="printRouteSheet(true)">' +
+            icon('camera') + ' Print re-shoots</button>' : '') +
+    '</div>' +
+  '</div>';
+
+  h += '<div style="display:flex;align-items:center;gap:8px;margin:4px 2px 10px">' +
+    '<div style="flex:1;font-size:15px;font-weight:700">Pick an area</div>' +
+    '<button class="btn btn-o" style="width:auto;margin:0;padding:8px 12px;font-size:13px" ' +
+      'onclick="useMyLocation()" ' + (locating ? 'disabled' : '') + '>' +
+      (locating ? '<span class="spinner"></span> Locating\u2026' : icon('map') + (myPos ? ' Update my location' : ' Sort by where I am')) +
+    '</button></div>';
+
+  h += '<div style="font-size:13px;color:var(--dim);margin:0 2px 10px">' +
+    (myPos
+      ? 'Nearest first, measured to the closest stop you still owe in each area.'
+      : 'Tap <strong>Sort by where I am</strong> and these reorder nearest-first. Until then they are in their normal travelling order.') +
+    '</div>';
+
+  areas.forEach(function(a) {
+    var pct = a.total ? (a.done / a.total * 100) : 0;
+    var finished = a.left === 0;
+    h += '<div class="stop-card' + (finished ? ' completed' : '') + '" style="cursor:pointer" onclick="openArea(' +
+      "'" + esc(a.name).replace(/'/g, "\\'") + "'" + ')">';
+    h += '<div style="display:flex;align-items:center;gap:10px">';
+    h += '<div style="flex:1">';
+    h += '<strong style="font-size:19px">' + (finished ? '\u2713 ' : '') + esc(a.name) + '</strong>';
+    h += '<br><span style="font-size:15px;color:' + (finished ? 'var(--dim)' : 'var(--tx)') + '">' +
+      (finished ? 'All ' + a.total + ' done' : a.left + ' stop' + (a.left === 1 ? '' : 's') + ' to do') +
+      (a.done && !finished ? ' \u00b7 ' + a.done + ' done' : '') + '</span>';
+    if (a.miles != null && !finished) {
+      // Rounding put "0 mi" on the card for an area the tech is standing in,
+      // which reads as a broken distance rather than as "you are here".
+      var far = a.miles < 1 ? "you're in this one"
+              : (a.miles < 10 ? a.miles.toFixed(1) : Math.round(a.miles)) + ' mi to the nearest one';
+      h += '<br><span style="font-size:14px;color:var(--ac)">' + far + '</span>';
+    }
+    if (a.done > 0 && !finished) {
+      h += '<br><span style="font-size:13px;font-weight:700;color:var(--or)">Started \u2014 finish this one first</span>';
+    }
+    h += '<div class="progress-bar" style="margin-top:8px"><div class="fill" style="width:' + pct + '%"></div></div>';
+    h += '</div>';
+    h += '<div style="font-size:22px;color:var(--dim)">\u203a</div>';
+    h += '</div></div>';
+  });
+
+  return h;
+}
+
 function renderRoute() {
   var h = '<div style="display:flex;align-items:center;gap:8px;margin-bottom:12px">' +
     '<button class="btn back-btn" onclick="goHome()">←</button>' +
@@ -3036,31 +3295,39 @@ function renderRoute() {
     return h;
   }
 
-  // Group by stop_order to form stops
-  var stops = [];
-  var seenOrder = {};
-  myRoute.forEach(function(r) {
-    var key = r.stop_order;
-    if (!seenOrder[key]) {
-      seenOrder[key] = { order: r.stop_order, assets: [r.asset], address: r.asset.address, city: r.asset.city, state: r.asset.state, zip: r.asset.zip, store: r.asset.store };
-      stops.push(seenOrder[key]);
-    } else {
-      seenOrder[key].assets.push(r.asset);
-    }
-  });
-
-  // Sort by order
-  stops.sort(function(a, b) { return a.order - b.order; });
+  // One grouper, shared with getRouteStops() — these two had drifted apart as
+  // copies before, and a route the tech sees must be the route the app acts on.
+  var allStops = groupRouteStops(myRoute);
 
   // Determine completion status of each stop
   var today = new Date().toISOString().split('T')[0];
-  stops.forEach(function(s) {
+  allStops.forEach(function(s) {
     s.allDone = s.assets.every(function(a) { return isCompleted(a.serial); });
     s.someDone = s.assets.some(function(a) { return isCompleted(a.serial); });
     s.hasRevisit = s.assets.some(function(a) { return isRevisit(a.serial); });
   });
 
+  var areas = routeAreas(allStops);
+  var hasAreas = areas.length > 1;
+
+  // The picker. Shown until an area is chosen.
+  if (hasAreas && !currentArea) { return h + renderAreaPicker(areas, allStops); }
+
+  var stops = hasAreas
+    ? allStops.filter(function(s) { return (s.region || 'My route') === currentArea; })
+    : allStops;
+  if (stops.length === 0) { currentArea = null; return h + renderAreaPicker(areas, allStops); }
+
   var doneCount = stops.filter(function(s) { return s.allDone; }).length;
+
+  if (hasAreas) {
+    h += '<div class="card" style="padding:12px">' +
+      '<div style="font-size:20px;font-weight:800">' + esc(currentArea) + '</div>' +
+      '<div style="color:var(--dim);font-size:13px;margin-top:2px">' + (stops.length - doneCount) +
+        ' of ' + stops.length + ' still owed in this area</div>' +
+      '<button class="btn btn-o" style="margin:10px 0 0;padding:8px;font-size:13px" onclick="closeArea()">' +
+        '\u2190 All areas</button></div>';
+  }
 
   h += '<div class="card" style="text-align:center">' +
     '<div style="font-size:24px;font-weight:700">' + doneCount + '/' + stops.length + '</div>' +
@@ -3093,9 +3360,12 @@ function renderRoute() {
       h += '<button class="btn btn-o" style="margin-bottom:10px;border-color:var(--rd);color:var(--rd)" onclick="endDay()">'+icon('octagon')+' Complete Day</button>';
     } else {
       h += '<div class="card">';
-      h += lbl('Start from (address, city or zip — leave blank to use GPS)');
-      h += '<input type="text" id="startAddr" placeholder="e.g. 1200 Main St, San Jose">';
-      h += '<button class="btn btn-s" onclick="startDay()">'+icon('play')+' Start Day — Optimize From Here</button>';
+      h += lbl('Where are you starting from? (address, city or zip \u2014 blank uses GPS)');
+      h += '<input type="text" id="startAddr" placeholder="e.g. the motel you woke up in">';
+      h += '<button class="btn btn-s" onclick="startDay()">'+icon('play')+' Start this area from here</button>';
+      h += '<div style="font-size:12px;color:var(--dim);margin-top:6px">'
+        + 'Comes in at whichever end of this area is closest to you and works straight through. '
+        + 'The order does not shuffle as you go, so nothing gets skipped and left behind.</div>';
       h += '</div>';
     }
   }
@@ -3191,6 +3461,16 @@ function renderRoute() {
 
     h += '</div></div></div>';
   });
+
+  // Done with this area for now — back to the picker, which re-sorts from
+  // wherever this left him. Deliberately NOT "mark the area complete": the
+  // stops he did not do are still owed and must stay owed.
+  if (hasAreas) {
+    h += '<button class="btn btn-s" style="margin-top:14px;padding:12px;font-size:15px" onclick="closeArea()">'
+      + icon('check') + (doneCount >= stops.length
+          ? ' ' + esc(currentArea) + ' is done \u2014 pick the next area'
+          : ' Done here for now \u2014 pick another area') + '</button>';
+  }
 
   if (doneStops.length) {
     h += '<button class="btn btn-o" style="margin-top:14px;padding:12px;font-size:15px;color:var(--dim);border-color:var(--bd)" '
@@ -3365,7 +3645,9 @@ var startingDay = false;
 
 function endDay() {
   localStorage.removeItem('fp_day_on');
-  showStatus('Day ended — hit Start Day to pick back up', 'info');
+  currentArea = null;
+  myPos = null;                 // tomorrow he wakes up somewhere else
+  showStatus('Day ended — pick an area when you start again', 'info');
   render();
 }
 
@@ -3397,6 +3679,14 @@ async function geocodeAddress(q) {
   return null;
 }
 
+// Enter an area at whichever END of its fixed run is closest, and then follow
+// that run. Deliberately NOT "re-sort the area from where I am each time":
+// always walking to the nearest unvisited stop is greedy, and greedy skims
+// past stores and leaves stragglers behind it — as the tech moves, the nearest
+// stop moves with him, so a list that re-sorts on every tap keeps changing
+// under him and keeps deferring the ones he drove past. The area's order is
+// computed once, off real road distances, and stays put. All the location does
+// is pick which end to come in at.
 async function startDay() {
   if (startingDay) return;
   var addrEl = document.getElementById('startAddr');
@@ -3417,72 +3707,108 @@ async function startDay() {
     } else {
       origin = await getPosition();
     }
-    var stops = getRouteStops();
-    var doneStops = stops.filter(function(s) { return s.assets.every(function(a) { return isCompleted(a.serial); }); });
-    var todo = stops.filter(function(s) { return !s.assets.every(function(a) { return isCompleted(a.serial); }); });
-
     if (!origin) {
-      // No GPS: start from the last completed stop, or keep current order
-      var last = doneStops[doneStops.length - 1];
-      if (last && last.assets[0]) { origin = { lat: last.assets[0].lat, lng: last.assets[0].lng }; }
+      startingDay = false;
+      localStorage.setItem('fp_day_on', '1');
+      showStatus('No location available — working this area in its normal order', 'info');
+      render();
+      return;
     }
 
-    if (origin && todo.length > 1) {
-      // Nearest-neighbor over the remaining stops from the origin
-      var ordered = [];
-      var remaining = todo.slice();
-      var cur = origin;
-      while (remaining.length > 0) {
-        var nearIdx = 0, nearDist = Infinity;
-        for (var i = 0; i < remaining.length; i++) {
-          var a0 = remaining[i].assets[0];
-          var d = haversine(cur.lat, cur.lng, a0.lat, a0.lng);
-          if (d < nearDist) { nearDist = d; nearIdx = i; }
+    var allStops = getRouteStops();
+    var stops = currentArea
+      ? allStops.filter(function(s) { return (s.region || 'My route') === currentArea; })
+      : allStops;
+    if (!stops.length) stops = allStops;
+
+    var owed = stops.filter(function(s) { return !s.assets.every(function(a) { return isCompleted(a.serial); }); });
+    if (owed.length < 2) {
+      startingDay = false;
+      localStorage.setItem('fp_day_on', '1');
+      render();
+      return;
+    }
+
+    // Which end of the run is he nearer? Distance is to the first and last
+    // stop he still OWES, because a finished stop is not somewhere he goes.
+    function distTo(st) {
+      var a0 = st.assets[0];
+      if (!a0 || a0.lat == null || a0.lng == null) return Infinity;
+      return haversine(origin.lat, origin.lng, a0.lat, a0.lng);
+    }
+    var dFront = distTo(owed[0]);
+    var dBack  = distTo(owed[owed.length - 1]);
+    var reversed = dBack < dFront;
+
+    if (reversed) {
+      // Flip the whole area end to end, inside its own band of stop_orders so
+      // no other area is renumbered. Every stop is still in the run — a
+      // reversal cannot drop one, which is the point of doing it this way
+      // instead of re-sorting.
+      var seq = stops.slice().reverse();
+      var band = stops.map(function(x) { return x.order; }).sort(function(a, b) { return a - b; });
+      for (var n = 0; n < seq.length; n++) {
+        var wanted = {};
+        seq[n].assets.forEach(function(a) { wanted[a.id] = true; });
+        var ids = [];
+        myRoute.forEach(function(r) { if (r.asset && wanted[r.asset.id]) ids.push(r.id); });
+        if (ids.length) {
+          var { error } = await sb.from('route_assignments').update({ stop_order: band[n] }).in('id', ids);
+          if (error) { throw new Error(error.message); }
         }
-        ordered.push(remaining[nearIdx]);
-        cur = { lat: remaining[nearIdx].assets[0].lat, lng: remaining[nearIdx].assets[0].lng };
-        remaining.splice(nearIdx, 1);
       }
-      todo = ordered;
-    }
-
-    // Persist new order: completed stops first, then re-optimized remainder
-    var seq = doneStops.concat(todo);
-    for (var s = 0; s < seq.length; s++) {
-      var ids = [];
-      myRoute.forEach(function(r) { if (r.stop_order === seq[s].order) ids.push(r.id); });
-      if (ids.length) {
-        var { error } = await sb.from('route_assignments').update({ stop_order: s }).in('id', ids);
-        if (error) { throw new Error(error.message); }
-      }
+      await loadMyRoute();
     }
 
     localStorage.setItem('fp_day_on', '1');
-    await loadMyRoute();
     startingDay = false;
-    showStatus(origin ? ('Day started — route optimized from ' + (startAddr || 'your location')) : 'Day started (location unavailable — order unchanged)', 'ok');
+    showStatus(reversed
+      ? 'Starting from the far end — this area runs back toward you'
+      : 'Starting from the near end — this area runs away from you', 'ok');
     render();
   } catch (err) {
     startingDay = false;
-    showStatus('Error reordering route: ' + err.message, 'err');
+    showStatus('Error setting up the area: ' + err.message, 'err');
     render();
   }
 }
 
-function getRouteStops() {
+// A stop is a PLACE, not a number. Grouping on stop_order was wrong in both
+// directions and both directions were live on Mike's route:
+//   - two different stores that happened to share a stop_order merged into one
+//     card, so a Modesto PetSmart unit rendered inside a San Mateo Costco stop
+//     (11 cards on his route did this) and could never be completed there;
+//   - one store whose units carried different stop_orders split into several
+//     cards, 54 of them hundreds of stops apart, so the route sent him back to
+//     a store he had already finished. Petco #1327 sat at 18, 19 and 405.
+// Keying on store+address collapses both: 543 cards became 356 real stops.
+function routeStopKey(a) {
+  return (a.store || '') + '|' + (a.address || '') + '|' + (a.city || '');
+}
+function groupRouteStops(rows) {
   var stops = [];
-  var seenOrder = {};
-  myRoute.forEach(function(r) {
-    var key = r.stop_order;
-    if (!seenOrder[key]) {
-      seenOrder[key] = { order: r.stop_order, assets: [r.asset], address: r.asset.address, city: r.asset.city, state: r.asset.state, zip: r.asset.zip, store: r.asset.store };
-      stops.push(seenOrder[key]);
+  var seen = {};
+  rows.forEach(function(r) {
+    if (!r || !r.asset) return;
+    var key = routeStopKey(r.asset);
+    if (!seen[key]) {
+      seen[key] = { key: key, order: r.stop_order, assets: [r.asset], address: r.asset.address, city: r.asset.city, state: r.asset.state, zip: r.asset.zip, store: r.asset.store,
+                    region: r.region || null, region_seq: (r.region_seq == null ? null : r.region_seq) };
+      stops.push(seen[key]);
     } else {
-      seenOrder[key].assets.push(r.asset);
+      seen[key].assets.push(r.asset);
+      // The store's position is its EARLIEST card, so collapsing duplicates
+      // never pushes a stop later in the day than it already was.
+      if (r.stop_order < seen[key].order) seen[key].order = r.stop_order;
+      if (!seen[key].region && r.region) seen[key].region = r.region;
+      if (r.region_seq != null && (seen[key].region_seq == null || r.region_seq < seen[key].region_seq)) seen[key].region_seq = r.region_seq;
     }
   });
   stops.sort(function(a, b) { return a.order - b.order; });
   return stops;
+}
+function getRouteStops() {
+  return groupRouteStops(myRoute);
 }
 
 // ===== Navigation Functions =====
@@ -4776,7 +5102,7 @@ async function assignSelectedStores() {
     ids.push(a.id);
   });
   if (!ids.length) { showStatus('Selected stores are already assigned', 'info'); pickerSel = {}; render(); return; }
-  var maxOrder = adminTechAssets.length;
+  var maxOrder = nextStopOrder(allAssignments.filter(function(r) { return r.tech_email === adminSelectedTech; }));
   var inserts = ids.map(function(id, i) {
     return { tech_email: adminSelectedTech, asset_id: id, stop_order: maxOrder + i, route_name: 'Primary Route', active: true };
   });
@@ -4790,7 +5116,10 @@ async function assignSelectedStores() {
   adminTechAssets = adminTechAssets.concat(ids);
   pickerSel = {};
   await loadAllAssignments();
-  showStatus(keys.length + ' store(s) assigned (' + ids.length + ' assets)', 'ok');
+  // New stores land at the end of the route. Say so, because a store dropped
+  // 300 stops from its neighbours is exactly what sends a tech back across
+  // the map — and the fix is one button away.
+  showStatus(keys.length + ' store(s) assigned (' + ids.length + ' assets) \u2014 run Optimize route to place them', 'ok');
   render();
 }
 
@@ -4799,7 +5128,7 @@ async function addStoreToRoute(assetIds) {
   var toAdd = assetIds.filter(function(id) { return adminTechAssets.indexOf(id) === -1; });
   if (toAdd.length === 0) { showStatus('Already assigned', 'info'); return; }
 
-  var maxOrder = adminTechAssets.length > 0 ? adminTechAssets.length : 0;
+  var maxOrder = nextStopOrder(allAssignments.filter(function(r) { return r.tech_email === adminSelectedTech; }));
   var inserts = toAdd.map(function(id, i) {
     return {
       tech_email: adminSelectedTech,
