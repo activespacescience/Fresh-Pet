@@ -2630,13 +2630,24 @@ function storeUnits(q){
   return hits.map(function(a){
     var reports = completedPMs.filter(function(p){ return p.serial === a.serial && !p.prev_comp; })
       .sort(function(x,y){ return String(y.pm_date||'').localeCompare(String(x.pm_date||'')); });
-    // The report that COUNTS is the newest one that has not been superseded.
-    var current = reports.filter(function(p){ return !p.revisit_done_pm_id; })[0] || reports[0] || null;
+    // The report that COUNTS is the newest one that has not been superseded AND
+    // has not been disowned. Petco #372 is why the second half is here: reports
+    // 686/687 carry a full set of photographs and a plate of the WRONG cooler,
+    // so without this the ticks would read green off a report the office has
+    // already ruled is not documentation of this unit.
+    var usable = reports.filter(function(p){
+      return !p.revisit_done_pm_id && !(p.needs_review && p.audit_flag === 'needs_plate_photo');
+    });
+    var current = usable[0] || null;
+    // Nothing usable but something on file: show the newest so the row is not
+    // blank, and let the state column say why it does not count.
+    var disowned = !current && reports.length > 0;
+    if (disowned) current = reports.filter(function(p){ return !p.revisit_done_pm_id; })[0] || reports[0];
     var kinds = ((current && current.photo_paths) || []).map(function(x){
       var m = /_photo_[0-9]+_([a-z]+)_/.exec(x); return m ? m[1] : ''; });
     var owed = reports.some(function(p){ return p.revisit_requested_at && !p.revisit_done_at; });
     return {
-      a: a, current: current, reports: reports, owed: owed,
+      a: a, current: current, reports: reports, owed: owed, disowned: !!disowned,
       hasUnit:   kinds.indexOf('unit') >= 0,
       // interior stands in for the plate on a unit that genuinely carries none
       hasPlate:  kinds.indexOf('plate') >= 0 || kinds.indexOf('interior') >= 0,
@@ -2691,6 +2702,7 @@ function renderStoreCheck(){
   rows.forEach(function(r){
     var p = r.current;
     var state = !p ? '<span class="pill rd">no report</span>'
+      : r.disowned ? '<span class="pill rd">wrong unit photographed</span>'
       : r.owed ? '<span class="pill am">re-shoot owed</span>'
       : p.visit_type === 'exception' ? '<span class="pill am">' + esc(p.exception_reason || 'exception') + '</span>'
       : p.visit_type === 'reshoot' ? '<span class="pill" style="background:#E2EFF9;color:#155E9B">re-documented</span>'
@@ -2700,11 +2712,11 @@ function renderStoreCheck(){
       + '<td class="mono" style="font-size:.8rem">' + esc(r.a.serial || '') + '</td>'
       + '<td style="white-space:nowrap">' + (p ? esc(p.pm_date || '') + '<div class="muted" style="font-size:.7rem">'
             + esc(p.tech_name || '') + '</div>' : '<span class="muted">\u2014</span>') + '</td>'
-      + '<td>' + (p ? tick(r.hasUnit, 'no full picture of the unit') : '') + '</td>'
-      + '<td>' + (p ? (tick(r.hasPlate, 'no serial-plate photograph')
+      + '<td>' + (p && !r.disowned ? tick(r.hasUnit, 'no full picture of the unit') : '') + '</td>'
+      + '<td>' + (p && !r.disowned ? (tick(r.hasPlate, 'no serial-plate photograph')
             + (r.noPlateUnit ? '<div class="muted" style="font-size:.65rem">no plate on unit</div>' : '')) : '') + '</td>'
-      + '<td>' + (p ? tick(r.hasBottom, 'no photograph underneath') : '') + '</td>'
-      + '<td>' + (p ? tick(!!p.pdf_path, 'no report PDF filed') : '') + '</td>'
+      + '<td>' + (p && !r.disowned ? tick(r.hasBottom, 'no photograph underneath') : '') + '</td>'
+      + '<td>' + (p && !r.disowned ? tick(!!p.pdf_path, 'no report PDF filed') : '') + '</td>'
       + '<td>' + state + '</td>'
       + '<td style="text-align:right;white-space:nowrap">'
       + (p && p.pdf_path ? '<button class="btn o sm" onclick="openPdf(\'' + esc(p.pdf_path) + '\')">'
