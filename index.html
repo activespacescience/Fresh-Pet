@@ -278,7 +278,7 @@ var photosLater = false;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.6';
+var APP_VERSION = '2026-09-03.7';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -3263,7 +3263,11 @@ function renderAreaPicker(areas, allStops) {
       (finished ? 'All ' + a.total + ' done' : a.left + ' stop' + (a.left === 1 ? '' : 's') + ' to do') +
       (a.done && !finished ? ' \u00b7 ' + a.done + ' done' : '') + '</span>';
     if (a.miles != null && !finished) {
-      h += '<br><span style="font-size:14px;color:var(--ac)">' + Math.round(a.miles) + ' mi to the nearest one</span>';
+      // Rounding put "0 mi" on the card for an area the tech is standing in,
+      // which reads as a broken distance rather than as "you are here".
+      var far = a.miles < 1 ? "you're in this one"
+              : (a.miles < 10 ? a.miles.toFixed(1) : Math.round(a.miles)) + ' mi to the nearest one';
+      h += '<br><span style="font-size:14px;color:var(--ac)">' + far + '</span>';
     }
     if (a.done > 0 && !finished) {
       h += '<br><span style="font-size:13px;font-weight:700;color:var(--or)">Started \u2014 finish this one first</span>';
@@ -3317,11 +3321,12 @@ function renderRoute() {
   var doneCount = stops.filter(function(s) { return s.allDone; }).length;
 
   if (hasAreas) {
-    h += '<div class="card" style="display:flex;align-items:center;gap:10px;padding:12px">' +
-      '<button class="btn back-btn" style="margin:0" onclick="closeArea()">←</button>' +
-      '<div style="flex:1"><strong style="font-size:18px">' + esc(currentArea) + '</strong>' +
-      '<br><span style="color:var(--dim);font-size:13px">' + (stops.length - doneCount) +
-        ' of ' + stops.length + ' still owed in this area</span></div></div>';
+    h += '<div class="card" style="padding:12px">' +
+      '<div style="font-size:20px;font-weight:800">' + esc(currentArea) + '</div>' +
+      '<div style="color:var(--dim);font-size:13px;margin-top:2px">' + (stops.length - doneCount) +
+        ' of ' + stops.length + ' still owed in this area</div>' +
+      '<button class="btn btn-o" style="margin:10px 0 0;padding:8px;font-size:13px" onclick="closeArea()">' +
+        '\u2190 All areas</button></div>';
   }
 
   h += '<div class="card" style="text-align:center">' +
