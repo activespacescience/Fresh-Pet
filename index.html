@@ -278,7 +278,7 @@ var photosLater = false;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.8';
+var APP_VERSION = '2026-09-03.9';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -3687,6 +3687,24 @@ async function geocodeAddress(q) {
 // under him and keeps deferring the ones he drove past. The area's order is
 // computed once, off real road distances, and stays put. All the location does
 // is pick which end to come in at.
+// Start an area AT THE STOP THE TECH IS STANDING AT.
+//
+// The first version of this only offered the two ENDS of the area's run, which
+// is wrong the moment he is in the middle of one: standing in the car park of
+// Target #2767 in Emeryville it sent him to Pak N Save, 0.6 miles back up the
+// road, because Pak N Save was the front of what he still owed.
+//
+// It is still not a nearest-neighbour re-sort. The area's stored order is the
+// one built off real road distances and it is kept as the starting point: the
+// run is ROTATED so the nearest owed stop leads, then a bounded 2-opt pass
+// un-crosses the seam that rotating leaves behind. A rotation and a 2-opt are
+// both permutations, so every owed stop is still in the run exactly once —
+// that is the property a greedy re-sort cannot promise, and it is why the
+// ordering can only change when he presses this button, never as he drives.
+//
+// On the real Emeryville case: front-of-run 26 mi starting 0.6 mi backwards,
+// rotate alone 40 mi (it stranded the two neighbouring stores at the end),
+// rotate + 2-opt 24 mi starting where he stood.
 async function startDay() {
   if (startingDay) return;
   var addrEl = document.getElementById('startAddr');
@@ -3714,6 +3732,7 @@ async function startDay() {
       render();
       return;
     }
+    myPos = origin;
 
     var allStops = getRouteStops();
     var stops = currentArea
@@ -3721,6 +3740,7 @@ async function startDay() {
       : allStops;
     if (!stops.length) stops = allStops;
 
+    var done = stops.filter(function(s) { return s.assets.every(function(a) { return isCompleted(a.serial); }); });
     var owed = stops.filter(function(s) { return !s.assets.every(function(a) { return isCompleted(a.serial); }); });
     if (owed.length < 2) {
       startingDay = false;
@@ -3729,42 +3749,63 @@ async function startDay() {
       return;
     }
 
-    // Which end of the run is he nearer? Distance is to the first and last
-    // stop he still OWES, because a finished stop is not somewhere he goes.
-    function distTo(st) {
-      var a0 = st.assets[0];
-      if (!a0 || a0.lat == null || a0.lng == null) return Infinity;
-      return haversine(origin.lat, origin.lng, a0.lat, a0.lng);
+    function at(st) { var a = st.assets[0]; return (a && a.lat != null && a.lng != null) ? a : null; }
+    function distTo(st) { var a = at(st); return a ? haversine(origin.lat, origin.lng, a.lat, a.lng) : Infinity; }
+    function gap(x, y) {
+      var a = at(x), b = at(y);
+      return (a && b) ? haversine(a.lat, a.lng, b.lat, b.lng) : 0;
     }
-    var dFront = distTo(owed[0]);
-    var dBack  = distTo(owed[owed.length - 1]);
-    var reversed = dBack < dFront;
 
-    if (reversed) {
-      // Flip the whole area end to end, inside its own band of stop_orders so
-      // no other area is renumbered. Every stop is still in the run — a
-      // reversal cannot drop one, which is the point of doing it this way
-      // instead of re-sorting.
-      var seq = stops.slice().reverse();
-      var band = stops.map(function(x) { return x.order; }).sort(function(a, b) { return a - b; });
-      for (var n = 0; n < seq.length; n++) {
-        var wanted = {};
-        seq[n].assets.forEach(function(a) { wanted[a.id] = true; });
-        var ids = [];
-        myRoute.forEach(function(r) { if (r.asset && wanted[r.asset.id]) ids.push(r.id); });
-        if (ids.length) {
-          var { error } = await sb.from('route_assignments').update({ stop_order: band[n] }).in('id', ids);
-          if (error) { throw new Error(error.message); }
+    // 1. rotate so the nearest owed stop leads
+    var nearIdx = 0, nearDist = Infinity;
+    owed.forEach(function(st, idx) { var d = distTo(st); if (d < nearDist) { nearDist = d; nearIdx = idx; } });
+    if (nearDist === Infinity) nearIdx = 0;
+    var run = owed.slice(nearIdx).concat(owed.slice(0, nearIdx));
+
+    // 2. un-cross the seam. i === -1 stands for the tech himself, so the FIRST
+    // stop is judged against where he actually is and not just against the
+    // stop after it.
+    var deadline = Date.now() + 1500;
+    var improved = true;
+    while (improved && Date.now() < deadline) {
+      improved = false;
+      for (var a1 = -1; a1 < run.length - 2 && Date.now() < deadline; a1++) {
+        for (var k = a1 + 2; k < run.length; k++) {
+          var pA = a1 < 0 ? null : run[a1], pB = run[a1 + 1], pC = run[k], pD = run[k + 1];
+          var dAB = a1 < 0 ? distTo(pB) : gap(pA, pB);
+          var dAC = a1 < 0 ? distTo(pC) : gap(pA, pC);
+          var before = dAB + (pD ? gap(pC, pD) : 0);
+          var after  = dAC + (pD ? gap(pB, pD) : 0);
+          if (after < before - 1e-9) {
+            var lo = a1 + 1, hi = k;
+            while (lo < hi) { var t = run[lo]; run[lo] = run[hi]; run[hi] = t; lo++; hi--; }
+            improved = true;
+          }
         }
       }
-      await loadMyRoute();
     }
+
+    // 3. write it back into this area's own band of stop_orders, so no other
+    // area is renumbered and the areas keep their travelling order.
+    var seq = done.concat(run);
+    var band = stops.map(function(x) { return x.order; }).sort(function(a, b) { return a - b; });
+    for (var n = 0; n < seq.length; n++) {
+      var wanted = {};
+      seq[n].assets.forEach(function(a) { wanted[a.id] = true; });
+      var ids = [];
+      myRoute.forEach(function(r) { if (r.asset && wanted[r.asset.id]) ids.push(r.id); });
+      if (ids.length) {
+        var { error } = await sb.from('route_assignments').update({ stop_order: band[n] }).in('id', ids);
+        if (error) { throw new Error(error.message); }
+      }
+    }
+    await loadMyRoute();
 
     localStorage.setItem('fp_day_on', '1');
     startingDay = false;
-    showStatus(reversed
-      ? 'Starting from the far end — this area runs back toward you'
-      : 'Starting from the near end — this area runs away from you', 'ok');
+    showStatus(nearDist < 0.3
+      ? 'Starting you at ' + run[0].store + ' — the one you are at'
+      : 'Starting you at ' + run[0].store + ', ' + (nearDist < 10 ? nearDist.toFixed(1) : Math.round(nearDist)) + ' mi away', 'ok');
     render();
   } catch (err) {
     startingDay = false;
