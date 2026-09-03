@@ -240,7 +240,7 @@ var draftPhotosDropped = 0;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-02.5';
+var APP_VERSION = '2026-09-02.6';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -336,7 +336,7 @@ function loadProgress() {
 function clearProgress() {
   localStorage.removeItem('fp_progress');
   draftPhotosDropped = 0;
-  photos = []; plateCheck = null;
+  photos = []; plateCheck = null; photoAsk = null;
   sigs = { store: null, tech: null };
   reopenPmId = null;
   addedAssetFlag = false;
@@ -845,11 +845,35 @@ function sha256Hex(str) {
 // fingerprints every image and refuses one that is already on ANY report, on
 // this phone or anyone else's, which is the control that actually caught the
 // re-used plates.
-function takePhoto(kind) {
+// WE ASK, NOT THE OPERATING SYSTEM.
+//
+// Dropping capture='environment' was right — it forced the camera and kept the
+// photograph out of the technician's own camera roll — but it left the CHOICE
+// to the phone, and the phone is not reliable about offering one. iOS shows a
+// sheet with Take Photo / Photo Library. Android sometimes shows a chooser,
+// sometimes opens the camera straight away, and sometimes silently reuses
+// whatever app was picked as the default months ago. Same HTML, three
+// behaviours — reported from the field on Android on 2026-09-02.
+//
+// So the app asks. Two buttons of our own, identical on every device:
+//   Take photo      -> capture='environment', deterministic camera
+//   Choose from phone -> no capture, the gallery/file picker
+// Neither depends on an OEM's intent chooser, and there is no device where the
+// question silently fails to appear.
+var photoAsk = null;   // which required shot the technician is choosing for
+
+function askPhoto(kind) { photoAsk = (photoAsk === kind) ? null : kind; render(); }
+
+function takePhoto(kind, mode) {
+  photoAsk = null;
   var i = document.createElement('input');
   i.type = 'file'; i.accept = 'image/*';
+  // Only the camera branch sets capture. The browse branch must NOT, or the
+  // gallery is unreachable — which is the bug this replaced.
+  if (mode === 'camera') i.capture = 'environment';
   i.onchange = function() { handlePhotos(i, kind || 'other'); };
   i.click();
+  render();
 }
 
 function uploadPhoto() {
@@ -1498,11 +1522,19 @@ function renderChecklist() {
   requiredPhotos().forEach(function(r) {
     var got = photoCount(r.kind);
     h += '<button class="btn btn-o" style="padding:12px;text-align:left;display:flex;align-items:center;gap:10px'
-      + (got ? ';border-color:var(--gn);color:var(--gn)' : '') + '" onclick="takePhoto(\'' + r.kind + '\')">'
+      + (got ? ';border-color:var(--gn);color:var(--gn)' : '') + '" onclick="askPhoto(\'' + r.kind + '\')">'
       + icon(got ? 'check' : 'camera')
       + '<span style="flex:1">' + esc(r.label) + (got > 1 ? ' (' + got + ')' : '')
       + '<span style="display:block;font-size:12px;color:var(--dim);font-weight:400">' + esc(r.hint) + '</span></span>'
       + '</button>';
+    if (photoAsk === r.kind) {
+      h += '<div style="display:flex;gap:8px;margin:-2px 0 2px">'
+        + '<button class="btn btn-p" style="flex:1;padding:12px" onclick="takePhoto(\'' + r.kind + '\',\'camera\')">'
+          + icon('camera') + ' Take photo</button>'
+        + '<button class="btn btn-o" style="flex:1;padding:12px" onclick="takePhoto(\'' + r.kind + '\',\'library\')">'
+          + icon('image') + ' Choose from phone</button>'
+        + '</div>';
+    }
   });
   h += '<button class="btn btn-o" style="padding:10px" onclick="uploadPhoto()">'+icon('image')+' Another photo (optional)</button>';
   h += '</div>';
@@ -3252,7 +3284,7 @@ function startChecklist(idx) {
   // A unit recorded as having no plate starts already marked. Asking the tech
   // to tick it every visit is asking them to re-discover the same fact.
   if (ASSETS[idx].no_serial) form.noSerialPlate = true;
-  photos = []; plateCheck = null;
+  photos = []; plateCheck = null; photoAsk = null;
   sigs = { store: null, tech: mySig || null };
   screen = 'checklist';
   saveProgress();
@@ -3777,7 +3809,7 @@ function startException(kind) {
   // Zero prefill. Nothing is carried in from a PM form and no answer is
   // suggested — the whole point of this report is what the tech actually found.
   exceptionForm = { reason: exceptionKind, note: '' };
-  photos = []; plateCheck = null;
+  photos = []; plateCheck = null; photoAsk = null;
   screen = 'exception';
   render();
 }
@@ -3831,7 +3863,12 @@ function renderException() {
   h += '<textarea id="excNote" placeholder="' + esc(k.note) + '">' + esc(exceptionForm.note || '') + '</textarea>';
   h += '<h3>Photo (required)</h3>';
   h += '<div style="font-size:13px;color:var(--dim);margin-bottom:8px">' + esc(k.photoHint) + '</div>';
-  h += '<button class="btn btn-o" style="padding:12px" onclick="captureExceptionMeta();takePhoto(\'site\')">'+icon('camera')+' Take photo</button>';
+  h += '<div style="display:flex;gap:8px">'
+    + '<button class="btn btn-o" style="flex:1;padding:12px" onclick="captureExceptionMeta();takePhoto(\'site\',\'camera\')">'
+      + icon('camera') + ' Take photo</button>'
+    + '<button class="btn btn-o" style="flex:1;padding:12px" onclick="captureExceptionMeta();takePhoto(\'site\',\'library\')">'
+      + icon('image') + ' Choose from phone</button>'
+    + '</div>';
   if (photos.length) {
     h += '<div class="photo-grid" style="margin-top:8px">';
     photos.forEach(function(p, i) {
@@ -4034,7 +4071,7 @@ async function reopenPM(pmId, fromRoute) {
   selectedAsset = ASSETS[idx];
   selectedAssetIdx = idx;
   form = Object.assign({}, pm.form_data || {});
-  photos = []; plateCheck = null;
+  photos = []; plateCheck = null; photoAsk = null;
   sigs = { store: null, tech: mySig || null };
   reopenPmId = pm.id;
   ticketFlag = false;
