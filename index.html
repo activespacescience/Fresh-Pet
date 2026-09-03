@@ -251,6 +251,10 @@ var routeFromChecklist = false; // track if we came from route view
 // How many photographs the last saved draft could not hold. Surfaced on the
 // checklist — a silent loss is what makes a tech distrust the app.
 var draftPhotosDropped = 0;
+// Set only by the tech pressing the button, and cleared with every new report —
+// it must never be sticky, or a stop that could have had photographs quietly
+// goes without them.
+var photosLater = false;
 
 // ═══ Sync with the office ═══
 //
@@ -274,7 +278,7 @@ var draftPhotosDropped = 0;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.2';
+var APP_VERSION = '2026-09-03.3';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -415,7 +419,7 @@ function clearProgress() {
   localStorage.removeItem('fp_progress');
   localStorage.removeItem('fp_photos');
   draftPhotosDropped = 0;
-  photos = []; plateCheck = null; photoAsk = null;
+  photos = []; plateCheck = null; photoAsk = null; photosLater = false;
   sigs = { store: null, tech: null };
   reopenPmId = null;
   addedAssetFlag = false;
@@ -431,10 +435,6 @@ async function initAuth() {
     await loadAssetCandidates();
     await checkUserRole();
     screen = 'home';
-    // Anything held from a dead zone yesterday goes now, quietly, before he
-    // starts. Once — not on a timer, which in a dead zone is only battery.
-    await refreshOutbox();
-    if (outbox.length) flushOutbox(false);
     tryAutoResume(); // reopened mid-PM (e.g. iOS reloaded the page for the camera)
   } else {
     screen = 'login';
@@ -503,10 +503,34 @@ async function checkUserRole() {
 }
 
 // ===== Data Loading =====
+// PostgREST caps a response at 1000 rows and says NOTHING about it. There are
+// 1,192 active assets, so this quietly returned the first 1000 by city — and
+// loadMyRoute joins the route against ASSETS and DROPS any assignment whose
+// asset is not there. Ten of Mike's 555 stops, from San Jose to San Mateo,
+// simply were not on his route. No error, no gap, no way for him to know: the
+// stops did not exist as far as the app was concerned.
+//
+// It is a bug that switched itself on the day the asset list crossed 1000, and
+// gets one stop worse with every unit added. Paged by id, which is stable while
+// rows are being inserted; a failed page leaves ASSETS alone rather than
+// handing back a short list that looks like the whole route.
 async function loadAssets() {
-  var { data, error } = await sb.from('assets').select('*').eq('active', true).order('city').order('store');
-  if (error) { showStatus('Failed to load assets: ' + error.message, 'err'); return; }
-  ASSETS = data || [];
+  var all = [], from = 0, PAGE = 1000;
+  for (;;) {
+    var { data, error } = await sb.from('assets').select('*').eq('active', true)
+      .order('id').range(from, from + PAGE - 1);
+    if (error) { showStatus('Failed to load assets: ' + error.message, 'err'); return; }
+    all = all.concat(data || []);
+    if (!data || data.length < PAGE) break;
+    from += PAGE;
+    if (from > 100000) break;
+  }
+  // The app expects them in route-reading order everywhere else.
+  all.sort(function(a, b) {
+    return String(a.city||'').localeCompare(String(b.city||''))
+        || String(a.store||'').localeCompare(String(b.store||''));
+  });
+  ASSETS = all;
 }
 
 // PostgREST caps a request at 1000 rows and says nothing about it. This table
@@ -573,8 +597,19 @@ async function loadPayouts() {
 
 async function loadMyRoute() {
   if (!currentUser) return;
-  var { data } = await sb.from('route_assignments').select('*').eq('tech_email', currentUser.email).eq('active', true).order('stop_order');
-  if (!data) { myRoute = []; return; }
+  // Same 1000-row cap as the assets read above. 786 assignments today.
+  var data = [], from = 0, PAGE = 1000;
+  for (;;) {
+    var pg = await sb.from('route_assignments').select('*')
+      .eq('tech_email', currentUser.email).eq('active', true)
+      .order('stop_order').range(from, from + PAGE - 1);
+    if (pg.error) { return; }            // keep the route we had
+    data = data.concat(pg.data || []);
+    if (!pg.data || pg.data.length < PAGE) break;
+    from += PAGE;
+    if (from > 100000) break;
+  }
+  if (!data.length) { myRoute = []; return; }
   // Join with asset data
   myRoute = data.map(function(ra) {
     var asset = ASSETS.find(function(a) { return a.id === ra.asset_id; });
@@ -1003,7 +1038,15 @@ function assetForSerial(serial){
 async function checkPlate(dataUrl){
   if (!selectedAsset) return;
   plateCheck = { state: 'checking' }; render();
+  // A HARD DEADLINE, because this shipped without one and that is what put a
+  // technician in a store staring at a spinner he could not clear. On bad
+  // service a fetch does not fail, it hangs — for minutes — and the check was
+  // ALSO gating the submit, so a stalled read stopped him working entirely.
+  // Ten seconds, then give up and let him carry on. A serial we could not read
+  // is a note for the office; a technician who cannot finish a stop is a day.
   var out = null;
+  var ctl = (typeof AbortController !== 'undefined') ? new AbortController() : null;
+  var killed = setTimeout(function(){ try { ctl && ctl.abort(); } catch(e) {} }, 10000);
   try {
     var { data: { session } } = await sb.auth.getSession();
     var r = await fetch(SUPA_URL + '/functions/v1/plate-read', {
@@ -1011,10 +1054,12 @@ async function checkPlate(dataUrl){
       headers: { 'Content-Type': 'application/json',
                  'apikey': SUPA_KEY,
                  'Authorization': 'Bearer ' + ((session && session.access_token) || SUPA_KEY) },
-      body: JSON.stringify({ image: dataUrl })
+      body: JSON.stringify({ image: dataUrl }),
+      signal: ctl ? ctl.signal : undefined
     });
     out = await r.json();
   } catch (e) { out = { status: 'error', detail: String(e && e.message || e) }; }
+  clearTimeout(killed);
 
   if (!out || out.status !== 'read') {
     plateCheck = { state: 'unknown',
@@ -1068,146 +1113,22 @@ function addUnitFromPlate(){
   }, 60);
 }
 
-// ═══ The outbox ═══
+// The outbox (a queue that held finished stops on the phone) was REMOVED on
+// 2026-09-03, the day it went out, because it did the one thing a field app
+// must never do: it hung. Its startup read was awaited in boot, and IndexedDB
+// can block indefinitely (private mode, storage pressure, an OEM's storage
+// manager) — so on the phones it was meant to help, the app never finished
+// starting. No route, no stops, a spinner.
 //
-// Bad signal on the edge of the route was costing whole stops: the submit
-// failed, the tech saw "Error", and the work was his to do again. It should
-// never have been possible to lose a stop to a bar of signal.
+// The lesson is the shape, not the library: NOTHING ON THE BOOT PATH MAY AWAIT
+// ANYTHING THAT CAN HANG. A technician who cannot open his route has lost the
+// whole day, which is far worse than the lost stop the queue was built to
+// prevent. If this is ever tried again it belongs entirely off the boot path,
+// behind a timeout, and behind a button he presses.
 //
-// A finished report is now written to the phone FIRST and sent afterwards. Not
-// "try to send, and queue it if that fails" — written first, always, so a
-// report survives the app being killed mid-upload, the browser reclaiming the
-// tab, or the battery going. The send is then just something that happens to a
-// record that is already safe.
-//
-// Deliberate choices about not making the phone worse, because it is already
-// struggling when this matters:
-//   * IndexedDB, not localStorage. Writes are ASYNCHRONOUS, so a report with
-//     four photographs in it never blocks the main thread the way a synchronous
-//     half-megabyte setItem does.
-//   * ONE report at a time, awaited. Firing four uploads at a rotten connection
-//     is how a phone appears to hang; a queue that drains in order does not.
-//   * EVERY request has a deadline. On bad service a socket can stall for
-//     minutes with nothing raised — the timeout turns that into a retry instead
-//     of a spinner nobody can escape.
-//   * Backoff, and never a loop. A failed flush waits; it does not hammer.
-var QDB = 'fp_outbox', QSTORE = 'reports';
-var outbox = [];          // shallow list for the badge: {id, store, serial, at, attempts, lastError}
-var flushing = false;
-
-function qdb() {
-  return new Promise(function(res, rej) {
-    var r = indexedDB.open(QDB, 1);
-    r.onupgradeneeded = function(){ r.result.createObjectStore(QSTORE, { keyPath: 'id' }); };
-    r.onsuccess = function(){ res(r.result); };
-    r.onerror = function(){ rej(r.error); };
-  });
-}
-function qtx(mode, fn) {
-  return qdb().then(function(db) {
-    return new Promise(function(res, rej) {
-      var tx = db.transaction(QSTORE, mode), st = tx.objectStore(QSTORE), out;
-      out = fn(st);
-      tx.oncomplete = function(){ res(out && out.result !== undefined ? out.result : out); };
-      tx.onerror = function(){ rej(tx.error); };
-    });
-  });
-}
-function qPut(rec){ return qtx('readwrite', function(st){ return st.put(rec); }); }
-function qDel(id){ return qtx('readwrite', function(st){ return st.delete(id); }); }
-function qAll(){ return qtx('readonly', function(st){ return st.getAll(); }); }
-
-// The badge only needs the headline, never the photographs — keeping the full
-// records out of memory is the point of putting them in a database.
-async function refreshOutbox() {
-  try {
-    var all = await qAll();
-    outbox = (all || []).map(function(r){
-      return { id: r.id, store: r.store, serial: r.serial, at: r.at,
-               attempts: r.attempts || 0, lastError: r.lastError || null };
-    }).sort(function(a,b){ return String(a.at).localeCompare(String(b.at)); });
-  } catch(e) { outbox = []; }
-}
-
-// A deadline on every call. Without one, a stalled socket on bad service hangs
-// until the platform gives up, which can be minutes.
-function withTimeout(promise, ms, what) {
-  return Promise.race([promise, new Promise(function(_, rej){
-    setTimeout(function(){ rej(new Error((what||'request') + ' timed out')); }, ms || 45000);
-  })]);
-}
-
-async function flushOutbox(manual) {
-  if (flushing) return;
-  if (!navigator.onLine) { if (manual) showStatus('Still no signal — it is saved and will go by itself', 'err'); return; }
-  flushing = true; render();
-  var sent = 0, failed = 0;
-  try {
-    var all = (await qAll()) || [];
-    all.sort(function(a,b){ return String(a.at).localeCompare(String(b.at)); });
-    for (var i = 0; i < all.length; i++) {
-      var rec = all[i];
-      // Backoff: a record that has just failed is not retried immediately.
-      var wait = Math.min(30, Math.pow(2, rec.attempts || 0)) * 60 * 1000;
-      if (rec.lastTry && !manual && (Date.now() - rec.lastTry) < wait) continue;
-      try {
-        await withTimeout(sendReport(rec.payload), 90000, 'upload');
-        await qDel(rec.id);
-        sent++;
-      } catch (e) {
-        rec.attempts = (rec.attempts || 0) + 1;
-        rec.lastTry = Date.now();
-        rec.lastError = String(e && e.message || e).slice(0, 200);
-        try { await qPut(rec); } catch(e2) {}
-        failed++;
-        // One bad connection will fail the next one too. Stop rather than
-        // grind through the whole queue against a dead network.
-        if (!navigator.onLine) break;
-      }
-    }
-  } catch (e) { /* the queue is still on the phone */ }
-  await refreshOutbox();
-  flushing = false;
-  if (sent) { try { await loadCompletedPMs(); } catch(e) {} }
-  render();
-  if (manual || sent) {
-    showStatus(sent ? (sent + ' stop' + (sent===1?'':'s') + ' sent'
-                       + (failed ? ' \u00b7 ' + failed + ' still waiting' : ''))
-                    : (failed ? 'Could not send yet — still saved on the phone' : 'Nothing waiting to send'),
-               failed && !sent ? 'err' : 'ok');
-  }
-}
-
-// Send when the phone says the signal is back, and once on startup. Never on a
-// timer: a poll that runs in a dead zone is battery the technician needs.
-window.addEventListener('online', function(){ flushOutbox(false); });
-
-function outboxBanner() {
-  if (!outbox.length) return '';
-  var n = outbox.length;
-  var stuck = outbox.filter(function(r){ return r.attempts >= 3; }).length;
-  return '<div class="card" style="border-left:4px solid ' + (stuck ? 'var(--am)' : 'var(--ac)') + ';margin-bottom:10px">'
-    + '<div style="font-weight:700">' + icon('clipboard') + ' ' + n + ' stop' + (n===1?'':'s') + ' saved on this phone, waiting to send</div>'
-    + '<div style="font-size:13px;color:var(--dim);margin-top:3px">'
-    + outbox.slice(0,4).map(function(r){ return esc(r.store||'') + ' \u00b7 ' + esc(r.serial||''); }).join('<br>')
-    + (n > 4 ? '<br>and ' + (n-4) + ' more' : '')
-    + '</div>'
-    + (stuck ? '<div style="font-size:13px;color:var(--am);margin-top:5px">'
-        + stuck + ' has failed a few times \u2014 tell the office if it stays here.</div>' : '')
-    + '<button class="btn btn-p" style="margin-top:8px;padding:9px" onclick="flushOutbox(true)" '
-      + (flushing?'disabled':'') + '>'
-      + (flushing ? '<span class="spinner"></span> Sending\u2026' : icon('refresh') + ' Send now') + '</button>'
-    + '<div style="font-size:12px;color:var(--dim);margin-top:6px">They go by themselves when you have signal. '
-    + 'It is safe to close the app.</div>'
-    // The floor under everything else. If the phone is having a bad day for
-    // reasons nobody is going to diagnose at the roadside, the photographs on
-    // his camera roll plus an email are still a complete record — and nobody
-    // has to be taught anything to use it.
-    + (stuck ? '<div style="font-size:12px;color:var(--dim);margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'
-        + 'If it will not go at all: <strong>Save to my phone</strong> on each stop, then email the photos to '
-        + '<strong>service@brixbev.com</strong> with the store and serial. That is a complete record too.</div>' : '')
-    + '</div>';
-}
+// What replaces it is what he asked for and what already works with no signal:
+// finish the stop, mark it "photos to follow" if the pictures will not go, and
+// send them later. Nothing to wait for.
 
 // ═══ The paper route sheet ═══
 //
@@ -1295,6 +1216,45 @@ function retakePlate(){
   plateCheck = null; savePhotos(); saveProgress(true); render();
 }
 
+// KEEP A COPY ON THE PHONE, AUTOMATICALLY, THE MOMENT IT IS TAKEN.
+//
+// The honest limits, so nobody is surprised by them later: a web page cannot
+// write to the camera roll. What it CAN do is hand the file to the browser's
+// downloader, and on Android that lands in Downloads with no prompt after the
+// first time. On iOS it goes to Files rather than Photos. Either way there is a
+// copy on the phone that survives the app failing, which is the point.
+//
+// The guaranteed route on any phone is still to shoot with the phone's own
+// Camera app and use "Choose from phone" — then it is in the camera roll by
+// definition, before the app ever sees it.
+//
+// Best effort throughout: it is wrapped, it never blocks the photo being
+// attached, and a browser that refuses simply means no copy. It can be turned
+// off if the downloader gets noisy, because a nagging prompt every stop is its
+// own kind of broken.
+function autoKeepOn(){ return localStorage.getItem('fp_autokeep') !== 'off'; }
+function toggleAutoKeep(){
+  localStorage.setItem('fp_autokeep', autoKeepOn() ? 'off' : 'on');
+  showStatus(autoKeepOn() ? 'Photos will be saved to your phone as you take them'
+                          : 'Automatic saving off — use “Save to my phone” after you submit', 'ok');
+  render();
+}
+function autoKeepPhoto(dataUrl, kind) {
+  if (!autoKeepOn()) return;
+  try {
+    var a = selectedAsset || {};
+    var stamp = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    var name = String(a.store || 'stop').replace(/[^a-zA-Z0-9]/g,'_').slice(0,24)
+      + '_' + String(a.serial || '') + '_' + (kind || 'photo') + '_' + stamp + '.jpg';
+    var url = URL.createObjectURL(dataURLtoBlob(dataUrl));
+    var el = document.createElement('a');
+    el.href = url; el.download = name; el.style.display = 'none';
+    document.body.appendChild(el);
+    el.click();
+    setTimeout(function(){ try { URL.revokeObjectURL(url); el.remove(); } catch(e) {} }, 5000);
+  } catch (e) { /* no copy this time; the report is unaffected */ }
+}
+
 function handlePhotos(input, kind) {
   var files = input.files;
   for (var j = 0; j < files.length; j++) {
@@ -1311,12 +1271,14 @@ function handlePhotos(input, kind) {
           }
           photos.push({ d: d, kind: kind || 'other', hash: hash, file: f });
           savePhotos(); saveProgress(true); render();
+          autoKeepPhoto(d, kind);
           if ((kind || '') === 'plate') checkPlate(d);
         }).catch(function() {
           // hashing unavailable (non-secure context) — attach without a
           // fingerprint rather than lose the photo; server keeps the record
           photos.push({ d: d, kind: kind || 'other', hash: null, file: f });
           savePhotos(); saveProgress(true); render();
+          autoKeepPhoto(d, kind);
         });
       });
     })(files[j]);
@@ -1399,7 +1361,7 @@ function photoSaveCard(){
     + '<div style="font-weight:700;font-size:16px;margin-bottom:4px">' + icon('camera') + ' Keep a copy of ' + (n === 1 ? 'the photo' : 'these ' + n + ' photos') + '?</div>'
     + '<div style="font-size:14px;color:var(--dim);margin-bottom:10px">'
     + esc(savedPhotoSet.store || '') + (savedPhotoSet.serial ? ' &middot; S/N ' + esc(savedPhotoSet.serial) : '')
-    + ' &mdash; ' + (outbox.length ? 'saved on your phone, sending when you have signal.' : 'the report is filed.')
+    + ' &mdash; the report is filed.'
     + ' Photos taken in the app do <strong>not</strong> reach your camera roll on their own.</div>'
     // Say the fallback here, where he has the photos in his hand, rather than
     // only in a manual he is not reading at the roadside.
@@ -1545,7 +1507,6 @@ function renderHome() {
     '<h1 style="font-size:22px;margin-bottom:2px">Freshpet PM</h1>' +
     '<p class="sub">NorCal Route &bull; ' + ASSETS.length + ' Assets</p>';
 
-  h += outboxBanner();
 
   if (hasProgress) {
     h += '<div class="card">' +
@@ -1908,6 +1869,32 @@ function renderChecklist() {
       + '<strong>Take '+(draftPhotosDropped===1?'it':'them')+' again before you submit</strong> — what you see below is all that is attached.</div>'
       + '<button class="btn btn-o" style="margin-top:8px;padding:8px 12px" onclick="draftPhotosDropped=0;render()">Got it</button>'
       + '</div>';
+  }
+
+  h += '<div style="font-size:12px;color:var(--dim);margin:-2px 0 8px">'
+    + (autoKeepOn()
+        ? 'Each photo is also saved to your phone as you take it. '
+          + '<a href="#" onclick="event.preventDefault();toggleAutoKeep()" style="color:var(--dim);text-decoration:underline">turn off</a>'
+        : 'Automatic saving to your phone is <strong>off</strong>. '
+          + '<a href="#" onclick="event.preventDefault();toggleAutoKeep()" style="color:var(--dim);text-decoration:underline">turn on</a>')
+    + '</div>';
+
+  // The way out when the pictures will not go. Deliberately plain and always
+  // present — a tech who cannot finish a stop is the failure mode that matters,
+  // and hiding this behind a condition means it is missing exactly when the
+  // phone is misbehaving.
+  if (missingPhotos().length) {
+    h += photosLater
+      ? '<div class="card" style="padding:10px 12px;margin-bottom:8px;border-left:4px solid var(--am)">'
+        + '<div style="font-weight:700;color:var(--am)">Photos to follow</div>'
+        + '<div style="font-size:13px;margin-top:3px">You can submit this stop now. It is flagged for the '
+        + 'office, and the unit stays on your list until the pictures are on it. '
+        + '<strong>Keep them on your phone</strong> and add them here later, or email them to service@brixbev.com '
+        + 'with the store and serial.</div>'
+        + '<button class="btn btn-o" style="margin-top:8px;padding:8px" onclick="photosLater=false;render()">'
+        + 'Actually, I will take them now</button></div>'
+      : '<button class="btn btn-o" style="padding:10px;margin-bottom:8px;color:var(--dim);border-color:var(--bd)" '
+        + 'onclick="photosLater=true;render()">I\u2019ll add photos later</button>';
   }
 
   if (photos.length) {
@@ -3075,7 +3062,6 @@ function renderRoute() {
 
   var doneCount = stops.filter(function(s) { return s.allDone; }).length;
 
-  h += outboxBanner();
   h += '<div class="card" style="text-align:center">' +
     '<div style="font-size:24px;font-weight:700">' + doneCount + '/' + stops.length + '</div>' +
     '<div style="color:var(--dim);font-size:16px">Stops Completed</div>' +
@@ -3607,7 +3593,7 @@ function startChecklist(idx) {
   // A unit recorded as having no plate starts already marked. Asking the tech
   // to tick it every visit is asking them to re-discover the same fact.
   if (ASSETS[idx].no_serial) form.noSerialPlate = true;
-  photos = []; plateCheck = null; photoAsk = null;
+  photos = []; plateCheck = null; photoAsk = null; photosLater = false;
   sigs = { store: null, tech: mySig || null };
   screen = 'checklist';
   saveProgress();
@@ -3781,14 +3767,9 @@ function getGps() {
     );
   });
 }
-// THE ONE NETWORK PATH. Called by a live submit and by the outbox flush, so a
-// report sent an hour later over a better connection is byte-for-byte the
-// report that would have gone at the stop. Two implementations of this
-// sequence would drift, and the thing that drifts is what reaches the customer.
-//
-// Takes everything it needs in the payload — nothing read from live app state —
-// because when the outbox replays it the technician is three stores away and
-// `form`, `photos` and `selectedAsset` are somebody else's now.
+// THE ONE NETWORK PATH. Takes everything it needs in a payload rather than
+// reading live app state, which keeps it honest about what a report is made of
+// and made it trivial to unpick the outbox that briefly wrapped it.
 async function sendReport(P) {
   var a = P.asset, form = P.form, photos = P.photos, sigs = P.sigs;
   var timestamp = P.timestamp, signedAt = P.signedAt, gps = P.gps;
@@ -3887,17 +3868,30 @@ async function submitForm() {
       + ' \u2014 move the report onto the right cooler, add it, or retake the photo', 'err');
     return;
   }
-  if (plateCheck && plateCheck.state === 'checking') {
-    showStatus('Still checking the serial on the plate \u2014 one moment', 'err'); return;
-  }
+  // Deliberately NOT a gate. It used to refuse to submit while the check was
+  // running, which turned a slow network into a technician who could not file
+  // his stop. The check has ten seconds; if it is still going, the report goes
+  // anyway and the office is told the serial was never confirmed.
+  if (plateCheck && plateCheck.state === 'checking') { ticketFlag = true; }
   // Could not read it: allowed through, but the office must see that the check
   // did not run rather than assume it passed.
   if (plateCheck && plateCheck.state === 'unknown') { ticketFlag = true; }
   var missing = missingPhotos();
-  if (missing.length) {
+  if (missing.length && !photosLater) {
     showStatus('Still needed: ' + missing.map(function(r){ return r.label; }).join(', ')
-      + ' \u2014 take them here with the camera on THIS unit', 'err');
+      + ' \u2014 take them here with the camera on THIS unit, or use \u201cI\u2019ll add photos later\u201d', 'err');
     return;
+  }
+  // PHOTOS TO FOLLOW. The work is done and the readings are real; only the
+  // pictures could not be got onto the report — a phone having a bad day, no
+  // signal, a camera that will not open. Refusing the whole stop for that costs
+  // the visit, and a technician who cannot file moves on and files nothing at
+  // all, which is how the original problem started. So he closes it out, it is
+  // flagged loudly for the office, and the photographs are attached afterwards.
+  if (missing.length && photosLater) {
+    ticketFlag = true;
+    form.photos_to_follow = true;
+    form.photos_missing_at_submit = missing.map(function(r){ return r.kind; });
   }
   if (!form.intTemp) { showStatus('Measure and select the interior temperature', 'err'); return; }
   if (!form.sp1) { showStatus('Enter Set Point 1 as read on the unit', 'err'); return; }
@@ -3959,9 +3953,7 @@ async function submitForm() {
     // and nothing surfaced that. The state is now part of the record.
     form.gpsStatus = gps ? 'captured' : 'unavailable';
 
-    // Everything the send needs, frozen now. By the time the outbox replays
-    // this he may be three stores away, so nothing here may be read from live
-    // app state later.
+    // Everything the send needs, in one object.
     var payload = {
       asset: a, form: form, sigs: sigs,
       photos: photos.map(function(p){ var n = normPhoto(p); return { d:n.d, kind:n.kind, hash:n.hash }; }),
@@ -3978,42 +3970,7 @@ async function submitForm() {
         || !!(prevPm && prevPm.needs_review)
     };
 
-    // SAVED BEFORE SENT. From here the stop cannot be lost to a bar of signal,
-    // a killed tab or a flat battery — the send is just something that happens
-    // to a record already on the phone.
-    var qid = 'q' + payload.timestamp + '_' + Math.random().toString(36).slice(2, 8);
-    var queued = false;
-    try {
-      await qPut({ id: qid, at: signedAt, store: a.store, serial: a.serial,
-                   attempts: 0, payload: payload });
-      queued = true;
-    } catch (e) { /* no IndexedDB — fall through and send live, as before */ }
-
-    var out = null, sendErr = null;
-    if (navigator.onLine || !queued) {
-      try { out = await withTimeout(sendReport(payload), 90000, 'upload'); }
-      catch (e) { sendErr = e; }
-    } else { sendErr = new Error('offline'); }
-
-    if (out) {
-      if (queued) { try { await qDel(qid); } catch(e) {} }
-    } else {
-      if (!queued) { throw sendErr || new Error('Could not send'); }
-      // Held on the phone. Clear the form so he can carry on to the next unit —
-      // stopping him here is what a lost stop actually costs.
-      await refreshOutbox();
-      savedPhotoSet = photos.length
-        ? { files: photoFilesFor(photos, (a.store.replace(/[^a-zA-Z0-9]/g,'_').substring(0,30) + '_' + a.serial)), store: a.store, serial: a.serial }
-        : null;
-      reopenPmId = null; ticketFlag = false; addedAssetFlag = false;
-      clearProgress();
-      submitting = false;
-      if (routeFromChecklist) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
-      else { screen = 'home'; }
-      showStatus('No signal — this stop is SAVED on your phone and will send by itself. Carry on.', 'ok');
-      render();
-      return;
-    }
+    var out = await sendReport(payload);
 
     var pdfDoc = out.pdfDoc, pdfPath = out.pdfPath, baseName = out.baseName;
 
@@ -4169,7 +4126,7 @@ function startException(kind) {
   // Zero prefill. Nothing is carried in from a PM form and no answer is
   // suggested — the whole point of this report is what the tech actually found.
   exceptionForm = { reason: exceptionKind, note: '' };
-  photos = []; plateCheck = null; photoAsk = null;
+  photos = []; plateCheck = null; photoAsk = null; photosLater = false;
   screen = 'exception';
   render();
 }
@@ -4431,7 +4388,7 @@ async function reopenPM(pmId, fromRoute) {
   selectedAsset = ASSETS[idx];
   selectedAssetIdx = idx;
   form = Object.assign({}, pm.form_data || {});
-  photos = []; plateCheck = null; photoAsk = null;
+  photos = []; plateCheck = null; photoAsk = null; photosLater = false;
   sigs = { store: null, tech: mySig || null };
   reopenPmId = pm.id;
   ticketFlag = false;
