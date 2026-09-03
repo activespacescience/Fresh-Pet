@@ -278,7 +278,7 @@ var photosLater = false;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.9';
+var APP_VERSION = '2026-09-03.10';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -3361,7 +3361,14 @@ function renderRoute() {
     } else {
       h += '<div class="card">';
       h += lbl('Where are you starting from? (address, city or zip \u2014 blank uses GPS)');
-      h += '<input type="text" id="startAddr" placeholder="e.g. the motel you woke up in">';
+      // Enter has to start the day. There is no <form> anywhere in this app, so
+      // Enter on a lone input does NOTHING by default — the phone just closes
+      // its keyboard, the page reflows, and it reads as "it scrolled and did
+      // not start". Which is exactly what got reported. enterkeyhint puts "Go"
+      // on the keyboard instead of a return arrow so the key says what it does.
+      h += '<input type="text" id="startAddr" enterkeyhint="go" autocomplete="off" '
+        + 'placeholder="e.g. the motel you woke up in" '
+        + 'onkeydown="if(event.key===\'Enter\'){event.preventDefault();this.blur();startDay();}">';
       h += '<button class="btn btn-s" onclick="startDay()">'+icon('play')+' Start this area from here</button>';
       h += '<div style="font-size:12px;color:var(--dim);margin-top:6px">'
         + 'Comes in at whichever end of this area is closest to you and works straight through. '
@@ -3803,6 +3810,7 @@ async function startDay() {
 
     localStorage.setItem('fp_day_on', '1');
     startingDay = false;
+    window.scrollTo(0, 0);   // the answer to "what is first" is at the top
     showStatus(nearDist < 0.3
       ? 'Starting you at ' + run[0].store + ' — the one you are at'
       : 'Starting you at ' + run[0].store + ', ' + (nearDist < 10 ? nearDist.toFixed(1) : Math.round(nearDist)) + ' mi away', 'ok');
