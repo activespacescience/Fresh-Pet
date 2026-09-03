@@ -1,0 +1,19 @@
+-- Applied live 2026-09-02.
+--
+-- A RE-SHOOT IS NEVER SIGNED BY THE STORE, so the nightly audit must stop
+-- treating that as a fault.
+--
+-- signature_missing now applies to visit_type 'pm' only. Without this, the app
+-- change that stops asking for a signature on a re-shoot would put every future
+-- re-shoot on the board in red — 191 are still owed — and a board full of rows
+-- nobody can action is how a monitor stops being read.
+--
+-- The rule it is enforcing: we were at the store once and a manager signed for
+-- that visit, or nobody did. Asking again in September for a PM done in June
+-- produces an attestation to readings the signer was never shown, which is the
+-- shape of the original defect rather than a fix for it. Five of the six
+-- originals Mike re-shot on 2026-09-02 carried no signature at all, and the old
+-- form fell through and demanded one — Juan Carlos signed in September for
+-- August work, Omar twice in September for June work.
+--
+-- Everything else in the function is unchanged from 20260902e.

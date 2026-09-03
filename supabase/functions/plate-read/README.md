@@ -6,9 +6,11 @@ about the wrong machine.
 Deployed to the Supabase project (`plate-read`, verify_jwt on). Source of record
 is the deployed function; this note exists so the requirement is not invisible.
 
-**Needs `ANTHROPIC_API_KEY` in the Supabase project's edge-function secrets.**
-Without it the function returns `{status:'unconfigured'}` and the app carries on
-with the report flagged — it never blocks a technician on our configuration.
+`ANTHROPIC_API_KEY` is **already set** on this project — verified live on
+2026-09-02: the function read `307516` and `240766` off the two Petco #372 plate
+photographs, which are real API calls. If it is ever unset the function returns
+`{status:'unconfigured'}` and the app carries on with the report flagged; it
+never blocks a technician on our configuration.
 
 Two rules in the function are load-bearing and must survive any edit:
 

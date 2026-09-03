@@ -240,7 +240,7 @@ var draftPhotosDropped = 0;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-02.4';
+var APP_VERSION = '2026-09-02.5';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -1433,7 +1433,22 @@ function renderChecklist() {
   }
 
   h += '<h3>Signatures</h3>';
-  if (reshootCarriesSignature()) {
+  if (isReshoot() && !reshootCarriesSignature()) {
+    // The original was never signed. Say that plainly instead of collecting a
+    // signature today for work done months ago.
+    h += '<div class="card" style="padding:12px 14px;border-left:4px solid #7C3ABE">'
+      + '<div style="font-weight:700;color:#7C3ABE;letter-spacing:.02em">STORE SIGNATURE \u2014 NOT ASKED FOR</div>'
+      + '<div style="font-size:14px;margin-top:6px">The original visit'
+      + (form.original_date ? ' (' + esc(form.original_date) + ')' : '')
+      + ' was <strong>not signed for by the store</strong>, and a re-shoot never asks again.</div>'
+      + '<div style="font-size:13px;color:var(--dim);margin-top:8px">Do not get a signature for this one. '
+      + 'The report will state that no store signature was taken on either visit, and that your signature '
+      + 'attests to the readings and photographs you took today.</div>'
+      + '</div>';
+    h += fld('Service Rep', 'serviceRep', 'text', 'Name');
+    h += sigPad('tech', 'Technician Signature');
+    h += '<div style="font-size:13px;color:var(--dim);margin-top:-4px;margin-bottom:12px">You still sign: your signature is what attests to the readings you took today.</div>';
+  } else if (reshootCarriesSignature()) {
     // Locked on purpose. The store signed for the original visit; they are not
     // asked to sign again for a re-shoot, and their earlier signature is shown
     // as what it is — a record of that visit, not an endorsement of today's
@@ -3244,8 +3259,28 @@ function startChecklist(idx) {
   render();
 }
 
-// True when the form in hand is a re-shoot carrying a signature from the
-// original visit — the case where the store panel is locked.
+// NOBODY SIGNS TWICE FOR ONE SERVICE CALL.
+//
+// A re-shoot never asks the store to sign. We were at the store once, a manager
+// signed for that visit, and the re-shoot exists because OUR photographs could
+// not be stood behind — asking the customer to sign again for our mistake is
+// friction we caused.
+//
+// The lock used to depend on the original actually carrying a signature. That
+// is the wrong condition, and 2026-09-02 showed why: five of the six originals
+// Mike re-shot had NO store contact and no signature at all, so the form fell
+// through to the ordinary flow and demanded one. He got Juan Carlos to sign in
+// September for a PM done in August, and Omar to sign in September for two PMs
+// done in June. That is worse than no signature — it is an attestation to
+// readings the signer was never shown, which is the shape of the original
+// defect, not a fix for it.
+//
+// So: `isReshoot` decides whether the store is asked (never), and
+// `reshootCarriesSignature` decides only which of two true sentences the
+// document prints — the original was signed, or it was not.
+function isReshoot() {
+  return !!(form && form.reshoot_of_pm_id);
+}
 function reshootCarriesSignature() {
   return !!(form && form.reshoot_of_pm_id && form.original_store_contact);
 }
@@ -3431,12 +3466,13 @@ async function submitForm() {
   if (form.noMeter) { form.voltage = ''; }
   else if (!(form.voltage || '').trim()) { showStatus('Enter the voltage you measured, or check \u201cNo meter on hand\u201d', 'err'); return; }
   if (!form.workingArrival && !form.notWorkingArrival) { showStatus('Mark whether the unit was working on arrival', 'err'); return; }
-  if (reshootCarriesSignature()) {
-    // Locked path: the store signed the original visit and is not asked again.
-    // Guard it rather than trust the UI — a resumed draft could carry a stale
+  if (isReshoot()) {
+    // Locked path, whether or not the original carried a signature. Guarded
+    // here rather than trusted to the UI — a resumed draft could carry a stale
     // signature in memory, and pasting one onto a report the signer never saw
     // is the exact failure this whole remediation is about.
     sigs.store = null;
+    form.storeContact = '';
     form.noContact = false;
     form.reshoot_date = form.date || new Date().toISOString().split('T')[0];
   } else if (form.noContact) {
@@ -4097,7 +4133,7 @@ function generatePDF(a, f, ph, sg, meta, cb) {
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
     var rsLine = f.original_store_contact
       ? 'The original visit was signed for by ' + f.original_store_contact + '. The readings and photographs below were taken on the re-shoot date and were NOT signed for by the store.'
-      : 'The readings and photographs below were taken on the re-shoot date.';
+      : 'No store signature was taken on the original visit, and none is taken on a re-shoot. The readings and photographs below were taken on the re-shoot date and are attested to by the technician.';
     var rsWrap = doc.splitTextToSize(rsLine, RM - LM - 40);
     doc.text(rsWrap, W/2, y, { align: 'center' });
     y += rsWrap.length * 9 + 4;
@@ -4194,6 +4230,12 @@ function generatePDF(a, f, ph, sg, meta, cb) {
     // inferred from two dates in the header.
     if (f.original_signature) { drawSig(f.original_signature, LM); }
     else if (sigH < 30) { sigH = 30; }
+  } else if (f.reshoot_of_pm_id) {
+    // A re-shoot with nothing to carry. An empty signature rule reads as an
+    // oversight; the sentence says which of the two visits was unsigned.
+    doc.setFont('helvetica','italic');doc.setFontSize(8);
+    doc.text('Not signed by the store on either visit — see the note below.', LM, y+20);
+    if (sigH < 30) sigH = 30;
   } else if (f.noContact) {
     doc.setFont('helvetica','italic');doc.setFontSize(8);
     doc.text('No store contact available at time of service — not signed by the store.', LM, y+20);
@@ -4214,6 +4256,17 @@ function generatePDF(a, f, ph, sg, meta, cb) {
       '. No store signature was taken on the re-shoot'+(f.reshoot_date?' of '+f.reshoot_date:'')+
       ' — the readings and photographs above are attested to by the technician only.', 280);
     doc.text(att,LM,y); y += att.length*8 + 5;
+    doc.setFont('helvetica','normal');doc.setFontSize(8);
+  } else if (f.reshoot_of_pm_id) {
+    doc.text('Store Contact: (not signed)',LM,y);
+    doc.text('Service Rep: '+(f.serviceRep||f.techName||''),COL2,y);y+=11;
+    doc.setFont('helvetica','italic');doc.setFontSize(7);
+    var att2 = doc.splitTextToSize(
+      'The original visit'+(f.original_date?' of '+f.original_date:'')+
+      ' was not signed for by the store, and no store signature is taken on a re-shoot'+
+      (f.reshoot_date?' of '+f.reshoot_date:'')+
+      ' — the readings and photographs above are attested to by the technician only.', 280);
+    doc.text(att2,LM,y); y += att2.length*8 + 5;
     doc.setFont('helvetica','normal');doc.setFontSize(8);
   } else {
     doc.text('Store Contact: '+(f.noContact?'(none available)':(f.storeContact||'')),LM,y);
