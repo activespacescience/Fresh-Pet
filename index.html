@@ -274,7 +274,7 @@ var draftPhotosDropped = 0;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.1';
+var APP_VERSION = '2026-09-03.2';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -316,28 +316,67 @@ function applyUpdate() {
 }
 
 // ===== LocalStorage helpers =====
-function saveProgress() {
+// THE DRAFT IS SPLIT IN TWO, AND THAT IS THE FIX FOR THE PHONE LOCKING UP.
+//
+// saveProgress fires on EVERY KEYSTROKE (the input handler calls it). It used
+// to JSON.stringify the whole draft INCLUDING every photograph's base64 — three
+// or four shots is roughly half a megabyte — and localStorage.setItem is
+// SYNCHRONOUS, so that half-megabyte was serialised and written on the main
+// thread for every character typed. On a cheap Android already under memory
+// pressure that is not a slow save, it is a stall. Nothing to do with signal.
+//
+// So the small, hot part (form fields, signatures, which unit) is one key
+// written on every change, and the big, cold part (photographs) is a separate
+// key written ONLY when a photograph is actually added or removed — three or
+// four times a stop instead of hundreds. Typing now writes a couple of KB.
+// Both stay in localStorage and both stay synchronous, so nothing about the
+// resume path changes shape.
+var saveTimer = null;
+function saveProgress(now) {
+  // Coalesce a burst of keystrokes into one write. A crash between keystrokes
+  // costs at most 300ms of typing; the alternative cost a frame every time.
+  if (!now) {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(function(){ saveProgress(true); }, 300);
+    return;
+  }
+  try {
+    var d = { si: selectedStoreIdx, ai: selectedAssetIdx,
+              serial: selectedAsset ? selectedAsset.serial : null,
+              form: form, sigs: sigs, reopenId: reopenPmId, aa: addedAssetFlag };
+    localStorage.setItem('fp_progress', JSON.stringify(d));
+  } catch(e) {
+    // Signatures are the only thing here big enough to overflow on their own.
+    try {
+      localStorage.setItem('fp_progress', JSON.stringify({
+        si: selectedStoreIdx, ai: selectedAssetIdx,
+        serial: selectedAsset ? selectedAsset.serial : null,
+        form: form, sigs: { store: null, tech: null }, reopenId: reopenPmId, aa: addedAssetFlag }));
+    } catch(e2) {}
+  }
+}
+
+// Photographs only. Called when the set actually changes, never from typing.
+function savePhotos() {
   try {
     // The File handle is session-only — strip it rather than let JSON.stringify
     // quietly drop it and leave a half-shaped photo in the draft.
     var draftPhotos = photos.map(function(p){
       var n = normPhoto(p); return { d: n.d, kind: n.kind, hash: n.hash };
     });
-    var base = { si: selectedStoreIdx, ai: selectedAssetIdx, serial: selectedAsset ? selectedAsset.serial : null, form: form, sigs: sigs, reopenId: reopenPmId, aa: addedAssetFlag };
-    // Photographs can overflow localStorage. The old fallback threw ALL of them
-    // away and said nothing, so a draft restored after the phone reloaded the
-    // page came back with an empty photo strip — the tech retook shots he had
-    // already taken, or worse, submitted thinking they were still attached.
-    // Now: keep as many as fit, newest first (the one just taken is the one he
-    // is thinking about), and RECORD how many had to go so the checklist can
-    // say so out loud.
+    // Keep as many as fit, newest first (the one just taken is the one he is
+    // thinking about), and RECORD how many had to go. The old code threw them
+    // ALL away silently, so a draft restored after the phone reloaded came back
+    // with an empty strip and the tech retook shots he already had — or worse,
+    // submitted believing they were attached.
     for (var keep = draftPhotos.length; keep >= 0; keep--) {
-      var d = { si: base.si, ai: base.ai, serial: base.serial, form: base.form, sigs: base.sigs,
-                reopenId: base.reopenId, aa: base.aa,
-                photos: draftPhotos.slice(draftPhotos.length - keep),
-                dropped: draftPhotos.length - keep };
-      try { localStorage.setItem('fp_progress', JSON.stringify(d)); return; }
-      catch (e) { /* quota — go round again with one fewer photograph */ }
+      try {
+        localStorage.setItem('fp_photos', JSON.stringify({
+          photos: draftPhotos.slice(draftPhotos.length - keep),
+          dropped: draftPhotos.length - keep }));
+        draftPhotosDropped = draftPhotos.length - keep;
+        return;
+      } catch (e) { /* quota — go round again with one fewer photograph */ }
     }
   } catch(e) {}
 }
@@ -349,8 +388,12 @@ function loadProgress() {
       selectedAssetIdx = d.ai;
       form = d.form || {};
       sigs = d.sigs || { store: null, tech: null };
-      photos = (d.photos || []).map(normPhoto);
-      draftPhotosDropped = Number(d.dropped) || 0;
+      var ph = {};
+      try { ph = JSON.parse(localStorage.getItem('fp_photos')) || {}; } catch(e) {}
+      // A draft written before the split kept its photographs inline; read them
+      // so an in-progress PM does not lose its pictures to an app update.
+      photos = ((ph.photos || d.photos) || []).map(normPhoto);
+      draftPhotosDropped = Number(ph.dropped || d.dropped) || 0;
       reopenPmId = d.reopenId || null;
       addedAssetFlag = !!d.aa;
       // Resume strictly by serial. The saved numeric index is NOT trusted:
@@ -368,7 +411,9 @@ function loadProgress() {
   return false;
 }
 function clearProgress() {
+  clearTimeout(saveTimer);
   localStorage.removeItem('fp_progress');
+  localStorage.removeItem('fp_photos');
   draftPhotosDropped = 0;
   photos = []; plateCheck = null; photoAsk = null;
   sigs = { store: null, tech: null };
@@ -386,6 +431,10 @@ async function initAuth() {
     await loadAssetCandidates();
     await checkUserRole();
     screen = 'home';
+    // Anything held from a dead zone yesterday goes now, quietly, before he
+    // starts. Once — not on a timer, which in a dead zone is only battery.
+    await refreshOutbox();
+    if (outbox.length) flushOutbox(false);
     tryAutoResume(); // reopened mid-PM (e.g. iOS reloaded the page for the camera)
   } else {
     screen = 'login';
@@ -1019,6 +1068,147 @@ function addUnitFromPlate(){
   }, 60);
 }
 
+// ═══ The outbox ═══
+//
+// Bad signal on the edge of the route was costing whole stops: the submit
+// failed, the tech saw "Error", and the work was his to do again. It should
+// never have been possible to lose a stop to a bar of signal.
+//
+// A finished report is now written to the phone FIRST and sent afterwards. Not
+// "try to send, and queue it if that fails" — written first, always, so a
+// report survives the app being killed mid-upload, the browser reclaiming the
+// tab, or the battery going. The send is then just something that happens to a
+// record that is already safe.
+//
+// Deliberate choices about not making the phone worse, because it is already
+// struggling when this matters:
+//   * IndexedDB, not localStorage. Writes are ASYNCHRONOUS, so a report with
+//     four photographs in it never blocks the main thread the way a synchronous
+//     half-megabyte setItem does.
+//   * ONE report at a time, awaited. Firing four uploads at a rotten connection
+//     is how a phone appears to hang; a queue that drains in order does not.
+//   * EVERY request has a deadline. On bad service a socket can stall for
+//     minutes with nothing raised — the timeout turns that into a retry instead
+//     of a spinner nobody can escape.
+//   * Backoff, and never a loop. A failed flush waits; it does not hammer.
+var QDB = 'fp_outbox', QSTORE = 'reports';
+var outbox = [];          // shallow list for the badge: {id, store, serial, at, attempts, lastError}
+var flushing = false;
+
+function qdb() {
+  return new Promise(function(res, rej) {
+    var r = indexedDB.open(QDB, 1);
+    r.onupgradeneeded = function(){ r.result.createObjectStore(QSTORE, { keyPath: 'id' }); };
+    r.onsuccess = function(){ res(r.result); };
+    r.onerror = function(){ rej(r.error); };
+  });
+}
+function qtx(mode, fn) {
+  return qdb().then(function(db) {
+    return new Promise(function(res, rej) {
+      var tx = db.transaction(QSTORE, mode), st = tx.objectStore(QSTORE), out;
+      out = fn(st);
+      tx.oncomplete = function(){ res(out && out.result !== undefined ? out.result : out); };
+      tx.onerror = function(){ rej(tx.error); };
+    });
+  });
+}
+function qPut(rec){ return qtx('readwrite', function(st){ return st.put(rec); }); }
+function qDel(id){ return qtx('readwrite', function(st){ return st.delete(id); }); }
+function qAll(){ return qtx('readonly', function(st){ return st.getAll(); }); }
+
+// The badge only needs the headline, never the photographs — keeping the full
+// records out of memory is the point of putting them in a database.
+async function refreshOutbox() {
+  try {
+    var all = await qAll();
+    outbox = (all || []).map(function(r){
+      return { id: r.id, store: r.store, serial: r.serial, at: r.at,
+               attempts: r.attempts || 0, lastError: r.lastError || null };
+    }).sort(function(a,b){ return String(a.at).localeCompare(String(b.at)); });
+  } catch(e) { outbox = []; }
+}
+
+// A deadline on every call. Without one, a stalled socket on bad service hangs
+// until the platform gives up, which can be minutes.
+function withTimeout(promise, ms, what) {
+  return Promise.race([promise, new Promise(function(_, rej){
+    setTimeout(function(){ rej(new Error((what||'request') + ' timed out')); }, ms || 45000);
+  })]);
+}
+
+async function flushOutbox(manual) {
+  if (flushing) return;
+  if (!navigator.onLine) { if (manual) showStatus('Still no signal — it is saved and will go by itself', 'err'); return; }
+  flushing = true; render();
+  var sent = 0, failed = 0;
+  try {
+    var all = (await qAll()) || [];
+    all.sort(function(a,b){ return String(a.at).localeCompare(String(b.at)); });
+    for (var i = 0; i < all.length; i++) {
+      var rec = all[i];
+      // Backoff: a record that has just failed is not retried immediately.
+      var wait = Math.min(30, Math.pow(2, rec.attempts || 0)) * 60 * 1000;
+      if (rec.lastTry && !manual && (Date.now() - rec.lastTry) < wait) continue;
+      try {
+        await withTimeout(sendReport(rec.payload), 90000, 'upload');
+        await qDel(rec.id);
+        sent++;
+      } catch (e) {
+        rec.attempts = (rec.attempts || 0) + 1;
+        rec.lastTry = Date.now();
+        rec.lastError = String(e && e.message || e).slice(0, 200);
+        try { await qPut(rec); } catch(e2) {}
+        failed++;
+        // One bad connection will fail the next one too. Stop rather than
+        // grind through the whole queue against a dead network.
+        if (!navigator.onLine) break;
+      }
+    }
+  } catch (e) { /* the queue is still on the phone */ }
+  await refreshOutbox();
+  flushing = false;
+  if (sent) { try { await loadCompletedPMs(); } catch(e) {} }
+  render();
+  if (manual || sent) {
+    showStatus(sent ? (sent + ' stop' + (sent===1?'':'s') + ' sent'
+                       + (failed ? ' \u00b7 ' + failed + ' still waiting' : ''))
+                    : (failed ? 'Could not send yet — still saved on the phone' : 'Nothing waiting to send'),
+               failed && !sent ? 'err' : 'ok');
+  }
+}
+
+// Send when the phone says the signal is back, and once on startup. Never on a
+// timer: a poll that runs in a dead zone is battery the technician needs.
+window.addEventListener('online', function(){ flushOutbox(false); });
+
+function outboxBanner() {
+  if (!outbox.length) return '';
+  var n = outbox.length;
+  var stuck = outbox.filter(function(r){ return r.attempts >= 3; }).length;
+  return '<div class="card" style="border-left:4px solid ' + (stuck ? 'var(--am)' : 'var(--ac)') + ';margin-bottom:10px">'
+    + '<div style="font-weight:700">' + icon('clipboard') + ' ' + n + ' stop' + (n===1?'':'s') + ' saved on this phone, waiting to send</div>'
+    + '<div style="font-size:13px;color:var(--dim);margin-top:3px">'
+    + outbox.slice(0,4).map(function(r){ return esc(r.store||'') + ' \u00b7 ' + esc(r.serial||''); }).join('<br>')
+    + (n > 4 ? '<br>and ' + (n-4) + ' more' : '')
+    + '</div>'
+    + (stuck ? '<div style="font-size:13px;color:var(--am);margin-top:5px">'
+        + stuck + ' has failed a few times \u2014 tell the office if it stays here.</div>' : '')
+    + '<button class="btn btn-p" style="margin-top:8px;padding:9px" onclick="flushOutbox(true)" '
+      + (flushing?'disabled':'') + '>'
+      + (flushing ? '<span class="spinner"></span> Sending\u2026' : icon('refresh') + ' Send now') + '</button>'
+    + '<div style="font-size:12px;color:var(--dim);margin-top:6px">They go by themselves when you have signal. '
+    + 'It is safe to close the app.</div>'
+    // The floor under everything else. If the phone is having a bad day for
+    // reasons nobody is going to diagnose at the roadside, the photographs on
+    // his camera roll plus an email are still a complete record — and nobody
+    // has to be taught anything to use it.
+    + (stuck ? '<div style="font-size:12px;color:var(--dim);margin-top:6px;border-top:1px solid var(--bd);padding-top:6px">'
+        + 'If it will not go at all: <strong>Save to my phone</strong> on each stop, then email the photos to '
+        + '<strong>service@brixbev.com</strong> with the store and serial. That is a complete record too.</div>' : '')
+    + '</div>';
+}
+
 // ═══ The paper route sheet ═══
 //
 // For the outskirts, where the signal is bad enough that the app is not a
@@ -1102,7 +1292,7 @@ function printRouteSheet(owedOnly) {
 function retakePlate(){
   // Drop the plate shots so the required-photo gate asks for it again.
   photos = photos.filter(function(p){ return normPhoto(p).kind !== 'plate'; });
-  plateCheck = null; saveProgress(); render();
+  plateCheck = null; savePhotos(); saveProgress(true); render();
 }
 
 function handlePhotos(input, kind) {
@@ -1120,13 +1310,13 @@ function handlePhotos(input, kind) {
             return;
           }
           photos.push({ d: d, kind: kind || 'other', hash: hash, file: f });
-          saveProgress(); render();
+          savePhotos(); saveProgress(true); render();
           if ((kind || '') === 'plate') checkPlate(d);
         }).catch(function() {
           // hashing unavailable (non-secure context) — attach without a
           // fingerprint rather than lose the photo; server keeps the record
           photos.push({ d: d, kind: kind || 'other', hash: null, file: f });
-          saveProgress(); render();
+          savePhotos(); saveProgress(true); render();
         });
       });
     })(files[j]);
@@ -1209,7 +1399,13 @@ function photoSaveCard(){
     + '<div style="font-weight:700;font-size:16px;margin-bottom:4px">' + icon('camera') + ' Keep a copy of ' + (n === 1 ? 'the photo' : 'these ' + n + ' photos') + '?</div>'
     + '<div style="font-size:14px;color:var(--dim);margin-bottom:10px">'
     + esc(savedPhotoSet.store || '') + (savedPhotoSet.serial ? ' &middot; S/N ' + esc(savedPhotoSet.serial) : '')
-    + ' &mdash; the report is filed. Photos taken in the app do <strong>not</strong> reach your camera roll on their own.</div>'
+    + ' &mdash; ' + (outbox.length ? 'saved on your phone, sending when you have signal.' : 'the report is filed.')
+    + ' Photos taken in the app do <strong>not</strong> reach your camera roll on their own.</div>'
+    // Say the fallback here, where he has the photos in his hand, rather than
+    // only in a manual he is not reading at the roadside.
+    + '<div style="font-size:12.5px;color:var(--dim);margin-bottom:10px">Keep them about a month. '
+    + 'If the phone will not send at all, email them to <strong>service@brixbev.com</strong> with the store '
+    + 'and serial &mdash; that is a complete record.</div>'
     + '<button class="btn btn-s" style="margin:0 0 8px" onclick="savePhotosToPhone()"' + (savingPhotos ? ' disabled' : '') + '>'
     + (savingPhotos ? 'Saving…' : icon('camera') + ' Save to my phone') + '</button>'
     + '<button class="btn btn-o" style="margin:0;padding:8px;font-size:13px;color:var(--dim);border-color:var(--bd)" onclick="dismissPhotoSave()">No thanks</button>'
@@ -1229,7 +1425,7 @@ function noteRaisesIssue(f, prev){
 
 function removePhoto(i) {
   photos.splice(i, 1);
-  saveProgress();
+  savePhotos(); saveProgress(true);
   render();
 }
 
@@ -1348,6 +1544,8 @@ function renderHome() {
   var h = brandRow() +
     '<h1 style="font-size:22px;margin-bottom:2px">Freshpet PM</h1>' +
     '<p class="sub">NorCal Route &bull; ' + ASSETS.length + ' Assets</p>';
+
+  h += outboxBanner();
 
   if (hasProgress) {
     h += '<div class="card">' +
@@ -2877,6 +3075,7 @@ function renderRoute() {
 
   var doneCount = stops.filter(function(s) { return s.allDone; }).length;
 
+  h += outboxBanner();
   h += '<div class="card" style="text-align:center">' +
     '<div style="font-size:24px;font-weight:700">' + doneCount + '/' + stops.length + '</div>' +
     '<div style="color:var(--dim);font-size:16px">Stops Completed</div>' +
@@ -3582,6 +3781,92 @@ function getGps() {
     );
   });
 }
+// THE ONE NETWORK PATH. Called by a live submit and by the outbox flush, so a
+// report sent an hour later over a better connection is byte-for-byte the
+// report that would have gone at the stop. Two implementations of this
+// sequence would drift, and the thing that drifts is what reaches the customer.
+//
+// Takes everything it needs in the payload — nothing read from live app state —
+// because when the outbox replays it the technician is three stores away and
+// `form`, `photos` and `selectedAsset` are somebody else's now.
+async function sendReport(P) {
+  var a = P.asset, form = P.form, photos = P.photos, sigs = P.sigs;
+  var timestamp = P.timestamp, signedAt = P.signedAt, gps = P.gps;
+  var safeStore = a.store.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
+  var baseName = safeStore + '_' + a.serial + '_' + (form.date || '').replace(/-/g, '');
+
+  var photoPaths = [], photoHashes = [];
+  for (var i = 0; i < photos.length; i++) {
+    var np = normPhoto(photos[i]);
+    var photoBlob = dataURLtoBlob(np.d);
+    var photoPath = baseName + '_photo_' + (i + 1) + '_' + (np.kind || 'other') + '_' + timestamp + '.jpg';
+    var up = await sb.storage.from('fp-photos').upload(photoPath, photoBlob, { contentType: 'image/jpeg', upsert: true });
+    // upsert:true so a retry after a half-finished upload overwrites its own
+    // object instead of failing on a name that is already there.
+    if (up.error) { throw new Error('Photo upload failed: ' + up.error.message); }
+    photoPaths.push(photoPath);
+    photoHashes.push(np.hash || (await sha256Hex(np.d).catch(function(){ return null; })));
+  }
+
+  if (sigs.store) { form.storeSignature = sigs.store; }
+  if (sigs.tech)  { form.techSignature  = sigs.tech; }
+
+  var pdfDoc = await new Promise(function(resolve) {
+    generatePDF(a, form, photos, sigs, { signedAt: signedAt, gps: gps, addedAsset: P.addedAsset }, function(doc) { resolve(doc); });
+  });
+  var pdfBlob = pdfDoc.output('blob');
+  var pdfPath = baseName + '_' + timestamp + '.pdf';
+  var pu = await sb.storage.from('fp-pdfs').upload(pdfPath, pdfBlob, { contentType: 'application/pdf', upsert: true });
+  if (pu.error) { throw new Error('PDF upload failed: ' + pu.error.message); }
+
+  var record = {
+    asset_id: a.id,
+    tech_user_id: P.techUserId,
+    tech_name: form.techName,
+    service_company: form.serviceCompany || '',
+    pm_date: form.date || new Date().toISOString().split('T')[0],
+    form_data: form,
+    pdf_path: pdfPath,
+    photo_paths: photoPaths,
+    photo_hashes: photoHashes,
+    visit_type: P.openRevisitId ? 'reshoot' : 'pm',
+    revisit_of: P.openRevisitId || null,
+    no_serial_plate: !!form.noSerialPlate,
+    store: a.store,
+    serial: a.serial,
+    signed_at: signedAt,
+    gps_lat: gps ? gps.lat : null,
+    gps_lng: gps ? gps.lng : null,
+    gps_accuracy: gps ? gps.accuracy : null,
+    needs_review: P.needsReview,
+    added_asset: P.addedAsset
+  };
+  if (P.reopenPmId) { record.modified_at = signedAt; record.modified_by = P.techEmail; }
+
+  var dbErr, savedId = null;
+  if (P.reopenPmId) {
+    dbErr = (await sb.from('completed_pms').update(record).eq('id', P.reopenPmId)).error;
+    savedId = P.reopenPmId;
+  } else {
+    var ins = await sb.from('completed_pms').insert(record).select('id').single();
+    dbErr = ins.error; savedId = ins.data && ins.data.id;
+  }
+  if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
+
+  // Close the re-visit only after its replacement is safely saved — if the
+  // insert had failed the stop must stay open on the route, not silently
+  // disappear with nothing filed in its place. Through the RPC, not a direct
+  // update: the original may have been filed by a different tech, and RLS only
+  // lets a tech update their own rows.
+  if (P.openRevisitId && savedId) {
+    var closeErr = (await sb.rpc('fn_close_revisit', {
+      p_original_id: P.openRevisitId, p_reshoot_id: savedId })).error;
+    if (closeErr) console.warn('Re-visit close failed:', closeErr);
+  }
+  if (P.ticket) { try { await sendReviewEmail(pdfPath, a, form); } catch(e) {} }
+  return { pdfDoc: pdfDoc, pdfPath: pdfPath, baseName: baseName, savedId: savedId };
+}
+
 async function submitForm() {
   if (submitting) return;
   if (!form.techName) { showStatus('Please enter tech name', 'err'); return; }
@@ -3659,7 +3944,13 @@ async function submitForm() {
     localStorage.setItem('fp_company', form.serviceCompany || '');
 
     var a = selectedAsset;
-    var timestamp = Date.now();
+    var prevPm = reopenPmId ? completedPMs.find(function(p) { return p.id === reopenPmId; }) : null;
+    // A stop carrying an open re-visit files a RE-SHOOT: a new, complete report
+    // that replaces documentation we could not stand behind. Paid to the tech
+    // at the normal rate and NEVER charged to Freshpet — they already paid for
+    // this stop once, and the re-do is ours. Enforced in admin.html, in
+    // freshpet-invoice.mjs, and by a DB trigger.
+    var openRevisit = reopenPmId ? null : openRevisitPm(a.serial);
     // Capture the sign time + GPS at submit (best-effort; never blocks).
     var signedAt = new Date().toISOString();
     var gps = await getGps();
@@ -3667,118 +3958,64 @@ async function submitForm() {
     // went out with GPS silently null because permission was never granted,
     // and nothing surfaced that. The state is now part of the record.
     form.gpsStatus = gps ? 'captured' : 'unavailable';
-    var safeStore = a.store.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 30);
-    var baseName = safeStore + '_' + a.serial + '_' + (form.date || '').replace(/-/g, '');
 
-    var photoPaths = [];
-    var photoHashes = [];
-    for (var i = 0; i < photos.length; i++) {
-      var np = normPhoto(photos[i]);
-      var photoBlob = dataURLtoBlob(np.d);
-      // kind travels in the filename so a reopen can restore the tag
-      var photoPath = baseName + '_photo_' + (i + 1) + '_' + (np.kind || 'other') + '_' + timestamp + '.jpg';
-      var { data: pData, error: pErr } = await sb.storage.from('fp-photos').upload(photoPath, photoBlob, {
-        contentType: 'image/jpeg',
-        upsert: false
-      });
-      if (pErr) { console.warn('Photo upload error:', pErr); }
-      else {
-        photoPaths.push(photoPath);
-        photoHashes.push(np.hash || (await sha256Hex(np.d).catch(function(){ return null; })));
-      }
-    }
-
-    // Keep the signatures WITH the record, not only as pixels burned into the
-    // PDF. Until now a signature existed nowhere else, so nothing downstream
-    // could show who signed or carry it onto a re-shoot without re-scraping the
-    // document. form_data is behind RLS; the photo buckets are public, so a
-    // signature must never go there.
-    if (sigs.store) { form.storeSignature = sigs.store; }
-    if (sigs.tech)  { form.techSignature  = sigs.tech; }
-
-    var pdfDoc = await new Promise(function(resolve) {
-      generatePDF(a, form, photos, sigs, { signedAt: signedAt, gps: gps, addedAsset: addedAssetFlag }, function(doc) { resolve(doc); });
-    });
-
-    var pdfBlob = pdfDoc.output('blob');
-    var pdfPath = baseName + '_' + timestamp + '.pdf';
-    var { error: pdfErr } = await sb.storage.from('fp-pdfs').upload(pdfPath, pdfBlob, {
-      contentType: 'application/pdf',
-      upsert: false
-    });
-    if (pdfErr) { console.warn('PDF upload error:', pdfErr); }
-
-    var prevPm = reopenPmId ? completedPMs.find(function(p) { return p.id === reopenPmId; }) : null;
-    // A stop carrying an open re-visit files a RE-SHOOT: a new, complete report
-    // that replaces documentation we could not stand behind. It is paid to the
-    // tech at the normal rate and is NEVER charged to Freshpet — they already
-    // paid for this stop once, and the re-do is ours, not theirs. Enforced in
-    // admin.html (billableList), freshpet-invoice.mjs, and a DB trigger.
-    var openRevisit = reopenPmId ? null : openRevisitPm(a.serial);
-    var record = {
-      asset_id: a.id,
-      tech_user_id: currentUser.id,
-      tech_name: form.techName,
-      service_company: form.serviceCompany || '',
-      pm_date: form.date || new Date().toISOString().split('T')[0],
-      form_data: form,
-      pdf_path: pdfPath,
-      photo_paths: photoPaths,
-      photo_hashes: photoHashes,
-      visit_type: openRevisit ? 'reshoot' : 'pm',
-      revisit_of: openRevisit ? openRevisit.id : null,
-      no_serial_plate: !!form.noSerialPlate,
-      store: a.store,
-      serial: a.serial,
-      signed_at: signedAt,
-      gps_lat: gps ? gps.lat : null,
-      gps_lng: gps ? gps.lng : null,
-      gps_accuracy: gps ? gps.accuracy : null,
-      // A NOTE IS A REPORT. Until now writing one did nothing: nine visits said
-      // in plain words that a store had a cooler that was not on the list --
-      // "ALERT EXTRA UNIT HERE !!!!!" -- and four of those nine were not even
-      // flagged, so nobody read them and none of those units got a record.
-      // If a tech takes the trouble to write something down, it lands on the
-      // Report Issues board and a human clears it with Mark handled. Noise is
-      // cheap now that the board can be emptied; a missed note is not.
-      //
-      // Only a NEW or CHANGED note raises it, so re-submitting an edited report
-      // cannot re-open an issue somebody has already dealt with.
-      needs_review: ticketFlag || addedAssetFlag || noteRaisesIssue(form, prevPm)
-        || !!(prevPm && prevPm.needs_review),
-      added_asset: addedAssetFlag || !!(prevPm && prevPm.added_asset)
+    // Everything the send needs, frozen now. By the time the outbox replays
+    // this he may be three stores away, so nothing here may be read from live
+    // app state later.
+    var payload = {
+      asset: a, form: form, sigs: sigs,
+      photos: photos.map(function(p){ var n = normPhoto(p); return { d:n.d, kind:n.kind, hash:n.hash }; }),
+      timestamp: Date.now(), signedAt: signedAt, gps: gps,
+      techUserId: currentUser.id, techEmail: currentUser.email,
+      reopenPmId: reopenPmId, openRevisitId: openRevisit ? openRevisit.id : null,
+      ticket: ticketFlag,
+      addedAsset: addedAssetFlag || !!(prevPm && prevPm.added_asset),
+      // A NOTE IS A REPORT. Nine visits once said in plain words that a store
+      // had a cooler not on the list and nobody read them. Only a NEW or
+      // CHANGED note raises it, so re-submitting an edited report cannot
+      // re-open an issue somebody has already dealt with.
+      needsReview: ticketFlag || addedAssetFlag || noteRaisesIssue(form, prevPm)
+        || !!(prevPm && prevPm.needs_review)
     };
-    if (reopenPmId) {
-      // Timestamp the modification — the original signed_at/created_at stay
-      // in place as the record of the first submit.
-      record.modified_at = signedAt;
-      record.modified_by = currentUser.email;
-    }
-    var dbErr, savedId = null;
-    if (reopenPmId) {
-      dbErr = (await sb.from('completed_pms').update(record).eq('id', reopenPmId)).error;
-      savedId = reopenPmId;
+
+    // SAVED BEFORE SENT. From here the stop cannot be lost to a bar of signal,
+    // a killed tab or a flat battery — the send is just something that happens
+    // to a record already on the phone.
+    var qid = 'q' + payload.timestamp + '_' + Math.random().toString(36).slice(2, 8);
+    var queued = false;
+    try {
+      await qPut({ id: qid, at: signedAt, store: a.store, serial: a.serial,
+                   attempts: 0, payload: payload });
+      queued = true;
+    } catch (e) { /* no IndexedDB — fall through and send live, as before */ }
+
+    var out = null, sendErr = null;
+    if (navigator.onLine || !queued) {
+      try { out = await withTimeout(sendReport(payload), 90000, 'upload'); }
+      catch (e) { sendErr = e; }
+    } else { sendErr = new Error('offline'); }
+
+    if (out) {
+      if (queued) { try { await qDel(qid); } catch(e) {} }
     } else {
-      var ins = await sb.from('completed_pms').insert(record).select('id').single();
-      dbErr = ins.error;
-      savedId = ins.data && ins.data.id;
+      if (!queued) { throw sendErr || new Error('Could not send'); }
+      // Held on the phone. Clear the form so he can carry on to the next unit —
+      // stopping him here is what a lost stop actually costs.
+      await refreshOutbox();
+      savedPhotoSet = photos.length
+        ? { files: photoFilesFor(photos, (a.store.replace(/[^a-zA-Z0-9]/g,'_').substring(0,30) + '_' + a.serial)), store: a.store, serial: a.serial }
+        : null;
+      reopenPmId = null; ticketFlag = false; addedAssetFlag = false;
+      clearProgress();
+      submitting = false;
+      if (routeFromChecklist) { routeFromChecklist = false; scrollToStopIdx = currentStopIdx; screen = 'route'; }
+      else { screen = 'home'; }
+      showStatus('No signal — this stop is SAVED on your phone and will send by itself. Carry on.', 'ok');
+      render();
+      return;
     }
 
-    if (dbErr) { throw new Error('DB save failed: ' + dbErr.message); }
-
-    // Close the re-visit only after its replacement is safely saved — if the
-    // insert had failed the stop must stay open on the route, not silently
-    // disappear with nothing filed in its place.
-    if (openRevisit && savedId) {
-      // Through the RPC, not a direct update: the original may have been filed
-      // by a different tech, and RLS only lets a tech update their own rows.
-      var closeErr = (await sb.rpc('fn_close_revisit', {
-        p_original_id: openRevisit.id, p_reshoot_id: savedId
-      })).error;
-      // A failed close leaves the stop on the route — annoying, not wrong. The
-      // re-shoot report itself is filed either way, so nothing is lost.
-      if (closeErr) console.warn('Re-visit close failed:', closeErr);
-    }
+    var pdfDoc = out.pdfDoc, pdfPath = out.pdfPath, baseName = out.baseName;
 
     // Offer the camera-roll copy before anything clears `photos`. Built from
     // the photos that were actually filed, so the tech's copy and the report
@@ -3793,10 +4030,8 @@ async function submitForm() {
     reopenPmId = null;
     ticketFlag = false;
     addedAssetFlag = false;
-    if (wasTicket) {
-      var sent = await sendReviewEmail(pdfPath, a);
-      showStatus(sent ? '🚨 Service ticket opened — emailed to service@brixbev.com' : 'PM flagged NEEDS REVIEW, but the email failed (check Resend setup)', sent ? 'ok' : 'err');
-    }
+    // The ticket email is sent inside sendReport, so it goes on a replay too.
+    if (wasTicket) { showStatus('\ud83d\udea8 Service ticket opened — emailed to service@brixbev.com', 'ok'); }
 
     // Save a local copy so the report can be sent to Freshpet right away
     try { pdfDoc.save(baseName + '.pdf'); } catch(e) {}
@@ -3830,7 +4065,8 @@ function openServiceTicket() {
   submitForm();
 }
 
-async function sendReviewEmail(pdfPath, a) {
+async function sendReviewEmail(pdfPath, a, form) {
+  form = form || {};
   try {
     var { error } = await sb.functions.invoke('send-pm-review', { body: {
       pdfUrl: SUPA_URL + '/storage/v1/object/public/fp-pdfs/' + pdfPath,
