@@ -240,7 +240,7 @@ var draftPhotosDropped = 0;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-02.3';
+var APP_VERSION = '2026-09-02.4';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -336,7 +336,7 @@ function loadProgress() {
 function clearProgress() {
   localStorage.removeItem('fp_progress');
   draftPhotosDropped = 0;
-  photos = [];
+  photos = []; plateCheck = null;
   sigs = { store: null, tech: null };
   reopenPmId = null;
   addedAssetFlag = false;
@@ -859,6 +859,114 @@ function uploadPhoto() {
   i.click();
 }
 
+// ═══ Does the plate in the photograph belong to THIS unit? ═══
+//
+// The control that did not exist until now, and the one that matters most.
+// The hash check catches a photograph REUSED from another report. The nightly
+// audit catches a photograph that is MISSING. Neither can catch a photograph of
+// the WRONG MACHINE — which is the defect Freshpet raised on invoice #172825,
+// and which happened again at Petco #372 on 2026-09-02: three near-identical
+// coolers in a row, two reports filed one place down the line, every existing
+// check passed.
+//
+// So the phone now reads the serial off the plate the moment it is taken and
+// compares it to the unit on the form. Comparison is EXACT after stripping
+// case and punctuation — deliberately no fuzzy matching, because the Petco
+// serials were 240761 and 240766, one character apart, and any tolerance would
+// wave through the precise error being hunted.
+//
+// It fails OPEN on infrastructure and CLOSED on evidence: if the serial reads
+// clearly and does not match, the technician cannot submit until he resolves it;
+// if the plate cannot be read, or we cannot reach the service, he carries on and
+// the report is flagged for the office. A tech stuck in a store with no signal
+// is a worse outcome than a report somebody has to look at.
+var plateCheck = null;    // { state, serial, reason, matched }  state: checking|ok|mismatch|unknown
+function normSerial(x){ return String(x||'').toUpperCase().replace(/[^A-Z0-9]/g,''); }
+
+// The unit this serial actually belongs to, if we carry it. This store first —
+// the overwhelmingly likely case is the cooler standing next to him.
+function assetForSerial(serial){
+  var n = normSerial(serial);
+  if (!n) return null;
+  var here = selectedAsset ? String(selectedAsset.store||'') : '';
+  var hits = ASSETS.filter(function(a){ return normSerial(a.serial) === n; });
+  return hits.filter(function(a){ return String(a.store||'') === here; })[0] || hits[0] || null;
+}
+
+async function checkPlate(dataUrl){
+  if (!selectedAsset) return;
+  plateCheck = { state: 'checking' }; render();
+  var out = null;
+  try {
+    var { data: { session } } = await sb.auth.getSession();
+    var r = await fetch(SUPA_URL + '/functions/v1/plate-read', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json',
+                 'apikey': SUPA_KEY,
+                 'Authorization': 'Bearer ' + ((session && session.access_token) || SUPA_KEY) },
+      body: JSON.stringify({ image: dataUrl })
+    });
+    out = await r.json();
+  } catch (e) { out = { status: 'error', detail: String(e && e.message || e) }; }
+
+  if (!out || out.status !== 'read') {
+    plateCheck = { state: 'unknown',
+      reason: (out && (out.reason || out.detail)) || 'The serial could not be checked.' };
+    render(); return;
+  }
+  if (normSerial(out.serial) === normSerial(selectedAsset.serial)) {
+    plateCheck = { state: 'ok', serial: out.serial }; render(); return;
+  }
+  plateCheck = { state: 'mismatch', serial: out.serial, matched: assetForSerial(out.serial) };
+  render();
+}
+
+// He was standing at a different cooler than the form was on. Move the whole
+// report — form, photos, signatures — onto the unit the plate actually names.
+// Nothing is lost and the unit he left stays owed on the route.
+function switchToMatchedUnit(){
+  var a = plateCheck && plateCheck.matched;
+  if (!a) return;
+  var i = ASSETS.findIndex(function(x){ return x.id === a.id; });
+  if (i < 0) return;
+  if (!confirm('Move this report onto ' + (a.serial || '') + '?\n\n'
+    + 'Everything you have filled in and photographed stays with it. '
+    + (selectedAsset ? (selectedAsset.serial + ' will still be waiting on your route.') : ''))) return;
+  selectedAssetIdx = i; selectedAsset = ASSETS[i];
+  plateCheck = { state: 'ok', serial: a.serial };
+  saveProgress(); render();
+  showStatus('Now filing against ' + (a.serial || ''), 'ok');
+}
+
+// The plate names a cooler we do not carry at all. That is the other half of
+// the asset-list problem — add it here and it becomes a real unit with its own
+// stop, instead of being quietly filed under a neighbour's name.
+function addUnitFromPlate(){
+  var serial = plateCheck && plateCheck.serial;
+  if (!serial || !selectedAsset) return;
+  if (!confirm('Add ' + serial + ' as a new cooler at ' + (selectedAsset.store || 'this store') + '?\n\n'
+    + 'It is not on Freshpet\'s list. It gets added, reported to the office, and you do a full PM on it.')) return;
+  // Reuse the add-asset screen the route already has, so a unit found this way
+  // is indistinguishable from one found by walking the store — same record,
+  // same reporting, same billing path.
+  var stops = getRouteStops();
+  var i = stops.findIndex(function(st){ return String(st.store||'') === String(selectedAsset.store||''); });
+  if (i < 0) { showStatus('Add it from the route card for this store', 'err'); return; }
+  goAddAssetForStop(i);
+  // The serial is the one thing we already know for certain — it was just read
+  // off the plate. Prefill it so he cannot mistype the number he is fixing.
+  setTimeout(function(){
+    var el = document.getElementById('naSerial');
+    if (el) el.value = serial;
+  }, 60);
+}
+
+function retakePlate(){
+  // Drop the plate shots so the required-photo gate asks for it again.
+  photos = photos.filter(function(p){ return normPhoto(p).kind !== 'plate'; });
+  plateCheck = null; saveProgress(); render();
+}
+
 function handlePhotos(input, kind) {
   var files = input.files;
   for (var j = 0; j < files.length; j++) {
@@ -875,6 +983,7 @@ function handlePhotos(input, kind) {
           }
           photos.push({ d: d, kind: kind || 'other', hash: hash, file: f });
           saveProgress(); render();
+          if ((kind || '') === 'plate') checkPlate(d);
         }).catch(function() {
           // hashing unavailable (non-secure context) — attach without a
           // fingerprint rather than lose the photo; server keeps the record
@@ -1382,6 +1491,51 @@ function renderChecklist() {
   });
   h += '<button class="btn btn-o" style="padding:10px" onclick="uploadPhoto()">'+icon('image')+' Another photo (optional)</button>';
   h += '</div>';
+
+  // What the plate said. This is the loudest thing on the screen when it
+  // disagrees, because the whole point is that it must not be scrolled past.
+  if (plateCheck) {
+    if (plateCheck.state === 'checking') {
+      h += '<div class="card" style="padding:10px 12px;margin-bottom:8px">'
+        + '<span class="spinner"></span> Reading the serial on that plate\u2026</div>';
+    } else if (plateCheck.state === 'ok') {
+      h += '<div class="card" style="padding:10px 12px;margin-bottom:8px;border-left:4px solid var(--gn)">'
+        + '<span style="color:var(--gn);font-weight:700">' + icon('check') + ' Serial matches \u2014 '
+        + esc(plateCheck.serial || '') + '</span></div>';
+    } else if (plateCheck.state === 'unknown') {
+      h += '<div class="card" style="padding:10px 12px;margin-bottom:8px;border-left:4px solid var(--am)">'
+        + '<div style="font-weight:700;color:var(--am)">Could not read the serial on that photo</div>'
+        + '<div style="font-size:13px;color:var(--dim);margin-top:3px">' + esc(plateCheck.reason || '')
+        + ' You can carry on \u2014 the office will check it. If the plate is readable in person, '
+        + 'a straighter, closer shot is better for everyone.</div>'
+        + '<button class="btn btn-o" style="margin-top:8px;padding:8px" onclick="retakePlate()">Take the plate again</button>'
+        + '</div>';
+    } else if (plateCheck.state === 'mismatch') {
+      var mm = plateCheck.matched;
+      h += '<div class="card" style="padding:12px 14px;margin-bottom:8px;border-left:5px solid var(--rd);background:rgba(211,47,47,.07)">'
+        + '<div style="font-weight:800;color:var(--rd);font-size:16px">' + icon('alert') + ' WRONG UNIT</div>'
+        + '<div style="font-size:14px;margin-top:5px">That plate reads <strong class="mono">'
+        + esc(plateCheck.serial) + '</strong>, but this report is for <strong class="mono">'
+        + esc((selectedAsset && selectedAsset.serial) || '') + '</strong>.</div>'
+        + '<div style="font-size:13px;color:var(--dim);margin-top:5px">'
+        + 'Coolers at one store often look identical and sit side by side. Pick one:</div>';
+      if (mm) {
+        h += '<button class="btn btn-p" style="margin-top:9px;padding:10px" onclick="switchToMatchedUnit()">'
+          + 'I am at ' + esc(mm.serial) + ' \u2014 move this report onto it</button>'
+          + '<div style="font-size:12px;color:var(--dim);margin-top:3px">'
+          + esc(mm.store || '') + '. Everything you have filled in comes with it.</div>';
+      } else {
+        h += '<button class="btn btn-p" style="margin-top:9px;padding:10px" onclick="addUnitFromPlate()">'
+          + esc(plateCheck.serial) + ' is not on the list \u2014 add it as a new cooler</button>'
+          + '<div style="font-size:12px;color:var(--dim);margin-top:3px">'
+          + 'Then do a full PM on it. The office is told automatically.</div>';
+      }
+      h += '<button class="btn btn-o" style="margin-top:8px;padding:9px" onclick="retakePlate()">'
+        + 'Wrong plate photographed \u2014 take it again</button>'
+        + '<div style="font-size:12px;color:var(--dim);margin-top:6px">You cannot submit until this is sorted.</div>'
+        + '</div>';
+    }
+  }
 
   // The phone could not hold the whole draft. Say it plainly and name the
   // number — the alternative is a tech who thinks his photographs are attached
@@ -3083,7 +3237,7 @@ function startChecklist(idx) {
   // A unit recorded as having no plate starts already marked. Asking the tech
   // to tick it every visit is asking them to re-discover the same fact.
   if (ASSETS[idx].no_serial) form.noSerialPlate = true;
-  photos = [];
+  photos = []; plateCheck = null;
   sigs = { store: null, tech: mySig || null };
   screen = 'checklist';
   saveProgress();
@@ -3247,6 +3401,22 @@ async function submitForm() {
   // is precisely the thing the office has to chase. Flag it here rather than
   // trusting the tech to also remember to press REPORT ISSUE.
   if (form.noSerialPlate) { ticketFlag = true; }
+  // A plate that demonstrably belongs to another machine is the one thing that
+  // stops a submit outright. Every other gate here is about a field being
+  // blank; this one is about the report being ABOUT THE WRONG UNIT, which is
+  // the defect the customer found and the reason any of this exists.
+  if (plateCheck && plateCheck.state === 'mismatch') {
+    showStatus('That plate reads ' + plateCheck.serial + ', not '
+      + ((selectedAsset && selectedAsset.serial) || 'this unit')
+      + ' \u2014 move the report onto the right cooler, add it, or retake the photo', 'err');
+    return;
+  }
+  if (plateCheck && plateCheck.state === 'checking') {
+    showStatus('Still checking the serial on the plate \u2014 one moment', 'err'); return;
+  }
+  // Could not read it: allowed through, but the office must see that the check
+  // did not run rather than assume it passed.
+  if (plateCheck && plateCheck.state === 'unknown') { ticketFlag = true; }
   var missing = missingPhotos();
   if (missing.length) {
     showStatus('Still needed: ' + missing.map(function(r){ return r.label; }).join(', ')
@@ -3571,7 +3741,7 @@ function startException(kind) {
   // Zero prefill. Nothing is carried in from a PM form and no answer is
   // suggested — the whole point of this report is what the tech actually found.
   exceptionForm = { reason: exceptionKind, note: '' };
-  photos = [];
+  photos = []; plateCheck = null;
   screen = 'exception';
   render();
 }
@@ -3828,7 +3998,7 @@ async function reopenPM(pmId, fromRoute) {
   selectedAsset = ASSETS[idx];
   selectedAssetIdx = idx;
   form = Object.assign({}, pm.form_data || {});
-  photos = [];
+  photos = []; plateCheck = null;
   sigs = { store: null, tech: mySig || null };
   reopenPmId = pm.id;
   ticketFlag = false;
