@@ -278,7 +278,7 @@ var photosLater = false;
 // An unfinished PM survives either path: the draft lives in localStorage and
 // the resume prompt is on the home screen. Sync says so before reloading rather
 // than letting him find out.
-var APP_VERSION = '2026-09-03.4';
+var APP_VERSION = '2026-09-03.5';
 var syncing = false;
 var updateReady = false;   // a newer build is on the server
 
@@ -864,6 +864,17 @@ function twoOptRoute(tour, budgetMs) {
   }
   return tour;
 }
+// The city is the unit of work, and that is the whole point of this function.
+// Optimising purely for shortest total distance produces a thread that wanders
+// in and out of the same metro — mathematically shorter, useless as a work plan,
+// and it is what had the route leaving Sacramento for Pinole and coming back to
+// Sacramento 180 stops later. Ordering CITIES first and only then the stops
+// inside each one guarantees a city is finished before it is left. On Mike's
+// route that costs 38 miles and takes returns-to-a-city-already-worked from 44
+// to zero.
+function normCity(c) {
+  return (c || '').trim().toLowerCase().replace(/\s+/g, ' ');
+}
 function optimizeRoute(assetIds) {
   // Group by the STORE, not just the address — two different stores can share a
   // plaza address, and merging them makes one of them unreachable on the route.
@@ -874,7 +885,7 @@ function optimizeRoute(assetIds) {
     if (!a) return;
     var key = routeStopKey(a);
     if (!seenAddr[key]) {
-      seenAddr[key] = { lat: a.lat, lng: a.lng, ids: [id], addr: key, hasGeo: (a.lat != null && a.lng != null) };
+      seenAddr[key] = { lat: a.lat, lng: a.lng, city: a.city, ids: [id], hasGeo: (a.lat != null && a.lng != null) };
       stops.push(seenAddr[key]);
     } else {
       seenAddr[key].ids.push(id);
@@ -888,22 +899,53 @@ function optimizeRoute(assetIds) {
   var placeable = stops.filter(function(s) { return s.hasGeo; });
   var unplaceable = stops.filter(function(s) { return !s.hasGeo; });
 
-  var ordered;
+  var ordered = [];
   if (placeable.length <= 1) {
     ordered = placeable;
   } else {
-    // Try every start, keep the best. Nearest-neighbour's answer depends
-    // entirely on where it begins, and "wherever the asset list happened to
-    // start" is not a route plan.
-    var best = null, bestMiles = Infinity;
-    var starts = placeable.length;
-    var step = starts > 400 ? Math.ceil(starts / 400) : 1;   // cap the work on huge routes
-    for (var s0 = 0; s0 < starts; s0 += step) {
-      var cand = nearestNeighbourFrom(placeable, s0);
-      var miles = routeTourMiles(cand);
-      if (miles < bestMiles) { bestMiles = miles; best = cand; }
-    }
-    ordered = twoOptRoute(best, 4000);
+    // Cities, normalised — the data holds "CHICO" and "Chico" as two spellings
+    // of one place, and splitting on that would send a tech back to a city the
+    // route thinks it has never been to.
+    var byCity = {};
+    var cities = [];
+    placeable.forEach(function(s) {
+      var k = normCity(s.city);
+      if (!byCity[k]) { byCity[k] = { stops: [], lat: 0, lng: 0 }; cities.push(byCity[k]); }
+      byCity[k].stops.push(s);
+    });
+    cities.forEach(function(c) {
+      c.lat = c.stops.reduce(function(t, p) { return t + p.lat; }, 0) / c.stops.length;
+      c.lng = c.stops.reduce(function(t, p) { return t + p.lng; }, 0) / c.stops.length;
+    });
+
+    // Anchor on the route's CURRENT first stop, so optimising keeps the tech
+    // starting where he already starts instead of relocating him to whichever
+    // end of the state happens to make the total shortest.
+    var origin = placeable[0];
+    var startIdx = 0, startDist = Infinity;
+    cities.forEach(function(c, i) {
+      var d = haversine(origin.lat, origin.lng, c.lat, c.lng);
+      if (d < startDist) { startDist = d; startIdx = i; }
+    });
+    var cityOrder = cities.length > 2
+      ? twoOptRoute(nearestNeighbourFrom(cities, startIdx), 3000)
+      : nearestNeighbourFrom(cities, startIdx);
+
+    // Inside a city, enter at whichever stop is closest to where the last city
+    // left off, then untangle.
+    var from = origin;
+    cityOrder.forEach(function(c) {
+      var ei = 0, ed = Infinity;
+      c.stops.forEach(function(p, i) {
+        var d = haversine(from.lat, from.lng, p.lat, p.lng);
+        if (d < ed) { ed = d; ei = i; }
+      });
+      var inner = c.stops.length > 2
+        ? twoOptRoute(nearestNeighbourFrom(c.stops, ei), 300)
+        : nearestNeighbourFrom(c.stops, ei);
+      ordered = ordered.concat(inner);
+      from = inner[inner.length - 1];
+    });
   }
   ordered = ordered.concat(unplaceable);
 
